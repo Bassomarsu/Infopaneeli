@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+# Secrets — never commit
+.env
+.env.local
+
+# Runtime state: SQLite database, logs, debug HTML snapshots
+data/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log

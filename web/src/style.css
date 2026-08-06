@@ -1,0 +1,152 @@
+:root {
+  --bg: #0b0d12;
+  --bg-glow: #141a26;
+  --surface: rgba(255, 255, 255, 0.045);
+  --surface-strong: rgba(255, 255, 255, 0.075);
+  --border: rgba(255, 255, 255, 0.09);
+  --text: #eef2f8;
+  --text-dim: #9aa5b8;
+  --text-faint: #64708a;
+
+  --accent-power: #f4b942;
+  --accent-weather: #6cc5f0;
+  --accent-school: #8ee6a8;
+  --accent-calendar: #c4a3f5;
+
+  --cheap: #4ade80;
+  --mid: #f4b942;
+  --expensive: #f87171;
+
+  --radius: 20px;
+  --gap: 1.1rem;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: radial-gradient(120% 90% at 50% 0%, var(--bg-glow) 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 18px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100vh;
+}
+
+/* Dimmed at night so the display does not light up the room. */
+#app.night {
+  filter: brightness(0.42) saturate(0.85);
+  transition: filter 4s ease;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.15rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+  flex-shrink: 0;
+}
+
+.card__title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.card__accent {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 0.55rem;
+  vertical-align: middle;
+}
+
+.card__note {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.card__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.card--stale .card__body {
+  opacity: 0.55;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  flex: 1;
+  gap: 0.4rem;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.95rem;
+}
+
+.state__title {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.badge {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+}
+
+.badge--warn {
+  color: #f3c26b;
+  border-color: rgba(243, 194, 107, 0.35);
+  background: rgba(243, 194, 107, 0.08);
+}
+
+.badge--error {
+  color: #f79b9b;
+  border-color: rgba(247, 155, 155, 0.35);
+  background: rgba(247, 155, 155, 0.08);
+}
