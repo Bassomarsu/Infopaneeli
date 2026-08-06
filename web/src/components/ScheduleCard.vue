@@ -41,7 +41,6 @@ function homeworkFor(student: string, subjectCode: string): HomeworkItem | undef
     :status="snapshot?.status"
     :fetched-at="snapshot?.fetchedAt"
     :error="snapshot?.error"
-    :note="day ? day.label : undefined"
   >
     <div v-if="day" class="schedule">
       <header class="schedule__head">

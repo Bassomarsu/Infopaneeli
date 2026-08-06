@@ -27,7 +27,11 @@ export interface ScheduleDay {
   date: string;
   /** "Tänään", "Huomenna" or a weekday name — always explicit on screen. */
   label: string;
-  /** True once the rollover time has passed and we are showing a later day. */
+  /**
+   * True only when the configured time of day is what moved the view forward.
+   * Skipping an empty weekend is a different reason and must not claim the
+   * clock did it.
+   */
   rolledOver: boolean;
   lessonsByStudent: Array<{ studentNumber: string; name: string; lessons: ScheduleLesson[] }>;
   totalLessons: number;
@@ -109,7 +113,7 @@ export function useScheduleDay(
         return {
           date: candidate,
           label: `${describe(candidate, today)} ${shortDate(candidate)}`,
-          rolledOver: candidate !== today,
+          rolledOver,
           lessonsByStudent: grouped,
           totalLessons: total,
         };
@@ -120,7 +124,7 @@ export function useScheduleDay(
     return {
       date: startFrom,
       label: `${describe(startFrom, today)} ${shortDate(startFrom)}`,
-      rolledOver: startFrom !== today,
+      rolledOver,
       lessonsByStudent: grouped,
       totalLessons: 0,
     };
