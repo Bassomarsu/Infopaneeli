@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import CalendarCard, { type CalendarData } from "./components/CalendarCard.vue";
 import ElectricityCard from "./components/ElectricityCard.vue";
+import MessagesCard from "./components/MessagesCard.vue";
+import NotesCard from "./components/NotesCard.vue";
+import ScheduleCard from "./components/ScheduleCard.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
+import WeatherCard, { type WeatherData } from "./components/WeatherCard.vue";
 import { useClock } from "./composables/useClock";
 import { useDashboard } from "./composables/useDashboard";
-import type { ElectricityData, ProviderSnapshot } from "./types";
+import { useScheduleDay } from "./composables/useScheduleDay";
+import type { ElectricityData, ProviderSnapshot, Settings, WilmaData } from "./types";
 
 const { now } = useClock();
-const { dashboard, connected } = useDashboard();
+const { dashboard, connected, refresh } = useDashboard();
+
+const settingsOpen = ref(false);
 
 const timeLabel = computed(() =>
   now.value.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }),
@@ -16,11 +25,24 @@ const dateLabel = computed(() =>
   now.value.toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "long" }),
 );
 
-const electricity = computed(
-  () => dashboard.value?.providers.electricity as ProviderSnapshot<ElectricityData> | undefined,
-);
+const provider = <T,>(id: string): ProviderSnapshot<T> | undefined =>
+  dashboard.value?.providers[id] as ProviderSnapshot<T> | undefined;
+
+const electricity = computed(() => provider<ElectricityData>("electricity"));
+const weather = computed(() => provider<WeatherData>("weather"));
+const calendar = computed(() => provider<CalendarData>("calendar"));
+const wilma = computed(() => provider<WilmaData>("wilma"));
+
+const settings = computed<Settings | null>(() => dashboard.value?.settings ?? null);
+const wilmaData = computed(() => wilma.value?.data ?? null);
+
+const rolloverTime = computed(() => settings.value?.rolloverTime ?? "12:00");
+const visibleStudents = computed(() => settings.value?.visibleStudents ?? null);
+
+const { day, students } = useScheduleDay(wilmaData, now, rolloverTime, visibleStudents);
 
 const currentHour = computed(() => now.value.getHours());
+const canEdit = computed(() => dashboard.value?.localClient ?? false);
 
 function minutesOfDay(value: string): number {
   const [h, m] = value.split(":").map(Number);
@@ -32,12 +54,12 @@ function minutesOfDay(value: string): number {
  * that is later in the day than the end.
  */
 const isNight = computed(() => {
-  const settings = dashboard.value?.settings;
-  if (!settings) return false;
-  const current = now.value.getHours() * 60 + now.value.getMinutes();
-  const start = minutesOfDay(settings.nightModeStart);
-  const end = minutesOfDay(settings.nightModeEnd);
-  return start <= end ? current >= start && current < end : current >= start || current < end;
+  const current = settings.value;
+  if (!current) return false;
+  const nowMinutes = now.value.getHours() * 60 + now.value.getMinutes();
+  const start = minutesOfDay(current.nightModeStart);
+  const end = minutesOfDay(current.nightModeEnd);
+  return start <= end ? nowMinutes >= start && nowMinutes < end : nowMinutes >= start || nowMinutes < end;
 });
 </script>
 
@@ -51,37 +73,64 @@ const isNight = computed(() => {
       <div class="topbar__meta">
         <span v-if="dashboard?.place" class="topbar__place">{{ dashboard.place }}</span>
         <span v-if="!connected" class="badge badge--error">palvelin ei vastaa</span>
+        <button
+          v-if="canEdit"
+          class="topbar__settings"
+          type="button"
+          title="Asetukset"
+          @click="settingsOpen = true"
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path
+              d="M12 3.2v2M12 18.8v2M3.2 12h2M18.8 12h2M5.8 5.8l1.4 1.4M16.8 16.8l1.4 1.4M18.2 5.8l-1.4 1.4M7.2 16.8l-1.4 1.4"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span class="sr-only">Asetukset</span>
+        </button>
       </div>
     </header>
 
     <main class="grid">
-      <section class="grid__slot grid__slot--schedule card card--placeholder">
-        <h2 class="card__title">Lukujärjestys</h2>
-        <p class="placeholder">Tulossa vaiheessa 3–4.</p>
-      </section>
+      <ScheduleCard
+        class="grid__slot--schedule"
+        :snapshot="wilma"
+        :day="day"
+        :layout="settings?.scheduleLayout ?? 'split'"
+        :rollover-time="rolloverTime"
+      />
+
+      <WeatherCard class="grid__slot--weather" :snapshot="weather" :place="dashboard?.place" />
+
+      <MessagesCard
+        class="grid__slot--messages"
+        :snapshot="wilma"
+        :hide-previews="settings?.hideMessagePreviews ?? false"
+      />
 
       <ElectricityCard class="grid__slot--power" :snapshot="electricity" :current-hour="currentHour" />
 
-      <section class="grid__slot grid__slot--weather card card--placeholder">
-        <h2 class="card__title">Sää</h2>
-        <p class="placeholder">Tulossa vaiheessa 2.</p>
-      </section>
+      <CalendarCard class="grid__slot--calendar" :snapshot="calendar" />
 
-      <section class="grid__slot grid__slot--messages card card--placeholder">
-        <h2 class="card__title">Wilma-viestit</h2>
-        <p class="placeholder">Tulossa vaiheessa 3.</p>
-      </section>
-
-      <section class="grid__slot grid__slot--calendar card card--placeholder">
-        <h2 class="card__title">Kalenteri</h2>
-        <p class="placeholder">Tulossa vaiheessa 5.</p>
-      </section>
-
-      <section class="grid__slot grid__slot--notes card card--placeholder">
-        <h2 class="card__title">Muistilista</h2>
-        <p class="placeholder">Tulossa vaiheessa 5.</p>
-      </section>
+      <NotesCard
+        class="grid__slot--notes"
+        :notes="dashboard?.notes ?? []"
+        :can-edit="canEdit"
+        @refresh="refresh"
+      />
     </main>
+
+    <SettingsPanel
+      v-if="settings"
+      :settings="settings"
+      :students="students"
+      :open="settingsOpen"
+      @close="settingsOpen = false"
+      @saved="refresh"
+    />
   </div>
 </template>
 
@@ -135,13 +184,36 @@ const isNight = computed(() => {
   text-transform: uppercase;
 }
 
+.topbar__settings {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0.5rem;
+  display: flex;
+  border-radius: 10px;
+}
+
+.topbar__settings:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
 .grid {
   flex: 1;
   min-height: 0;
   display: grid;
   gap: var(--gap);
   grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.5fr) minmax(0, 1.15fr) minmax(0, 1fr);
   grid-template-areas:
     "schedule weather"
     "messages power"
@@ -167,30 +239,19 @@ const isNight = computed(() => {
   grid-area: notes;
 }
 
-.card--placeholder {
-  justify-content: flex-start;
-  gap: 0.5rem;
-}
-
-.placeholder {
-  margin: 0;
-  color: var(--text-faint);
-  font-size: 0.9rem;
-}
-
-/* Narrower screens (a phone checking the shopping list) fall back to one column. */
+/* A phone checking the shopping list gets one column, notes first. */
 @media (max-width: 900px) {
   .grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: none;
     grid-auto-rows: minmax(9rem, auto);
     grid-template-areas:
-      "schedule"
-      "messages"
-      "power"
-      "weather"
+      "notes"
       "calendar"
-      "notes";
+      "weather"
+      "power"
+      "schedule"
+      "messages";
     overflow-y: auto;
   }
 }

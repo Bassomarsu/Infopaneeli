@@ -74,13 +74,24 @@ Tämä on testattu (`npm test`).
   `EDIT_PIN`-koodin.
 - Salasanoja, evästeitä eikä viestien sisältöjä ei kirjoiteta lokiin.
 
-## Tila
+## Moduulit
 
-| Vaihe | Sisältö | Tila |
+| Kortti | Lähde | Päivitysväli |
 |---|---|---|
-| 1 | Runko, lokitus, pörssisähkö | valmis |
-| 2 | Sää | kesken |
-| 3 | Wilma: viestit ja lukujärjestys | kesken |
-| 4 | Lukujärjestyksen asetukset ja päivänvaihto | kesken |
-| 5 | Kalenteri ja muistilista | kesken |
-| 6 | Kioskikäyttöönotto Surfacella | kesken |
+| Lukujärjestys | Wilma (`@wilm-ai/wilma-client`, naulattu 1.4.2) | 20 min, ei öisin |
+| Wilma-viestit | sama | sama |
+| Sää | Open-Meteo | 20 min |
+| Pörssisähkö | porssisahko.net | 20 min |
+| Kalenteri | Google Calendarin ICS-syöte | 15 min |
+| Muistilista | oma SQLite | — |
+
+Lukujärjestys näyttää kuluvan päivän ja vaihtaa itsestään seuraavaan
+koulupäivään asetettuna kellonaikana (oletus 12:00). Viikonloput ja tunnittomat
+päivät ohitetaan. Näytettävät lapset ja asettelu (rinnakkain / allekkain)
+valitaan asetuksista, jotka tallennetaan palvelimelle.
+
+## Käyttöönotto Surfacella
+
+Katso [`asennus/KAYTTOONOTTO.md`](asennus/KAYTTOONOTTO.md) — automaattikäynnistys,
+kioskitila, virranhallinta, sekä **laiteriskit joita SP4:n käyttö seinänäyttönä
+sisältää**.

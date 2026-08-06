@@ -20,17 +20,36 @@ const logFile = (): string => {
   return latest;
 };
 
-function linesFor(provider: string): Array<Record<string, unknown>> {
-  // pino's file transport is async; give it a moment to flush.
+function linesFor(provider: string, event?: string): Array<Record<string, unknown>> {
   return fs
     .readFileSync(logFile(), "utf8")
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>)
-    .filter((entry) => entry["provider"] === provider);
+    .filter((entry) => entry["provider"] === provider && (event === undefined || entry["event"] === event));
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * pino writes through an async transport, so a line that has been logged is
+ * not necessarily on disk yet. Poll until the expected count appears, then
+ * settle briefly so that a bug producing *extra* lines still fails the
+ * assertion rather than racing past it.
+ */
+async function awaitLines(
+  provider: string,
+  event: string,
+  expected: number,
+  timeoutMs = 5_000,
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && linesFor(provider, event).length < expected) {
+    await sleep(50);
+  }
+  await sleep(250);
+  return linesFor(provider, event);
+}
 
 async function testRepeatedFailureLogsOnce(): Promise<void> {
   const id = `test-flaky-${process.pid}`;
@@ -48,11 +67,10 @@ async function testRepeatedFailureLogsOnce(): Promise<void> {
     await provider.runOnce();
   }
   provider.stop();
-  await sleep(300);
 
   assert.equal(attempts, 5, "every cycle should have attempted a fetch");
 
-  const failed = linesFor(id).filter((l) => l["event"] === "provider_failed");
+  const failed = await awaitLines(id, "provider_failed", 1);
   assert.equal(
     failed.length,
     1,
@@ -85,11 +103,10 @@ async function testBreakerStopsAfterThreeFatalErrors(): Promise<void> {
     await provider.runOnce();
   }
   provider.stop();
-  await sleep(300);
 
   assert.equal(attempts, 3, `breaker must stop after 3 attempts, got ${attempts}`);
 
-  const opened = linesFor(id).filter((l) => l["event"] === "provider_breaker_open");
+  const opened = await awaitLines(id, "provider_breaker_open", 1);
   assert.equal(opened.length, 1, "breaker opening must be logged exactly once");
 
   console.log("ok  circuit breaker stops after three fatal errors");
@@ -111,9 +128,8 @@ async function testRecoveryIsLogged(): Promise<void> {
   shouldFail = false;
   await provider.runOnce();
   provider.stop();
-  await sleep(300);
 
-  const recovered = linesFor(id).filter((l) => l["event"] === "provider_recovered");
+  const recovered = await awaitLines(id, "provider_recovered", 1);
   assert.equal(recovered.length, 1, "recovery must be logged exactly once");
   assert.equal(provider.snapshot().status, "ok");
   assert.deepEqual(provider.snapshot().data, { value: 42 });
@@ -137,7 +153,6 @@ async function testStaleDataSurvivesFailure(): Promise<void> {
   shouldFail = true;
   await provider.runOnce();
   provider.stop();
-  await sleep(200);
 
   const snapshot = provider.snapshot();
   assert.equal(snapshot.status, "stale", "last good data must keep being served");
@@ -147,10 +162,44 @@ async function testStaleDataSurvivesFailure(): Promise<void> {
   console.log("ok  last good data survives a failure");
 }
 
+/**
+ * A restart warms every provider from the on-disk cache, which leaves it in
+ * the `stale` state before it has failed at anything. That must not be
+ * reported as a recovery, or every reboot would write a line per provider.
+ */
+async function testWarmStartIsNotARecovery(): Promise<void> {
+  const id = `test-warm-${process.pid}`;
+
+  const first = new Provider<{ value: number }>({
+    id,
+    intervalMs: 60_000,
+    fetch: async () => ({ value: 1 }),
+  });
+  await first.runOnce();
+  first.stop();
+
+  // A second instance with the same id is what a process restart looks like.
+  const restarted = new Provider<{ value: number }>({
+    id,
+    intervalMs: 60_000,
+    fetch: async () => ({ value: 2 }),
+  });
+  assert.equal(restarted.snapshot().status, "stale", "a warm start begins as stale");
+  await restarted.runOnce();
+  restarted.stop();
+
+  await sleep(400);
+  const recovered = linesFor(id, "provider_recovered");
+  assert.equal(recovered.length, 0, "a warm start must not be logged as a recovery");
+
+  console.log("ok  warm start is not reported as a recovery");
+}
+
 await testRepeatedFailureLogsOnce();
 await testBreakerStopsAfterThreeFatalErrors();
 await testRecoveryIsLogged();
 await testStaleDataSurvivesFailure();
+await testWarmStartIsNotARecovery();
 
 console.log("\nall provider tests passed");
 process.exit(0);

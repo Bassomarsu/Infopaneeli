@@ -7,6 +7,9 @@ import { logger } from "./core/logging.ts";
 import { registry } from "./core/provider.ts";
 import { registerApiRoutes } from "./routes/api.ts";
 import { createElectricityProvider } from "./providers/electricity.ts";
+import { createWeatherProvider } from "./providers/weather.ts";
+import { createCalendarProvider } from "./providers/calendar.ts";
+import { createWilmaProvider } from "./providers/wilma.ts";
 
 const app = Fastify({
   // Widened to the base type on purpose: passing the concrete pino logger type
@@ -19,7 +22,12 @@ const app = Fastify({
 // already drops them — the kiosk polling every minute costs nothing. Raising
 // LOG_LEVEL to debug turns them back on, which is exactly when you want them.
 
+// Each provider staggers its own first run so startup does not fire four
+// outbound requests at once.
+registry.register(createWilmaProvider());
 registry.register(createElectricityProvider());
+registry.register(createWeatherProvider());
+registry.register(createCalendarProvider());
 
 await registerApiRoutes(app);
 

@@ -33,6 +33,68 @@ export interface ElectricityData {
   currentHour: number;
 }
 
+export interface ScheduleLesson {
+  date: string;
+  dayOfWeek: number;
+  start: string;
+  end: string;
+  subject: string;
+  subjectCode: string;
+  teacher: string;
+  teacherCode: string;
+  groupId: number;
+}
+
+export interface HomeworkItem {
+  date: string;
+  subject: string;
+  subjectCode: string;
+  homework: string;
+  teacher: string;
+  teacherCode: string;
+}
+
+export interface UpcomingExam {
+  examId: number;
+  date: string;
+  name: string;
+  subject: string;
+  subjectCode: string;
+  topic: string | null;
+  teacher: string;
+  teacherCode: string;
+}
+
+export interface WilmaStudent {
+  studentNumber: string;
+  name: string;
+}
+
+export interface WilmaMessage {
+  id: number;
+  subject: string;
+  sentAt: string;
+  senderName: string | null;
+  unread: boolean;
+  content: string | null;
+  studentNumber: string;
+}
+
+export interface WilmaStudentData {
+  student: WilmaStudent;
+  lessons: ScheduleLesson[];
+  homework: HomeworkItem[];
+  upcomingExams: UpcomingExam[];
+  coveredDates: string[];
+}
+
+export interface WilmaData {
+  students: WilmaStudent[];
+  byStudent: Record<string, WilmaStudentData>;
+  messages: WilmaMessage[];
+  unreadCount: number;
+}
+
 export interface Note {
   id: number;
   text: string;
@@ -58,6 +120,7 @@ export interface Dashboard {
   localClient: boolean;
   providers: {
     electricity?: ProviderSnapshot<ElectricityData>;
+    wilma?: ProviderSnapshot<WilmaData>;
     [key: string]: ProviderSnapshot<unknown> | undefined;
   };
 }

@@ -38,9 +38,43 @@ export interface ProviderOptions<T> {
   maxBackoffMs?: number;
   /** Consecutive fatal errors after which the provider stops trying. */
   fatalLimit?: number;
+  /** Hard ceiling for one fetch attempt. */
+  timeoutMs?: number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A fetch that never settles would silently stop the provider forever, since
+ * the next run is only scheduled after the current one finishes. Individual
+ * HTTP calls have their own timeouts, but a provider that makes several calls
+ * in sequence needs an outer bound too.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, id: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${id}: fetch timed out after ${ms} ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
+/**
+ * Spreads scheduled runs by ±10 %. Without it every provider would fire on an
+ * exact repeating boundary, which both bunches up the requests and looks more
+ * like a bot than a browser to whatever is on the other end.
+ */
+function withJitter(delayMs: number): number {
+  if (delayMs <= 0) return 0;
+  return Math.round(delayMs * (0.9 + Math.random() * 0.2));
+}
 
 /**
  * Wraps one data source. Everything that keeps the log small and the upstream
@@ -54,6 +88,8 @@ export class Provider<T = unknown> {
   private readonly options: ProviderOptions<T>;
   private readonly maxBackoffMs: number;
   private readonly fatalLimit: number;
+  private readonly timeoutMs: number;
+  private running = false;
 
   private data: T | null = null;
   private fetchedAt: string | null = null;
@@ -73,6 +109,7 @@ export class Provider<T = unknown> {
     this.id = options.id;
     this.maxBackoffMs = options.maxBackoffMs ?? 30 * 60 * 1000;
     this.fatalLimit = options.fatalLimit ?? 3;
+    this.timeoutMs = options.timeoutMs ?? 90_000;
 
     // Warm up from the last-good cache so the screen has something to show
     // immediately after a restart, before the first fetch completes.
@@ -107,16 +144,18 @@ export class Provider<T = unknown> {
 
   private schedule(delayMs: number): void {
     if (this.stopped) return;
+    // Always replace rather than add, so a manual runOnce() interleaved with
+    // the scheduled one cannot leave two timers racing.
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       void this.runOnce();
-    }, delayMs);
+    }, withJitter(delayMs));
     this.timer.unref?.();
   }
 
   /** Runs a fetch cycle and schedules the next one. */
   async runOnce(): Promise<void> {
-    if (this.stopped) return;
+    if (this.stopped || this.running) return;
 
     const now = new Date();
 
@@ -131,13 +170,16 @@ export class Provider<T = unknown> {
       return;
     }
 
+    this.running = true;
     try {
-      const data = await this.options.fetch();
+      const data = await withTimeout(this.options.fetch(), this.timeoutMs, this.id);
       this.onSuccess(data);
       this.schedule(this.options.intervalMs);
     } catch (err) {
       this.onFailure(err);
       this.schedule(this.breakerOpen ? this.options.intervalMs : this.backoffMs());
+    } finally {
+      this.running = false;
     }
   }
 
@@ -147,8 +189,11 @@ export class Provider<T = unknown> {
   }
 
   private onSuccess(data: T): void {
-    const recovered = this.status === "failed" || this.status === "stale";
-    const downForMs = this.failingSince === null ? 0 : Date.now() - this.failingSince;
+    // `failingSince` is the only honest signal that this process actually saw a
+    // failure. Testing the status instead would report a recovery on every
+    // restart, because a provider warmed from the cache starts out `stale`.
+    const hadFailed = this.failingSince !== null;
+    const downForMs = hadFailed ? Date.now() - (this.failingSince ?? 0) : 0;
 
     this.data = data;
     this.fetchedAt = new Date().toISOString();
@@ -162,7 +207,7 @@ export class Provider<T = unknown> {
     writeCache(this.id, data, this.fetchedAt);
 
     // Only the FAILED -> OK edge is logged, never the steady state.
-    if (recovered && downForMs > 0) {
+    if (hadFailed) {
       logger.warn(
         { event: "provider_recovered", provider: this.id, downForMinutes: Math.round(downForMs / 60000) },
         "provider recovered",
