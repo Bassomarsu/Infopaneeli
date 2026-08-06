@@ -51,13 +51,20 @@ function preview(message: WilmaMessage): string {
     </div>
 
     <ul v-else class="messages">
-      <li v-for="message in messages" :key="message.id" class="message" :class="{ 'message--unread': message.unread }">
+      <li
+        v-for="message in messages"
+        :key="message.id"
+        class="message"
+        :class="{ 'message--unread': message.unread === true }"
+      >
         <div class="message__row">
-          <span class="message__sender">{{ message.senderName ?? "Tuntematon lähettäjä" }}</span>
+          <!-- The sender only becomes known once the detail has been fetched;
+               until then the line stays empty rather than claiming ignorance. -->
+          <span class="message__sender">{{ message.senderName ?? "" }}</span>
           <span class="message__time tnum">{{ sentLabel(message.sentAt) }}</span>
         </div>
         <div class="message__subject">
-          <span v-if="message.unread" class="message__dot" aria-hidden="true" />
+          <span v-if="message.unread === true" class="message__dot" aria-hidden="true" />
           {{ message.subject }}
           <span v-if="studentName(message)" class="message__student">{{ studentName(message) }}</span>
         </div>

@@ -27,7 +27,7 @@ Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 | `npm run dev:web` | Vite-kehityspalvelin frontendille |
 | `npm run build` | Kääntää frontendin `web/dist`-kansioon |
 | `npm run typecheck` | Tyyppitarkistus molemmille työtiloille |
-| `npm test` | Provider-kerroksen sopimustestit |
+| `npm test` | Provider-kerroksen sopimustestit ja Wilma-hakulogiikan testit |
 
 ## Arkkitehtuuri
 
@@ -64,6 +64,22 @@ Wilman kirjautumisvirheet ovat *fataaleja*: kolmen peräkkäisen jälkeen
 katkaisija menee kiinni eikä yrityksiä enää tehdä. Väärällä salasanalla
 silmukassa hakkaaminen olisi nopein tapa lukita koko perheen Wilma-tili.
 Tämä on testattu (`npm test`).
+
+Muut virheet — 500, 429, satunnainen 404 — **eivät** pudota istuntoa. Ne
+jäävät providerin backoffin hoidettavaksi samalla istunnolla, jottei
+tilapäinen häiriö muuttuisi uusien kirjautumisten sarjaksi juuri silloin kun
+Wilma on jo vaikeuksissa.
+
+### Wilman kysely on niukkaa
+
+- Kuluva viikko haetaan yhdellä kutsulla per lapsi. Seuraavaa viikkoa kysytään
+  vain jos kuluvassa ei ole mitään tämän päivän jälkeen, ja silloinkin
+  korkeintaan kuuden tunnin välein — muuten viikonloput ja kesäloma tarkoittaisivat
+  turhaa kutsua joka 20. minuutti viikkokausia.
+- Viestin lähettäjä ja luettu-tila eivät ole listauksessa lainkaan, vaan vain
+  viestin omissa tiedoissa. Ne haetaan kerran per viesti ja kannetaan eteenpäin;
+  vielä lukemattomat tarkistetaan uudelleen korkeintaan tunnin välein ja
+  korkeintaan kolme per kierros.
 
 ## Tietoturva
 

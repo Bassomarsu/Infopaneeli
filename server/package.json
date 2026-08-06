@@ -7,7 +7,8 @@
     "dev": "node --env-file-if-exists=../.env --watch src/index.ts",
     "start": "node --env-file-if-exists=../.env src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test:providers": "node test/provider-transitions.ts"
+    "test:providers": "node test/provider-transitions.ts",
+    "test:wilma": "node test/wilma-fetch.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",

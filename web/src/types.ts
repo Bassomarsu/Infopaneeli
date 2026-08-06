@@ -74,9 +74,12 @@ export interface WilmaMessage {
   id: number;
   subject: string;
   sentAt: string;
+  /** Null until the message detail has been fetched. */
   senderName: string | null;
-  unread: boolean;
+  /** Null means "not known yet", which is different from "read". */
+  unread: boolean | null;
   content: string | null;
+  detailCheckedAt: string | null;
   studentNumber: string;
 }
 
@@ -86,6 +89,7 @@ export interface WilmaStudentData {
   homework: HomeworkItem[];
   upcomingExams: UpcomingExam[];
   coveredDates: string[];
+  nextWeekCheckedAt: string | null;
 }
 
 export interface WilmaData {

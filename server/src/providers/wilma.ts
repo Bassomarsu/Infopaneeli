@@ -5,6 +5,7 @@ import {
   WilmaClient,
   type HomeworkItem,
   type Message,
+  type OverviewData,
   type ScheduleLesson,
   type StudentInfo,
   type UpcomingExam,
@@ -24,10 +25,14 @@ export interface WilmaMessage {
   id: number;
   subject: string;
   sentAt: string;
+  /** Null until the message detail has been fetched — the list does not carry it. */
   senderName: string | null;
-  unread: boolean;
+  /** Null means "not known yet", which is different from "read". */
+  unread: boolean | null;
   /** Plain-text body, fetched once per message and then reused from cache. */
   content: string | null;
+  /** When the detail was last read from Wilma, so the read state can be refreshed. */
+  detailCheckedAt: string | null;
   studentNumber: string;
 }
 
@@ -38,6 +43,8 @@ export interface WilmaStudentData {
   upcomingExams: UpcomingExam[];
   /** Dates (YYYY-MM-DD) the lesson data is known to cover. */
   coveredDates: string[];
+  /** Last time the following week was queried, regardless of whether it had lessons. */
+  nextWeekCheckedAt: string | null;
 }
 
 export interface WilmaData {
@@ -47,8 +54,19 @@ export interface WilmaData {
   unreadCount: number;
 }
 
-/** How many message bodies to pull per cycle for messages we have not seen. */
-const MAX_NEW_BODIES_PER_CYCLE = 5;
+/** How many message details to pull per cycle for messages we have not seen. */
+const MAX_NEW_DETAILS_PER_CYCLE = 8;
+
+/**
+ * Messages still marked unread are re-checked occasionally so the badge does
+ * not keep counting something that was read on a phone hours ago. Capped hard,
+ * because this is the one request that would otherwise repeat forever.
+ */
+const MAX_RECHECKS_PER_CYCLE = 3;
+const RECHECK_AFTER_MS = 60 * 60 * 1000;
+
+/** How long a "next week" lookup is trusted before it is worth asking again. */
+const NEXT_WEEK_TTL_MS = 6 * 60 * 60 * 1000;
 
 /** Gap between per-child requests so the school server never sees a burst. */
 const STUDENT_STAGGER_MS = 5_000;
@@ -127,22 +145,34 @@ class WilmaClientPool {
 const pool = new WilmaClientPool();
 
 /**
- * Wilma's `status` field is not documented. Everything observed so far uses a
- * non-zero value for messages that have been opened, so an absent or zero
- * status is treated as unread — erring towards showing the badge rather than
- * hiding a message nobody has read.
+ * Only the message *detail* carries a status; the list parser never sets one.
+ * Wilma's status values are undocumented, but a zero or absent value on a
+ * detail response means the message has not been opened.
  */
-function isUnread(message: Message): boolean {
-  const status = message.status;
+function isUnread(detail: Message): boolean {
+  const status = detail.status;
   return status === null || status === undefined || status === 0;
 }
 
-async function fetchStudent(
+/**
+ * Only the parts of `WilmaClient` this provider actually uses. Narrowing it
+ * here is what makes the schedule and message logic testable without a live
+ * Wilma to talk to.
+ */
+export interface WilmaClientLike {
+  overview: { get: () => Promise<OverviewData> };
+  schedule: { list: (opts?: { date?: string }) => Promise<ScheduleLesson[]> };
+  messages: {
+    list: (folder?: "inbox") => Promise<Message[]>;
+    get: (messageId: number) => Promise<Message>;
+  };
+}
+
+export async function fetchStudent(
+  client: WilmaClientLike,
   student: StudentInfo,
   previous: WilmaData | null,
 ): Promise<{ data: WilmaStudentData; messages: WilmaMessage[] }> {
-  const client = await pool.clientFor(student.studentNumber);
-
   // One request covers schedule, homework and exams for the current week.
   const overview = await client.overview.get();
   const lessons = [...overview.schedule];
@@ -151,30 +181,54 @@ async function fetchStudent(
   const today = localDateKey();
   covered.add(today);
 
-  // Both today and the next school day have to be cached before the midday
-  // rollover, or the switch itself would trigger a Wilma request. If nothing
-  // in the current week falls after today — a Friday — the next school day is
-  // in the following week. One extra request, once a week.
-  const needsNextWeek = !lessons.some((lesson) => lesson.date > today);
-  if (needsNextWeek) {
-    const nextWeek = shiftDateKey(today, 7);
-    const extra = await client.schedule.list({ date: toFinnishDate(nextWeek) });
-    for (const lesson of extra) {
-      if (!lessons.some((l) => l.date === lesson.date && l.start === lesson.start && l.subject === lesson.subject)) {
-        lessons.push(lesson);
-      }
-      covered.add(lesson.date);
-    }
-    logger.debug(
-      { event: "wilma_next_week", student: student.studentNumber, date: nextWeek, lessons: extra.length },
-      "fetched next week's schedule",
+  const cached = previous?.byStudent[student.studentNumber] ?? null;
+  const addLesson = (lesson: ScheduleLesson): void => {
+    const duplicate = lessons.some(
+      (l) => l.date === lesson.date && l.start === lesson.start && l.subject === lesson.subject,
     );
+    if (!duplicate) lessons.push(lesson);
+    covered.add(lesson.date);
+  };
+
+  // Both today and the next school day have to be cached before the midday
+  // rollover, or the switch itself would trigger a Wilma request. When nothing
+  // in the current week falls after today — a Friday, a weekend, a holiday —
+  // the answer is in the following week.
+  //
+  // The lookup is throttled by time rather than by result: during a weekend or
+  // a school holiday the "is there anything after today" test is true on every
+  // single cycle, so keying off the result alone would re-ask every 20 minutes
+  // for days on end, including through the whole summer when the answer is
+  // always "nothing".
+  let nextWeekCheckedAt = cached?.nextWeekCheckedAt ?? null;
+  const needsFutureDays = !lessons.some((lesson) => lesson.date > today);
+
+  if (needsFutureDays) {
+    // Reuse what the previous cycle already learned about days after today.
+    for (const lesson of cached?.lessons ?? []) {
+      if (lesson.date > today) addLesson(lesson);
+    }
+
+    const age = nextWeekCheckedAt === null ? Infinity : Date.now() - new Date(nextWeekCheckedAt).getTime();
+    if (age > NEXT_WEEK_TTL_MS) {
+      const nextWeek = shiftDateKey(today, 7);
+      const extra = await client.schedule.list({ date: toFinnishDate(nextWeek) });
+      for (const lesson of extra) addLesson(lesson);
+      nextWeekCheckedAt = new Date().toISOString();
+      logger.debug(
+        { event: "wilma_next_week", student: student.studentNumber, date: nextWeek, lessons: extra.length },
+        "fetched next week's schedule",
+      );
+    }
   }
 
-  lessons.sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+  // Anything already in the past is noise on a display that only ever shows
+  // today or later, and dropping it stops the carried-forward set from growing.
+  const pruned = lessons.filter((lesson) => lesson.date >= today);
+  pruned.sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
 
   const rawMessages = await client.messages.list("inbox");
-  const messages = await withBodies(client, rawMessages, student.studentNumber, previous);
+  const messages = await withDetails(client, rawMessages, student.studentNumber, previous);
 
   // An empty parse with no HTTP error is the signature a Wilma update leaves
   // behind, and it is easy to miss unless it is called out explicitly.
@@ -196,51 +250,70 @@ async function fetchStudent(
   return {
     data: {
       student: { studentNumber: student.studentNumber, name: student.name },
-      lessons,
+      lessons: pruned,
       homework: overview.homework,
       upcomingExams: overview.upcomingExams,
       coveredDates: [...covered].sort(),
+      nextWeekCheckedAt,
     },
     messages,
   };
 }
 
 /**
- * Message bodies are a separate request each, so they are fetched once and
- * then carried forward from the previous payload. Without this the provider
- * would re-download every visible message every cycle.
+ * The inbox listing only yields id, subject and timestamp — sender and read
+ * state exist solely on the per-message detail. So the detail is fetched once
+ * per message, carried forward between cycles, and re-checked only while the
+ * message still counts as unread.
  */
-async function withBodies(
-  client: WilmaClient,
+async function withDetails(
+  client: WilmaClientLike,
   raw: Message[],
   studentNumber: string,
   previous: WilmaData | null,
 ): Promise<WilmaMessage[]> {
-  const knownBodies = new Map<number, string | null>();
-  for (const message of previous?.messages ?? []) {
-    if (message.content !== null) knownBodies.set(message.id, message.content);
-  }
+  const known = new Map<number, WilmaMessage>();
+  for (const message of previous?.messages ?? []) known.set(message.id, message);
 
-  const messages: WilmaMessage[] = raw.slice(0, 20).map((message) => ({
-    id: message.wilmaId,
-    subject: message.subject,
-    sentAt: message.sentAt instanceof Date ? message.sentAt.toISOString() : String(message.sentAt),
-    senderName: message.senderName ?? null,
-    unread: isUnread(message),
-    content: knownBodies.get(message.wilmaId) ?? null,
-    studentNumber,
-  }));
+  const messages: WilmaMessage[] = raw.slice(0, 20).map((message) => {
+    const cached = known.get(message.wilmaId);
+    return {
+      id: message.wilmaId,
+      subject: message.subject,
+      sentAt: message.sentAt instanceof Date ? message.sentAt.toISOString() : String(message.sentAt),
+      senderName: cached?.senderName ?? null,
+      unread: cached?.unread ?? null,
+      content: cached?.content ?? null,
+      detailCheckedAt: cached?.detailCheckedAt ?? null,
+      studentNumber,
+    };
+  });
 
+  const now = Date.now();
   let fetched = 0;
+  let rechecked = 0;
+
   for (const message of messages) {
-    if (message.content !== null || fetched >= MAX_NEW_BODIES_PER_CYCLE) continue;
+    const neverFetched = message.detailCheckedAt === null;
+    const staleUnread =
+      !neverFetched &&
+      message.unread === true &&
+      now - new Date(message.detailCheckedAt ?? 0).getTime() > RECHECK_AFTER_MS;
+
+    if (neverFetched && fetched >= MAX_NEW_DETAILS_PER_CYCLE) continue;
+    if (!neverFetched && (!staleUnread || rechecked >= MAX_RECHECKS_PER_CYCLE)) continue;
+
     try {
-      const full = await client.messages.get(message.id);
-      message.content = stripHtml(full.content ?? "");
-      fetched += 1;
+      const detail = await client.messages.get(message.id);
+      message.senderName = detail.senderName ?? message.senderName;
+      message.unread = isUnread(detail);
+      message.content = stripHtml(detail.content ?? "");
+      message.detailCheckedAt = new Date().toISOString();
+      if (neverFetched) fetched += 1;
+      else rechecked += 1;
     } catch (err) {
       // A single unreadable message must not fail the whole provider.
-      logger.debug({ event: "wilma_body_failed", messageId: message.id, err }, "message body fetch failed");
+      logger.debug({ event: "wilma_detail_failed", messageId: message.id, err }, "message detail fetch failed");
     }
   }
 
@@ -281,7 +354,8 @@ async function fetchWilma(previous: WilmaData | null): Promise<WilmaData> {
     // Sequential with a gap: never two concurrent requests to the school.
     for (const [index, student] of students.entries()) {
       if (index > 0) await sleep(STUDENT_STAGGER_MS);
-      const result = await fetchStudent(student, previous);
+      const client = await pool.clientFor(student.studentNumber);
+      const result = await fetchStudent(client, student, previous);
       byStudent[student.studentNumber] = result.data;
       allMessages.push(...result.messages);
     }
@@ -296,12 +370,18 @@ async function fetchWilma(previous: WilmaData | null): Promise<WilmaData> {
       students: students.map((s) => ({ studentNumber: s.studentNumber, name: s.name })),
       byStudent,
       messages,
-      unreadCount: messages.filter((m) => m.unread).length,
+      // Counts only what is actually known to be unread; a message whose
+      // detail has not been read yet is not guessed at in either direction.
+      unreadCount: messages.filter((m) => m.unread === true).length,
     };
   } catch (err) {
     const translated = translateError(err);
-    // A dead session cannot be repaired by retrying with the same client.
-    if (translated instanceof FatalProviderError || err instanceof APIError) pool.reset();
+    // Only an authentication failure means the session is genuinely dead. A
+    // 500, a 429 or a stray 404 leaves it perfectly usable, and dropping the
+    // pool there would turn one transient error into a fresh login for the
+    // student list plus one per child on the next cycle — a relogin burst at
+    // exactly the moment Wilma is already struggling or rate limiting.
+    if (translated instanceof FatalProviderError) pool.reset();
     throw translated;
   }
 }
