@@ -165,7 +165,10 @@ export class Provider<T = unknown> {
       return;
     }
 
-    if (this.options.shouldRun && !this.options.shouldRun(now)) {
+    // Quiet hours only apply once there is something to show. Otherwise
+    // setting the display up late in the evening would leave every card empty
+    // until morning, with no way to tell a misconfiguration from a quiet night.
+    if (this.data !== null && this.options.shouldRun && !this.options.shouldRun(now)) {
       this.schedule(this.options.intervalMs);
       return;
     }
