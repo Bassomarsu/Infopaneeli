@@ -167,19 +167,55 @@ saa tarvita verkkoa.
   "Vain infonäytöllä" eikä se jää pyörimään ikuiseen "Haetaan…"-tilaan.
   Todennettu oikealla datalla: lähiverkon vastauksesta ei löydy lapsen nimeä,
   oppilasnumeroa, oppiainetta eikä opettajan nimeä.
-- Muistilistan ja asetusten muokkaus muualta kuin näyttölaitteelta vaatii
-  `EDIT_PIN`-koodin.
 - Salasanoja, evästeitä eikä viestien sisältöjä ei kirjoiteta lokiin.
+- **Kaksi PIN-koodia (`EDIT_PIN` ja `FULL_PIN`).** Puhelimessa yläpalkin
+  lukkokuvake avaa syöttökentän; koodi jää selaimen muistiin, ja sen voi
+  unohtaa dialogista tai asetuksista. Molemmat menevät samaan kenttään —
+  palvelin päättää tason ja kertoo sen näytöllä.
+
+  | Koodi | Antaa | Ei anna |
+  |---|---|---|
+  | `EDIT_PIN` | Muistilista, asetukset, hälytykset | Lasten Wilma-tiedot |
+  | `FULL_PIN` | Kaiken, myös Wilma-tiedot | — |
+
+  PIN ei ole sidottu verkko-osoitteeseen, joten se toimii silloinkin kun
+  puhelimen IP:tä ei tiedä tai DHCP vaihtaa sen — juuri se tilanne johon
+  `TRUSTED_HOSTS` ei taivu.
+
+  **`FULL_PIN` on vähintään kuusi merkkiä.** Lyhyempää ei oteta käyttöön
+  lainkaan: taso jää pois päältä ja loki kertoo miksi. Pelkkä varoitus jättäisi
+  heikon suojan voimaan hiljaa, ja käyttäjä luulisi suojanneensa lasten tiedot.
+  `EDIT_PIN`-koodille ei vastaavaa rajaa — se avaa vain ostoslistan ja
+  asetukset, eli eri panokset ja eri vaatimus. Tyhjä arvo tarkoittaa että
+  kyseinen taso ei ole käytössä, eikä käyttöliittymä tarjoa sitä.
+
+  Arvausrajoitin: viisi väärää yritystä lukitsee lähteen 15 minuutiksi, ja
+  lukituksen aikana myös oikea koodi torjutaan. Kuusimerkkisen koodin
+  läpikäynti kestäisi vuosikymmeniä. Rajoitinta kuluttaa **vain aito väärä
+  arvaus** — puuttuva otsikko tai oikea koodi väärällä tasolla ei koskaan.
+  Ilman tätä erottelua tavallisen muokkauskoodin käyttäjä olisi lukinnut
+  itsensä ulos muutamassa minuutissa, koska sama otsikko lähtee jokaisessa
+  taustapollauksessa.
+
+  Rehellinen varauma: koodi jää selaimen muistiin kunnes se erikseen
+  unohdetaan, eikä sitä ole sidottu laitteeseen. Jos puhelin katoaa, ainoa
+  keino perua sen pääsy on vaihtaa koodi — mikä katkaisee kaikki laitteet
+  kerralla.
 - **Luotetut laitteet (`TRUSTED_HOSTS`).** `.env`-tiedostoon voi listata
   pilkulla erotettuna IP-osoitteita ja/tai konenimiä (esim. oma puhelin), jotka
   saavat täsmälleen samat oikeudet kuin näyttölaite itse: näkevät Wilma-datan,
   voivat merkitä viestin luetuksi ja muokata muistilistaa ja asetuksia ilman
   PIN-koodia. Lista on **tarkoituksella vain `.env`:ssä**, ei asetusnäkymässä
-  eikä rajapinnassa — jos sitä voisi laajentaa PIN-koodilla, PIN-koodin
-  tunteva puhelin voisi nostaa itsensä täyteen Wilma-näkyvyyteen, mikä
-  mitätöisi koko PIN-rajauksen. Muutos vaatii siis tiedostojärjestelmäpääsyn
-  koneelle ja palvelimen uudelleenkäynnistyksen. Tyhjä tai asettamaton
-  `TRUSTED_HOSTS` vastaa täsmälleen nykyistä käytöstä.
+  eikä rajapinnassa: jos listaa voisi muokata rajapinnan kautta, kuka tahansa
+  muokkausoikeuden saanut laite voisi lisätä itsensä siihen ja ohittaa koko
+  rajauksen. Muutos vaatii siis tiedostojärjestelmäpääsyn koneelle ja
+  palvelimen uudelleenkäynnistyksen. Tyhjä tai asettamaton `TRUSTED_HOSTS`
+  vastaa täsmälleen nykyistä käytöstä.
+
+  Täyden Wilma-näkyvyyden voi antaa myös `FULL_PIN`-koodilla (ks. yllä). Ne
+  ovat eri työkaluja samaan tarpeeseen: laitelista on sidottu osoitteeseen ja
+  toimii ilman että kukaan syöttää mitään, koodi taas toimii miltä tahansa
+  laitteelta mutta jää selaimen muistiin.
 
   Rehellinen varauma: tämä ei ole vahva todennus, vaan verkko-osoitteen
   luottamista.
