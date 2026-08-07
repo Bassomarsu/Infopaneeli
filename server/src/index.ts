@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import { config } from "./core/config.ts";
 import { logger } from "./core/logging.ts";
 import { registry } from "./core/provider.ts";
+import { trustedHosts } from "./core/trusted-hosts.ts";
 import { registerApiRoutes } from "./routes/api.ts";
 import { createElectricityProvider } from "./providers/electricity.ts";
 import { createWeatherProvider } from "./providers/weather.ts";
@@ -28,6 +29,10 @@ registry.register(createWilmaProvider());
 registry.register(createElectricityProvider());
 registry.register(createWeatherProvider());
 registry.register(createCalendarProvider());
+
+// Resolves TRUSTED_HOSTS hostnames in the background and on a timer; never
+// blocks startup and never throws (see core/trusted-hosts.ts).
+trustedHosts.start();
 
 await registerApiRoutes(app);
 

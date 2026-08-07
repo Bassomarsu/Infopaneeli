@@ -12,6 +12,7 @@
     "test:wilma": "node test/wilma-fetch.ts",
     "test:prices": "node test/price-history.ts",
     "test:message-reads": "node test/message-reads.ts",
+    "test:trusted-hosts": "node test/trusted-hosts.ts",
     "test:smoke": "node --env-file-if-exists=../.env test/wilma-smoke.ts"
   },
   "dependencies": {

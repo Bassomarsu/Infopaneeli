@@ -170,6 +170,33 @@ saa tarvita verkkoa.
 - Muistilistan ja asetusten muokkaus muualta kuin näyttölaitteelta vaatii
   `EDIT_PIN`-koodin.
 - Salasanoja, evästeitä eikä viestien sisältöjä ei kirjoiteta lokiin.
+- **Luotetut laitteet (`TRUSTED_HOSTS`).** `.env`-tiedostoon voi listata
+  pilkulla erotettuna IP-osoitteita ja/tai konenimiä (esim. oma puhelin), jotka
+  saavat täsmälleen samat oikeudet kuin näyttölaite itse: näkevät Wilma-datan,
+  voivat merkitä viestin luetuksi ja muokata muistilistaa ja asetuksia ilman
+  PIN-koodia. Lista on **tarkoituksella vain `.env`:ssä**, ei asetusnäkymässä
+  eikä rajapinnassa — jos sitä voisi laajentaa PIN-koodilla, PIN-koodin
+  tunteva puhelin voisi nostaa itsensä täyteen Wilma-näkyvyyteen, mikä
+  mitätöisi koko PIN-rajauksen. Muutos vaatii siis tiedostojärjestelmäpääsyn
+  koneelle ja palvelimen uudelleenkäynnistyksen. Tyhjä tai asettamaton
+  `TRUSTED_HOSTS` vastaa täsmälleen nykyistä käytöstä.
+
+  Rehellinen varauma: tämä ei ole vahva todennus, vaan verkko-osoitteen
+  luottamista.
+  - **DHCP voi antaa saman IP:n toiselle laitteelle myöhemmin** — reitittimeltä
+    kannattaa varata luotetulle laitteelle kiinteä IP, muuten luottamus voi
+    ajan myötä siirtyä täysin toiselle laitteelle huomaamatta.
+  - **Konenimeen luottaminen on heikompaa kuin osoitteeseen**, koska se nojaa
+    kotiverkon DNS:ään: konenimi ratkaistaan taustalla noin 5 minuutin
+    välein, ei jokaisella pyynnöllä (hitautta ja haurautta varten), joten
+    muutos näkyy viiveellä, ja kuka tahansa sama DNS voi periaatteessa
+    vastata väärin.
+  - **Ei aliverkkotukea** (esim. `192.168.10.0/24`) — vain yksittäisiä
+    laitteita voi listata. Tämä on tietoinen rajaus: aliverkon luottaminen
+    tekisi koko kotiverkosta yhden kirjoitusvirheen päässä olevan asian.
+  - `X-Forwarded-For`-otsikkoon ei luoteta missään muodossa eikä Fastifyn
+    `trustProxy`-asetusta oteta käyttöön — asiakkaan osoite tulee aina
+    suoraan socketista, ei asiakkaan lähettämästä otsikosta.
 
 ## Moduulit
 

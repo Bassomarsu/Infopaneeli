@@ -72,6 +72,16 @@ export const config = {
   calendarIcsUrl: str("CALENDAR_ICS_URL"),
 
   editPin: str("EDIT_PIN"),
+
+  /**
+   * Comma-separated hostnames and/or literal IPs that get the same access as
+   * the display itself — see core/trusted-hosts.ts. Passed through raw:
+   * `str()` above only trims the value as a whole, so trimming each
+   * comma-separated entry happens in trusted-hosts.ts's own parser, not here.
+   * Empty by default, which is exactly today's behaviour — nobody gets
+   * broadened access without an explicit .env entry and a server restart.
+   */
+  trustedHosts: str("TRUSTED_HOSTS"),
 } as const;
 
 export function isWilmaConfigured(): boolean {
