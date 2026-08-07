@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onUnmounted, reactive } from "vue";
 import CardShell from "./CardShell.vue";
-import type { ElectricityData, ProviderSnapshot } from "../types";
+import { hourFromPointerX } from "./electricityChart";
+import type { ElectricityData, PriceDay, ProviderSnapshot } from "../types";
 
 const props = defineProps<{
   snapshot?: ProviderSnapshot<ElectricityData>;
@@ -122,6 +123,86 @@ function hourTitle(hour: number, price: number | null): string {
   return price === null ? `klo ${hour}: ei tiedossa` : `klo ${hour}: ${format(price)} snt/kWh`;
 }
 
+type ChartDay = "today" | "tomorrow";
+
+/**
+ * Kosketuksella (tai klikkauksella) valittu tunti kummassakin kaaviossa.
+ * Pidetään erillisinä tämälle ja huomiselle: kaaviot ovat kaksi eri aluetta,
+ * ja käyttäjä saattaa haluta verrata esim. illan hintaa tänään huomisaamun
+ * hintaan, joten toisen koskettaminen ei saa hiljaa pyyhkiä toisen lukemaa pois.
+ */
+const selection = reactive<Record<ChartDay, number | null>>({ today: null, tomorrow: null });
+const selectionTimers: Record<ChartDay, ReturnType<typeof setTimeout> | null> = {
+  today: null,
+  tomorrow: null,
+};
+
+/**
+ * Valinta raukeaa itsestään, koska näyttö on auki päiviä kerrallaan eikä saa
+ * jäädä näyttämään satunnaisen tunnin lukemaa loputtomiin. 8 s vastaa
+ * muistilistan poistovahvistuksen aikaa — tämäkin on lyhyt, kertaluonteinen
+ * paljastus eikä lukujärjestyksen selauksen kaltainen pysyvä tila (5 min).
+ */
+const SELECTION_TIMEOUT_MS = 8000;
+
+function selectHour(day: ChartDay, hour: number): void {
+  selection[day] = hour;
+  const existing = selectionTimers[day];
+  if (existing !== null) clearTimeout(existing);
+  selectionTimers[day] = setTimeout(() => {
+    selection[day] = null;
+    selectionTimers[day] = null;
+  }, SELECTION_TIMEOUT_MS);
+}
+
+function updateSelectionFromEvent(event: PointerEvent, day: ChartDay): void {
+  const el = event.currentTarget as HTMLElement;
+  const rect = el.getBoundingClientRect();
+  selectHour(day, hourFromPointerX(event.clientX - rect.left, rect.width));
+}
+
+function onBarsPointerDown(event: PointerEvent, day: ChartDay): void {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  updateSelectionFromEvent(event, day);
+}
+
+/**
+ * Sormea liu'uttamalla (pyyhkäisemällä) lukema seuraa mukana — pointerCapture
+ * pitää liikkeen kiinni samassa .bars-elementissä vaikka sormi livahtaisi sen
+ * reunan yli. Hiirellä pelkkä kohdistimen liike ilman painettua nappia ei saa
+ * vaihtaa valintaa, muuten pelkkä hiiren yli vieminen valitsisi tunteja.
+ */
+function onBarsPointerMove(event: PointerEvent, day: ChartDay): void {
+  if (event.pointerType === "mouse" && event.buttons === 0) return;
+  updateSelectionFromEvent(event, day);
+}
+
+onUnmounted(() => {
+  if (selectionTimers.today !== null) clearTimeout(selectionTimers.today);
+  if (selectionTimers.tomorrow !== null) clearTimeout(selectionTimers.tomorrow);
+});
+
+/** "klo 14–15: 4,2 snt/kWh" valitulle tunnille; julkaisematon hinta erottuu "ei tiedossa"na, ei nollana. */
+function readoutText(day: PriceDay, hour: number): string | null {
+  const h = day.hours[hour];
+  if (!h) return null;
+  const priceText = h.price === null ? "ei tiedossa" : `${format(h.price)} snt/kWh`;
+  return `klo ${h.hour}–${h.hour + 1}: ${priceText}`;
+}
+
+const todayReadout = computed(() => {
+  const day = data.value?.today;
+  const hour = selection.today;
+  return day && hour !== null ? readoutText(day, hour) : null;
+});
+
+const tomorrowReadout = computed(() => {
+  const day = data.value?.tomorrow;
+  const hour = selection.tomorrow;
+  return day && hour !== null ? readoutText(day, hour) : null;
+});
+
 /** "Elokuu 2026" -> "Elo 2026", so the two month chips stay on one line. */
 function shortLabel(label: string): string {
   return label.replace(/^(\S{3})\S*/, "$1");
@@ -198,6 +279,7 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
           <span>Tänään</span>
           <span v-if="data.today" class="power__dayavg tnum">ka {{ format(data.today.average) }}</span>
         </div>
+        <div v-if="data.today" class="power__readout tnum">{{ todayReadout ?? ' ' }}</div>
         <div v-if="data.today" class="power__chart">
           <div class="power__yaxis">
             <span
@@ -216,12 +298,16 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
               :class="{ 'power__gridline--zero': t.zero }"
               :style="{ bottom: t.pct + '%' }"
             />
-            <div class="bars">
+            <div
+              class="bars"
+              @pointerdown="onBarsPointerDown($event, 'today')"
+              @pointermove="onBarsPointerMove($event, 'today')"
+            >
               <div
                 v-for="h in data.today.hours"
                 :key="h.hour"
                 class="bar"
-                :class="{ 'bar--now': h.hour === currentHour }"
+                :class="{ 'bar--now': h.hour === currentHour, 'bar--selected': h.hour === selection.today }"
                 :title="hourTitle(h.hour, h.price)"
               >
                 <span v-if="h.price !== null" class="bar__fill" :style="barFill(h.price)!" />
@@ -240,6 +326,7 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
             ka {{ format(data.tomorrow.average) }}
           </span>
         </div>
+        <div v-if="data.tomorrowAvailable && data.tomorrow" class="power__readout tnum">{{ tomorrowReadout ?? ' ' }}</div>
         <div v-if="data.tomorrowAvailable && data.tomorrow" class="power__chart">
           <div class="power__yaxis">
             <span
@@ -258,11 +345,16 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
               :class="{ 'power__gridline--zero': t.zero }"
               :style="{ bottom: t.pct + '%' }"
             />
-            <div class="bars">
+            <div
+              class="bars"
+              @pointerdown="onBarsPointerDown($event, 'tomorrow')"
+              @pointermove="onBarsPointerMove($event, 'tomorrow')"
+            >
               <div
                 v-for="h in data.tomorrow.hours"
                 :key="h.hour"
                 class="bar"
+                :class="{ 'bar--selected': h.hour === selection.tomorrow }"
                 :title="hourTitle(h.hour, h.price)"
               >
                 <span v-if="h.price !== null" class="bar__fill" :style="barFill(h.price)!" />
@@ -384,6 +476,20 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   color: var(--text-faint);
 }
 
+/* Tunnin lukema kosketuksella/klikkauksella (ks. bars-elementin pointer-käsittely).
+   Rivi on aina renderöity kun päivän kaavio on näkyvissä — vain teksti vaihtuu
+   välilyönniksi kun mitään ei ole valittuna — jotta kortin korkeus ei hyppää
+   valinnan tullessa tai raueten. */
+.power__readout {
+  min-height: 1.1em;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--accent-power);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Y-akseli + piirtoalue rinnakkain. Pystysuunnassa tarvitaan vähän
    ylimääräistä tilaa (padding-block), jotta reunimmaiset lukemat eivät
    mene aivan kortin reunaan kiinni. */
@@ -445,6 +551,9 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   display: flex;
   align-items: stretch;
   gap: 2px;
+  /* Osoitin käsittelee koko alueen itse (ks. onBarsPointerDown/Move) — selaimen
+     omat kosketuseleet (esim. vieritys) eivät saa kilpailla pyyhkäisyn kanssa. */
+  touch-action: none;
 }
 
 .bar {
@@ -457,6 +566,15 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
 .bar--now {
   background: rgba(255, 255, 255, 0.1);
   outline: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* Kosketuksella/klikkauksella valittu tunti — erotettava selvästi bar--now:sta
+   (joka merkitsee kuluvaa tuntia), joten oma väri (--accent-power) ja paksumpi
+   outline sen sijaan että vain vahvistaisi samaa valkoista korostusta.
+   Kummankin osuessa samaan palkkiin tämä sääntö tulee jäljempänä, joten sen
+   outline voittaa bar--now:n. */
+.bar--selected {
+  outline: 2px solid var(--accent-power);
 }
 
 .bar__fill {
@@ -531,6 +649,9 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   .power__ytick,
   .power__xtick {
     font-size: 0.58rem;
+  }
+  .power__readout {
+    font-size: 0.8rem;
   }
 }
 
