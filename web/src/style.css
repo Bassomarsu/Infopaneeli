@@ -43,7 +43,12 @@ body {
 }
 
 #app {
+  /* `100vh` on puhelimessa korkeus ILMAN selaimen ala- ja yläpalkkia, joten
+     sivun alaosa jää palkin alle piiloon — eikä sitä pysty vierittämään esiin,
+     koska body on `overflow: hidden`. `100dvh` seuraa palkkien todellista
+     tilaa. Vanha arvo jää ensin varalle selaimille jotka eivät tunne dvh:ta. */
   height: 100vh;
+  height: 100dvh;
 }
 
 /* Dimmed at night so the display does not light up the room. */

@@ -275,10 +275,14 @@ const isNight = computed(() => {
 
 <style scoped>
 .app {
+  /* Ks. style.css:n #app — `100vh` jättää sisällön puhelimen alapalkin alle. */
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: 1.1rem 1.3rem 1.3rem;
+  /* Alareunaan puhelimen turva-alue (iOS:n kotipalkki) päälle normaalin
+     täytteen, jottei viimeinen kortti pääty aivan palkin rajaan kiinni. */
+  padding: 1.1rem 1.3rem max(1.3rem, env(safe-area-inset-bottom));
   gap: 0.9rem;
 }
 
