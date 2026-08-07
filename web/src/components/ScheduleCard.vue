@@ -157,7 +157,9 @@ function onSwipeCancel(event: PointerEvent): void {
 
             <ol v-else class="lessons">
               <li v-for="lesson in group.lessons" :key="`${lesson.start}-${lesson.groupId}`" class="lesson">
-                <span class="lesson__time tnum">{{ lesson.start }}</span>
+                <span class="lesson__time tnum">
+                  {{ lesson.start }}<span class="lesson__end">–{{ lesson.end }}</span>
+                </span>
                 <span class="lesson__main">
                   <span class="lesson__subject">{{ lesson.subject || lesson.subjectCode }}</span>
                   <span v-if="lesson.teacher" class="lesson__teacher">{{ lesson.teacher }}</span>
@@ -168,7 +170,6 @@ function onSwipeCancel(event: PointerEvent): void {
                     {{ homeworkFor(group.studentNumber, lesson.subjectCode)?.homework }}
                   </span>
                 </span>
-                <span class="lesson__end tnum">{{ lesson.end }}</span>
               </li>
             </ol>
           </div>
@@ -299,9 +300,13 @@ function onSwipeCancel(event: PointerEvent): void {
   flex-direction: column;
 }
 
+/* Loppuaika oli aiemmin rivin oikeassa laidassa, erillään alkuajasta. Se jäi
+   helposti huomaamatta, koska katse hakee ajan rivin alusta eikä sen toisesta
+   päästä. Nyt ne luetaan yhtenä lukuna "08:30–09:15", ja rivi tarvitsee vain
+   kaksi saraketta. */
 .lesson {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.42rem 0;
@@ -316,10 +321,15 @@ function onSwipeCancel(event: PointerEvent): void {
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
 }
 
+/* Loppuaika pienempänä ja himmeämpänä: alkuaika on se, jota rivistä
+   silmäillään, joten sen pitää yhä hallita — mutta loppuaika on nyt vieressä
+   eikä rivin toisessa päässä. */
 .lesson__end {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
   color: var(--text-faint);
 }
 
