@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import CardShell from "./CardShell.vue";
 
 export interface Note {
@@ -73,8 +73,46 @@ async function toggleDone(note: Note): Promise<void> {
   }
 }
 
+/**
+ * Poisto kysyy vahvistuksen suoraan rivillä eikä selaimen `confirm()`-ikkunalla:
+ * kioskiselain voi estää natiivit dialogit kokonaan, ja seinänäytöllä modaali on
+ * raskaampi kuin kaksi napautusta samassa kohdassa.
+ */
+const PENDING_TIMEOUT_MS = 8_000;
+
+/** Vain yksi rivi voi odottaa vahvistusta kerrallaan. */
+const pendingDeleteId = ref<number | null>(null);
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPendingTimer(): void {
+  if (pendingTimer !== null) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+}
+
+function askDelete(note: Note): void {
+  errorMessage.value = null;
+  pendingDeleteId.value = note.id;
+  clearPendingTimer();
+  // Näyttö on auki päiviä kerrallaan, joten kysymys ei saa jäädä roikkumaan
+  // riville odottamaan vastausta jota kukaan ei ole antamassa.
+  pendingTimer = setTimeout(() => {
+    pendingDeleteId.value = null;
+    pendingTimer = null;
+  }, PENDING_TIMEOUT_MS);
+}
+
+function cancelDelete(): void {
+  pendingDeleteId.value = null;
+  clearPendingTimer();
+}
+
+onBeforeUnmount(clearPendingTimer);
+
 async function removeNote(note: Note): Promise<void> {
   errorMessage.value = null;
+  cancelDelete();
   try {
     const response = await fetch(`/api/notes/${note.id}`, { method: "DELETE" });
     if (!response.ok) throw new Error(await errorFor(response, "Poisto epäonnistui"));
@@ -109,9 +147,21 @@ async function removeNote(note: Note): Promise<void> {
           </label>
           <span v-else class="note__text note__text--readonly">{{ note.text }}</span>
 
-          <button v-if="canEdit" type="button" class="note__delete" aria-label="Poista" @click="removeNote(note)">
-            ✕
-          </button>
+          <template v-if="canEdit">
+            <span v-if="pendingDeleteId === note.id" class="note__confirm">
+              <button
+                type="button"
+                class="note__confirm-btn note__confirm-btn--danger"
+                @click="removeNote(note)"
+              >
+                Poista
+              </button>
+              <button type="button" class="note__confirm-btn" @click="cancelDelete">Peruuta</button>
+            </span>
+            <button v-else type="button" class="note__delete" aria-label="Poista" @click="askDelete(note)">
+              ✕
+            </button>
+          </template>
         </li>
       </ul>
     </div>
@@ -250,5 +300,32 @@ async function removeNote(note: Note): Promise<void> {
 
 .note__delete:hover {
   color: #f79b9b;
+}
+
+/* Napit kertovat itse mitä tekevät ("Poista" / "Peruuta"), koska pelkkä ✓/✕
+   on seinänäytöllä helppo tulkita väärin — ja väärin tulkittu poisto on
+   peruuttamaton. */
+.note__confirm {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.note__confirm-btn {
+  min-height: 44px;
+  padding: 0 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.note__confirm-btn--danger {
+  border-color: rgba(247, 155, 155, 0.55);
+  color: #f79b9b;
+  font-weight: 600;
 }
 </style>
