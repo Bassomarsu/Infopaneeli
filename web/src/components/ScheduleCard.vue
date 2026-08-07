@@ -31,6 +31,18 @@ const columns = computed(() => {
 
 const showStudentNames = computed(() => (day.value?.lessonsByStudent.length ?? 0) > 1);
 
+/**
+ * Yhden lapsen näkymässä nimi kuuluu otsikkoon: muuten ruudulla on
+ * lukujärjestys ilman mitään merkkiä siitä, kenen se on. Useamman lapsen
+ * näkymässä nimet ovat jo sarakkeiden yllä, joten otsikkoon ne vain
+ * toistuisivat.
+ */
+const cardTitle = computed(() => {
+  const groups = day.value?.lessonsByStudent ?? [];
+  const only = groups.length === 1 ? groups[0] : undefined;
+  return only ? `Lukujärjestys — ${only.name}` : "Lukujärjestys";
+});
+
 function homeworkFor(student: string, subjectCode: string): HomeworkItem | undefined {
   const data = props.snapshot?.data;
   const current = day.value;
@@ -83,7 +95,7 @@ function onSwipeCancel(event: PointerEvent): void {
 
 <template>
   <CardShell
-    title="Lukujärjestys"
+    :title="cardTitle"
     accent="var(--accent-school)"
     :status="snapshot?.status"
     :fetched-at="snapshot?.fetchedAt"
