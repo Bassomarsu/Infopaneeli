@@ -58,6 +58,14 @@ powershell -ExecutionPolicy Bypass -File .\asenna-kioski.ps1
 Skripti luo kaksi ajastettua tehtävää (palvelin + kioskiselain), estää näytön
 sammumisen ja lepotilan, ja poistaa näytönsäästäjän.
 
+Selainta ei käynnistetä suoraan vaan `kaynnista-kioski.ps1`-käynnistimen kautta,
+joka **odottaa palvelimen vastaavan** ennen kuin avaa sivun. Kiinteä viive ei
+riitä: jos palvelin on hidas käynnistymään — kylmäkäynnistys, virustarkistus,
+kaatumisen jälkeinen uudelleenyritys — Edge avaisi oman virhesivunsa eikä
+yrittäisi uudelleen koskaan. Sivun jäädessä lataamatta koko sovellus on pois
+päältä, myös aamun kouluhälytykset. Yöllinen Windows Update tai lyhyt sähkökatko
+riittäisi siihen.
+
 Purku: `.\asenna-kioski.ps1 -Poista`
 
 ### Vielä käsin

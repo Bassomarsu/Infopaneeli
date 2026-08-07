@@ -117,18 +117,24 @@ Register-ScheduledTask `
 Write-Output "Luotu ajastettu tehtävä: $palvelinTehtava"
 
 # --- Selain kioskitilassa ---------------------------------------------------
-# Viive antaa palvelimen ehtiä kuunteluun ennen kuin sivu avataan.
+# Selainta ei käynnistetä suoraan vaan käynnistimen kautta, joka odottaa
+# palvelimen vastaavan. Kiinteä viive ei riitä: jos palvelin on hidas
+# käynnistymään, Edge avaa oman virhesivunsa eikä yritä uudelleen koskaan —
+# ja ilman ladattua sivua koko sovellus on pois päältä, myös aamun
+# kouluhälytykset. Selaimen omat liput ovat käynnistimessä.
+
+$kaynnistin = Join-Path $PSScriptRoot 'kaynnista-kioski.ps1'
+if (-not (Test-Path $kaynnistin)) {
+    throw "Kioskin käynnistintä ei löydy: $kaynnistin"
+}
 
 $nayttoToiminto = New-ScheduledTaskAction `
-    -Execute $edge `
-    # --autoplay-policy: ilman tätä selain vaimentaa äänen kunnes sivulla on
-    # tehty jokin ele. Kouluhälytys soi aamulla eikä kukaan ole koskenut
-    # näyttöön yöllä, joten ilman lippua hälytys jäisi hiljaiseksi juuri
-    # silloin kun sitä tarvitaan.
-    -Argument "--kiosk http://localhost:$Portti --edge-kiosk-type=fullscreen --no-first-run --autoplay-policy=no-user-gesture-required --disable-features=TranslateUI --disable-pinch --overscroll-history-navigation=0"
+    -Execute 'powershell.exe' `
+    -Argument "-ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File `"$kaynnistin`" -Portti $Portti -Edge `"$edge`""
 
 $nayttoLiipaisin = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$nayttoLiipaisin.Delay = 'PT20S'
+# Lyhyt viive riittää nyt, koska käynnistin odottaa palvelinta itse.
+$nayttoLiipaisin.Delay = 'PT5S'
 
 Register-ScheduledTask `
     -TaskName $nayttoTehtava `
