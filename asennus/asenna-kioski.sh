@@ -338,6 +338,9 @@ while [ "$YRITYKSIA" -lt 60 ]; do
     sleep 2
 done
 
+# --autoplay-policy: ilman tätä selain vaimentaa äänen kunnes sivulla on tehty
+# jokin ele. Kouluhälytys soi aamulla eikä kukaan ole koskenut näyttöön yöllä,
+# joten ilman lippua hälytys jäisi hiljaiseksi juuri silloin kun sitä tarvitaan.
 exec __CHROMIUM__ \
     --kiosk "http://localhost:__PORTTI__" \
     --user-data-dir="__PROFIILI__" \
@@ -345,6 +348,7 @@ exec __CHROMIUM__ \
     --disable-infobars \
     --disable-session-crashed-bubble \
     --no-first-run \
+    --autoplay-policy=no-user-gesture-required \
     --disable-features=TranslateUI \
     --overscroll-history-navigation=0 \
     --check-for-update-interval=31536000
