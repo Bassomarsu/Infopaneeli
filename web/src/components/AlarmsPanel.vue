@@ -720,6 +720,19 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   min-height: 44px;
 }
 
+/**
+ * Avatun pudotusvalikon piirtää käyttöjärjestelmä, ja Chromium käyttää sen
+ * pohjana `select`-elementin omaa taustaa. Yllä oleva `rgba(255,255,255,0.06)`
+ * on lähes läpinäkyvä valkoinen, joten valikko piirtyi valkoisena — ja koska
+ * vaihtoehdot perivät vaalean `--text`-värin, ne olivat käytännössä
+ * näkymättömiä. Vain valittu rivi erottui, sen taakse piirtyvän korostuksen
+ * ansiosta. Läpinäkymätön tausta ja eksplisiittinen väri korjaavat sen.
+ */
+.field select option {
+  background-color: #161b24;
+  color: var(--text);
+}
+
 .field input[type="range"] {
   width: 100%;
   accent-color: var(--accent-school);

@@ -245,6 +245,7 @@ saa tarvita verkkoa.
 | Kuukausikeskiarvot | Elering (Nord Pool FI) | kerran vrk |
 | Kalenteri | Google Calendarin ICS-syöte | 15 min |
 | Muistilista | oma SQLite | — |
+| Kouluhälytykset | lukujärjestys + omat asetukset | kellosykli, 20 s |
 
 Lukujärjestys näyttää kuluvan päivän ja vaihtaa itsestään seuraavaan
 koulupäivään asetettuna kellonaikana (oletus 12:00). Viikonloput ja tunnittomat
@@ -297,6 +298,38 @@ välimuistiin: merkintä näkyy heti napautuksesta eikä jää odottamaan seuraa
 Wilma-hakua, eikä paikallinen kirjanpito sekoitu Wilmasta tulleeseen dataan.
 Kortti merkitsee viestin luetuksi optimistisesti ja peruu merkinnän jos tallennus
 epäonnistuu.
+
+### Kouluhälytykset
+
+Yläpalkin kellokuvake avaa hälytysten hallinnan. Hälytys ajoitetaan **suhteessa
+koulun alkuun**, ei kiinteänä kellonaikana: "35 min ennen ensimmäistä tuntia".
+Laukaisuhetki lasketaan päivän ensimmäisestä oppitunnista, joten se seuraa
+lukujärjestystä itsestään eikä vaadi säätöä kun tunnit vaihtuvat.
+
+Hälytyksiä voi olla useita samalle aamulle — herätys, pukeutuminen, lähtö.
+Jokaisella on oma selite, minuutit ennen, ääni, äänenvoimakkuus ja toistojen
+määrä. Paneeli näyttää myös **milloin hälytys oikeasti soi** ("soi klo 7.55"),
+koska pelkkä "35 min ennen" on vaikea suhteuttaa.
+
+Hälytys **ei soi tunnittomina päivinä** — viikonloppuina eikä lomilla. Se ei soi
+myöskään jälkikäteen: sivun lataus keskellä päivää ei laukaise aamun
+hälytyksiä, ja sama hälytys soi kerran päivässä myös kioskiselaimen
+uudelleenkäynnistyksen yli.
+
+**Ääni ja näkyvä ilmoitus ovat toisistaan riippumattomia.** Ilmoitus täyttää
+ruudun isolla kuittauspainikkeella ja näkyy kirkkaana myös yötilassa — aamu on
+juuri se hetki jolloin hälytys on tärkein. Näin hälytys toimii vaikka ääni
+olisi estetty.
+
+Ääniä on kolme (kellon kilahdus, nouseva sarja, toistuva piippaus) ja ne
+tuotetaan selaimessa Web Audio -rajapinnalla, ei äänitiedostoina — ei uusia
+riippuvuuksia eikä binäärejä repoon, ja ääni toimii ilman verkkoa. Jokaisen
+vieressä on kuuntelupainike. **Omaa äänitiedostoa ei voi vielä valita.**
+
+Selain vaimentaa äänen kunnes sivulla on tehty jokin ele, eikä kukaan koske
+näyttöön aamuyöllä. Siksi molemmat asennusskriptit käynnistävät selaimen
+`--autoplay-policy=no-user-gesture-required` -lipulla. Jos ääni jää silti
+tulematta, syy on todennäköisesti siellä.
 
 ### Sään tuntinäkymä
 
