@@ -306,6 +306,10 @@ puhelimella.
 
 ## Käyttöönotto Surfacella
 
-Katso [`asennus/KAYTTOONOTTO.md`](asennus/KAYTTOONOTTO.md) — automaattikäynnistys,
+Katso [`asennus/KAYTTOONOTTO.md`](asennus/KAYTTOONOTTO.md) (Windows) — automaattikäynnistys,
 kioskitila, virranhallinta, sekä **laiteriskit joita SP4:n käyttö seinänäyttönä
 sisältää**.
+
+Vaihtoehtona [`asennus/KAYTTOONOTTO-LINUX.md`](asennus/KAYTTOONOTTO-LINUX.md) —
+sama laite Debian + linux-surface-ytimellä, koska SP4 ei ole Windows 11:n
+virallisesti tuettujen laitteiden listalla.
