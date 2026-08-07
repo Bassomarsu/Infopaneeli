@@ -2,9 +2,17 @@ import ical from "node-ical";
 import type { CalendarResponse, FetchOptions, VEvent } from "node-ical";
 import { FatalProviderError, Provider } from "../core/provider.ts";
 import { config } from "../core/config.ts";
-import { localDateKey } from "../core/time.ts";
+import { localDateKey, localParts, shiftDateKey } from "../core/time.ts";
 
 const WINDOW_DAYS = 14;
+
+// Turvaraja "monesko päivä" -badgen luotettavuudelle — EI rajaa mitä päiviä
+// ikkunaan tuotetaan (se on aina rajattu ikkunan omaan pituuteen, ks.
+// daysForInstance). Ilman tätä virheellinen syöte (esim. DTEND vuosisatojen
+// päässä DTSTARTista) näyttäisi mielivaltaisen suuria lukuja kuten "45/58000".
+// Reilusti yli vuoden pituinen, jotta oikeatkin pitkät tapahtumat (esim.
+// vanhempainvapaa tai remontti) saavat silti tarkan numeroinnin.
+export const MAX_EVENT_SPAN_DAYS = 400;
 
 // `fromURL`'s overloads resolve to the callback form (returning void) as soon
 // as a second argument is passed, even though it also accepts just options.
@@ -20,12 +28,23 @@ export interface CalendarEvent {
   end: string;
   allDay: boolean;
   location: string | null;
-  /** Local day the event starts on, so the UI can group without re-deriving it. */
+  /** Local day this particular row falls on — a multi-day event contributes one row per day. */
   dateKey: string;
+  /**
+   * Läsnä vain monipäiväisessä tapahtumassa: monesko päivä menossa ja jakson
+   * kokonaispituus. Puuttuu myös silloin kun tapahtuman todellinen kesto
+   * ylittää MAX_EVENT_SPAN_DAYS:n (selvästi virheellinen syöte) — silloin
+   * numerointi jätetään pois sen sijaan että näytettäisiin epäluotettava luku.
+   */
+  span?: { day: number; totalDays: number };
 }
 
 export interface CalendarData {
-  /** Chronological, spanning the next 14 days, recurrences already expanded. */
+  /**
+   * Chronological, spanning the next 14 days, recurrences already expanded.
+   * A multi-day event contributes one row per day it touches within the
+   * window — see `dateKey` and `span` on CalendarEvent.
+   */
   events: CalendarEvent[];
 }
 
@@ -54,6 +73,132 @@ function dateKeyFor(date: Date, allDay: boolean): string {
   return localDateKey(date);
 }
 
+/**
+ * Päivien lukumäärä a:sta b:hen (b - a) YYYY-MM-DD-avaimista. Puhdasta
+ * kalenteriaritmetiikkaa (ei silmukkaa), joten turvallista kutsua vaikka
+ * väli olisi vuosien mittainen.
+ */
+function diffDayKeys(a: string, b: string): number {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const aUtc = Date.UTC(ay ?? 1970, (am ?? 1) - 1, ad ?? 1);
+  const bUtc = Date.UTC(by ?? 1970, (bm ?? 1) - 1, bd ?? 1);
+  return Math.round((bUtc - aUtc) / (24 * 60 * 60 * 1000));
+}
+
+/**
+ * Kellonaikaan sidotun instanssin `end` on viimeinen inklusiivinen hetki. Jos
+ * se osuu tarkalleen seuraavan päivän keskiyöhön, tapahtuma ei todellisuudessa
+ * ulotu sille päivälle — käsitellään silloin kuten eksklusiivinen raja, samaan
+ * tapaan kuin koko päivän tapahtuman DTEND.
+ */
+function timedEndKeyExclusive(end: Date, startKey: string): string {
+  const endKey = localDateKey(end);
+  if (endKey === startKey) return shiftDateKey(endKey, 1);
+  const { hour, minute } = localParts(end);
+  if (hour === 0 && minute === 0) return endKey;
+  return shiftDateKey(endKey, 1);
+}
+
+interface InstanceDay {
+  dateKey: string;
+  day: number;
+  totalDays: number;
+  /**
+   * Tosi kun tapahtuman todellinen kesto ylittää MAX_EVENT_SPAN_DAYS:n —
+   * "monesko päivä" -badge jätetään tällöin kokonaan pois sen sijaan että se
+   * väittäisi tarkkaa kokonaiskestoa jota ei todellisuudessa tiedetä.
+   */
+  truncated: boolean;
+}
+
+/**
+ * Tuottaa ikkunaan [windowFromKey, windowToKey] osuvat päivät instanssista
+ * [startKey, endKeyExclusive). Päivät lasketaan suoraan leikkauksena, EI
+ * laajentamalla tapahtumaa alusta lähtien turvarajaan asti ja vasta sitten
+ * suodattamalla ikkunaan — se aiempi järjestys oli bugi: yli
+ * MAX_EVENT_SPAN_DAYS päivää sitten alkanut mutta yhä käynnissä oleva
+ * tapahtuma (esim. kolmen kuukauden vanhempainvapaa) putosi kokonaan pois,
+ * koska turvarajattu laajennus loppui ennen kuin ikkuna edes alkoi.
+ *
+ * Tämän ansiosta silmukka on aina rajattu ikkunan omaan pituuteen (enintään
+ * WINDOW_DAYS+1 päivää) riippumatta tapahtuman todellisesta kestosta, joten
+ * MAX_EVENT_SPAN_DAYS ei enää tarvitse rajata silmukkaa — se rajaa vain
+ * `totalDays`-luvun luotettavuutta (ks. `truncated`).
+ */
+function daysForInstance(
+  startKey: string,
+  endKeyExclusive: string,
+  windowFromKey: string,
+  windowToKey: string,
+): InstanceDay[] {
+  // Virheellinen syöte (end <= start) ei saa pudottaa tapahtumaa kokonaan pois —
+  // käsitellään yhden päivän tapahtumana, kuten ennen tätä korjausta.
+  const realEndExclusive = endKeyExclusive > startKey ? endKeyExclusive : shiftDateKey(startKey, 1);
+
+  const totalDaysReal = diffDayKeys(startKey, realEndExclusive);
+  const truncated = totalDaysReal > MAX_EVENT_SPAN_DAYS;
+  const totalDays = truncated ? MAX_EVENT_SPAN_DAYS : totalDaysReal;
+
+  const windowToExclusive = shiftDateKey(windowToKey, 1);
+  const rangeStart = startKey > windowFromKey ? startKey : windowFromKey;
+  const rangeEndExclusive = realEndExclusive < windowToExclusive ? realEndExclusive : windowToExclusive;
+
+  const days: InstanceDay[] = [];
+  let key = rangeStart;
+  while (key < rangeEndExclusive) {
+    days.push({ dateKey: key, day: diffDayKeys(startKey, key) + 1, totalDays, truncated });
+    key = shiftDateKey(key, 1);
+  }
+  return days;
+}
+
+/**
+ * Laajentaa yhden VEVENTin (toistuva tai ei) CalendarEvent-riveiksi ikkunassa
+ * [from, to] — yksi rivi jokaista päivää kohti jota tapahtuma koskee, jotta
+ * monipäiväinen tapahtuma näkyy kortissa joka päivänään eikä vain
+ * alkupäivänään. Puhdas funktio (ei verkkokutsuja), joten testattavissa
+ * käsin rakennetuilla VEVENT-olioilla.
+ */
+export function expandEvent(event: VEvent, from: Date, to: Date): CalendarEvent[] {
+  const windowFromKey = localDateKey(from);
+  const windowToKey = localDateKey(to);
+
+  // expandOngoing: true tuo mukaan myös tapahtuman, joka on alkanut ennen
+  // ikkunaa mutta jatkuu sen sisälle — muuten se putoaisi kokonaan pois.
+  const instances = ical.expandRecurringEvent(event, { from, to, expandOngoing: true });
+
+  const events: CalendarEvent[] = [];
+  for (const instance of instances) {
+    const title = textValue(instance.summary) || textValue(event.summary) || "(nimetön)";
+    const location = textValue(instance.event.location ?? event.location) || null;
+
+    const startKey = dateKeyFor(instance.start, instance.isFullDay);
+    const endKeyExclusive = instance.isFullDay
+      ? dateKeyFor(instance.end, true)
+      : timedEndKeyExclusive(instance.end, startKey);
+
+    const days = daysForInstance(startKey, endKeyExclusive, windowFromKey, windowToKey);
+
+    for (const day of days) {
+      events.push({
+        id: `${event.uid}:${instance.start.toISOString()}:${day.dateKey}`,
+        title,
+        start: instance.start.toISOString(),
+        end: instance.end.toISOString(),
+        allDay: instance.isFullDay,
+        location,
+        dateKey: day.dateKey,
+        // Katkaistulle (epäluotettavan pitkälle) kestolle jätetään badge
+        // kokonaan pois sen sijaan että näytettäisiin harhaanjohtava
+        // kokonaislukema — ks. daysForInstance.
+        span: !day.truncated && day.totalDays > 1 ? { day: day.day, totalDays: day.totalDays } : undefined,
+      });
+    }
+  }
+  return events;
+}
+
 async function fetchCalendar(): Promise<CalendarData> {
   if (!config.calendarIcsUrl) {
     // Not a network hiccup — retrying on a schedule would just hammer nothing.
@@ -72,29 +217,14 @@ async function fetchCalendar(): Promise<CalendarData> {
 
   for (const item of Object.values(parsed)) {
     if (!item || typeof item !== "object" || item.type !== "VEVENT") continue;
-    const event = item as VEvent;
-
-    // Handles both plain events and RRULE recurrence in one call, already
-    // honouring EXDATE exclusions and RECURRENCE-ID overrides.
-    const instances = ical.expandRecurringEvent(event, { from, to });
-
-    for (const instance of instances) {
-      const title = textValue(instance.summary) || textValue(event.summary) || "(nimetön)";
-      const location = textValue(instance.event.location ?? event.location) || null;
-
-      events.push({
-        id: `${event.uid}:${instance.start.toISOString()}`,
-        title,
-        start: instance.start.toISOString(),
-        end: instance.end.toISOString(),
-        allDay: instance.isFullDay,
-        location,
-        dateKey: dateKeyFor(instance.start, instance.isFullDay),
-      });
-    }
+    // Handles both plain events and RRULE recurrence, EXDATE exclusions,
+    // RECURRENCE-ID overrides, and — via expandEvent — multi-day expansion.
+    events.push(...expandEvent(item as VEvent, from, to));
   }
 
-  events.sort((a, b) => a.start.localeCompare(b.start));
+  // dateKey ensisijaisena avaimena pitää päiväryhmät oikeassa järjestyksessä,
+  // vaikka monipäiväisen tapahtuman kaikki rivit jakavat saman `start`-hetken.
+  events.sort((a, b) => a.dateKey.localeCompare(b.dateKey) || a.start.localeCompare(b.start));
 
   return { events };
 }

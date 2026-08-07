@@ -12,8 +12,10 @@ export interface CalendarEvent {
   end: string;
   allDay: boolean;
   location: string | null;
-  /** Local day the event starts on. */
+  /** Local day this row falls on — a multi-day event contributes one row per day. */
   dateKey: string;
+  /** Present only for multi-day events: which day of the span this row is, and the span length. */
+  span?: { day: number; totalDays: number };
 }
 
 export interface CalendarData {
@@ -82,6 +84,18 @@ function formatTime(iso: string): string {
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
 }
+
+// Monipäiväisen kellonaikaan sidotun tapahtuman start/end-hetki on sama
+// jokaisella rivillä (koko instanssin hetki), joten kellonaikaa näytetään
+// vain alku- ja loppupäivänä — välipäivinä se harhaanjohtaisi, koska
+// tapahtuma ei ala eikä pääty silloin.
+function timeLabel(event: CalendarEvent): string {
+  if (event.allDay) return "koko päivä";
+  if (!event.span) return formatTime(event.start);
+  if (event.span.day === 1) return formatTime(event.start);
+  if (event.span.day === event.span.totalDays) return formatTime(event.end);
+  return "koko päivä";
+}
 </script>
 
 <template>
@@ -101,9 +115,16 @@ function formatTime(iso: string): string {
         <h3 class="calendar__day-label">{{ group.label }}</h3>
         <ul class="calendar__events">
           <li v-for="event in group.events" :key="event.id" class="event">
-            <span class="event__time tnum">{{ event.allDay ? "koko päivä" : formatTime(event.start) }}</span>
+            <span class="event__time tnum">{{ timeLabel(event) }}</span>
             <span class="event__main">
-              <span class="event__title">{{ event.title }}</span>
+              <span class="event__title-row">
+                <span class="event__title">{{ event.title }}</span>
+                <span
+                  v-if="event.span"
+                  class="event__span tnum"
+                  :title="`${event.span.day}. päivä ${event.span.totalDays}:sta`"
+                >{{ event.span.day }}/{{ event.span.totalDays }}</span>
+              </span>
               <span v-if="event.location" class="event__location">{{ event.location }}</span>
             </span>
           </li>
@@ -166,11 +187,31 @@ function formatTime(iso: string): string {
   min-width: 0;
 }
 
+.event__title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
 .event__title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 1rem;
   line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event__span {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  color: var(--accent-calendar);
+  background: rgba(196, 163, 245, 0.18);
   white-space: nowrap;
 }
 

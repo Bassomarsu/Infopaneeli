@@ -189,11 +189,11 @@ watch(
   flex-shrink: 0;
 }
 
+/* Ks. WeatherCard.vue: ikonin osat värittävät itsensä, periytyvää väriä ei ole. */
 .hour__icon {
   display: inline-flex;
   width: 1.5rem;
   height: 1.5rem;
-  color: var(--accent-weather);
   flex-shrink: 0;
 }
 

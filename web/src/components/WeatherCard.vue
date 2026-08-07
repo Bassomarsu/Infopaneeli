@@ -189,11 +189,13 @@ function closeDialog(): void {
   gap: 0.9rem;
 }
 
+/* Ei `color`-arvoa: ikonin osilla on omat värinsä (ks. weatherIcons.ts), joten
+   periytyvä väri ei enää vaikuta mihinkään. Yötila ja menneiden tuntien
+   himmennys toimivat elementtitason filter/opacity-arvoilla. */
 .weather__icon {
   display: inline-flex;
   width: 2rem;
   height: 2rem;
-  color: var(--accent-weather);
   flex-shrink: 0;
 }
 

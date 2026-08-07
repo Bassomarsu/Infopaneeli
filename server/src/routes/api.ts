@@ -1,12 +1,27 @@
 import type { FastifyInstance } from "fastify";
-import { registry } from "../core/provider.ts";
+import { registry, type ProviderSnapshot } from "../core/provider.ts";
 import { getSettings, SettingsValidationError, updateSettings } from "../core/settings.ts";
-import { addNote, deleteNote, listNotes, setNoteDone } from "../core/store.ts";
+import { addNote, deleteNote, listNotes, listReadMessageIds, markMessageRead, setNoteDone } from "../core/store.ts";
 import { config } from "../core/config.ts";
+import type { WilmaData } from "../providers/wilma.ts";
 import { isLocalRequest, requireEditAccess } from "./access.ts";
 
 /** Providers whose payload contains the children's school data. */
 const SENSITIVE_PROVIDERS = new Set(["wilma"]);
+
+/**
+ * Stamps each message with whether it has been opened on this display. Kept
+ * out of the cached provider payload on purpose: read state must show up the
+ * instant it changes, not wait for the next Wilma poll, and it must not be
+ * written into `provider_cache` next to data that actually came from Wilma.
+ */
+function withLocalReadState(data: WilmaData): WilmaData & { messages: Array<WilmaData["messages"][number] & { localRead: boolean }> } {
+  const readIds = listReadMessageIds();
+  return {
+    ...data,
+    messages: data.messages.map((message) => ({ ...message, localRead: readIds.has(message.id) })),
+  };
+}
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/health", async () => ({ ok: true, time: new Date().toISOString() }));
@@ -25,6 +40,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
         if (snapshot) {
           snapshots[id] = { ...snapshot, data: null, error: null, fetchedAt: null, status: "hidden" };
         }
+      }
+    } else {
+      const wilma = snapshots.wilma as ProviderSnapshot<WilmaData> | undefined;
+      if (wilma?.data) {
+        snapshots.wilma = { ...wilma, data: withLocalReadState(wilma.data) };
       }
     }
 
@@ -80,5 +100,20 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     if (!Number.isInteger(id)) return reply.code(400).send({ error: "Virheellinen tunniste" });
     deleteNote(id);
     return { ok: true };
+  });
+
+  // Wilma itself never tells us a message was read (see providers/wilma.ts),
+  // so "read" here means "opened on this display" — recorded the moment the
+  // dialog opens it. Local-only, not requireEditAccess: a PIN lets a phone
+  // touch the shopping list, but per access.ts's own rule the children's
+  // school data stays on the wall display. A phone never even sees Wilma
+  // messages (SENSITIVE_PROVIDERS above), so it has no legitimate reason to
+  // call this route at all.
+  app.post("/api/wilma/messages/:id/read", async (request, reply) => {
+    if (!isLocalRequest(request)) return reply.code(403).send({ error: "Vain näyttölaitteelta" });
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) return reply.code(400).send({ error: "Virheellinen tunniste" });
+    const readAt = markMessageRead(id);
+    return { ok: true, readAt };
   });
 }

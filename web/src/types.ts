@@ -105,11 +105,13 @@ export interface WilmaMessage {
   sentAt: string;
   /** Null until the message detail has been fetched. */
   senderName: string | null;
-  /** Null means "not known yet", which is different from "read". */
+  /** Null means "not known yet", which is different from "read". Wilma does not report this today — see server/src/providers/wilma.ts. */
   unread: boolean | null;
   content: string | null;
   detailCheckedAt: string | null;
   studentNumber: string;
+  /** Whether the message has been opened on this display. Local bookkeeping, not Wilma's own read state. */
+  localRead: boolean;
 }
 
 export interface WilmaStudentData {

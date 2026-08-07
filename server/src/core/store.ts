@@ -28,6 +28,14 @@ db.exec(`
     done       INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   );
+
+  -- Wilma ei kerro onko viesti luettu (ks. server/src/providers/wilma.ts:isUnread).
+  -- Tämä taulu on siis infonäytön oma kirjanpito siitä mitkä viestit on avattu
+  -- TÄLLÄ näytöllä, ei Wilman oma tila. message_id viittaa Wilman viestitunnisteeseen.
+  CREATE TABLE IF NOT EXISTS message_reads (
+    message_id INTEGER PRIMARY KEY,
+    read_at    TEXT NOT NULL
+  );
 `);
 
 const selectSetting = db.prepare("SELECT value FROM settings WHERE key = ?");
@@ -106,6 +114,35 @@ export function setNoteDone(id: number, done: boolean): void {
 
 export function deleteNote(id: number): void {
   db.prepare("DELETE FROM notes WHERE id = ?").run(id);
+}
+
+const selectMessageRead = db.prepare("SELECT 1 FROM message_reads WHERE message_id = ?");
+const selectAllMessageReads = db.prepare("SELECT message_id FROM message_reads");
+const upsertMessageRead = db.prepare(
+  `INSERT INTO message_reads (message_id, read_at) VALUES (?, ?)
+   ON CONFLICT(message_id) DO UPDATE SET read_at = excluded.read_at`,
+);
+
+/**
+ * Whether a Wilma message has been opened on this display. This is entirely
+ * local bookkeeping — see the comment on `message_reads` above for why Wilma's
+ * own read state cannot be used.
+ */
+export function isMessageRead(messageId: number): boolean {
+  return selectMessageRead.get(messageId) !== undefined;
+}
+
+/** Every message id known to have been opened here, for bulk-checking a whole inbox at once. */
+export function listReadMessageIds(): Set<number> {
+  const rows = selectAllMessageReads.all() as Array<{ message_id: number }>;
+  return new Set(rows.map((r) => r.message_id));
+}
+
+/** Idempotent: opening an already-read message just refreshes read_at. */
+export function markMessageRead(messageId: number): string {
+  const readAt = new Date().toISOString();
+  upsertMessageRead.run(messageId, readAt);
+  return readAt;
 }
 
 export { db };

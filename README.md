@@ -27,7 +27,7 @@ Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 | `npm run dev:web` | Vite-kehityspalvelin frontendille |
 | `npm run build` | Kääntää frontendin `web/dist`-kansioon |
 | `npm run typecheck` | Tyyppitarkistus molemmille työtiloille |
-| `npm test` | Provider-kerros, Wilma-hakulogiikka, hintahistoria ja päivänvalinta (ei verkkoa) |
+| `npm test` | Kaikki yksikkötestit: providerit, Wilma, hinnat, viestit, kalenteri, asettelu (ei verkkoa) |
 | `npm run test:smoke` | Savutesti **oikeaa Wilmaa vasten** — aja kirjastopäivityksen jälkeen |
 
 ## Arkkitehtuuri
@@ -217,12 +217,57 @@ itsestään viiden minuutin kuluttua**, jottei seinänäyttö jää jumiin satun
 päivälle sen jälkeen kun joku selasi sitä ohimennen. "Tänään"-painike palauttaa
 heti.
 
+### Wilma-viestit
+
+Viestin napauttaminen avaa sen kokonaisuudessaan: lähettäjä, aihe, aika ja koko
+teksti. Lista jakautuu välilehtiin **Lukematta** ja **Luetut**.
+
+Luettu-tila on **infonäytön oma kirjanpito** (`message_reads`-taulu), ei Wilman:
+viesti on luettu kun se on avattu tällä näytöllä. Wilma ei kerro omaa tilaansa
+lainkaan (ks. yllä), joten tämä on ainoa tapa jaotella viestit ilman kirjaston
+haarauttamista. Puhelimella luettu viesti näkyy taulussa siis lukemattomana.
+Rajoitus on tietoinen ja käyttäjän hyväksymä; se mainitaan viestin
+avausnäkymässä, ei kortissa, koska seinäkortilla tila on kallista.
+
+Tila leimataan vastaukseen **pyynnön yhteydessä** eikä kirjoiteta providerin
+välimuistiin: merkintä näkyy heti napautuksesta eikä jää odottamaan seuraavaa
+Wilma-hakua, eikä paikallinen kirjanpito sekoitu Wilmasta tulleeseen dataan.
+Kortti merkitsee viestin luetuksi optimistisesti ja peruu merkinnän jos tallennus
+epäonnistuu.
+
 ### Sään tuntinäkymä
 
 Minkä tahansa ennustepäivän napauttaminen avaa sen päivän 24 tuntia:
 lämpötila, tuntuu kuin, sade ja sateen todennäköisyys, tuuli ja säätila.
 Kuluvan päivän kohdalla nykyinen tunti korostetaan ja menneet himmennetään.
 Näkymä sulkeutuu painikkeesta, Esc-näppäimestä ja taustaa napauttamalla.
+
+### Kalenterin monipäiväiset tapahtumat
+
+Useamman päivän yli jatkuva tapahtuma näkyy **jokaisena päivänä jota se koskee**,
+ja pilleri kertoo monesko päivä on menossa ("3/8"). Aiemmin tapahtuma kiinnittyi
+vain alkupäiväänsä ja katosi lopuilta päiviltä.
+
+Koko päivän tapahtuman `DTEND` on iCalendarissa **eksklusiivinen**: 24.–26.7.
+kestävä tapahtuma on merkitty päättymään 27.7. Tämä on varmistettu oikeasta
+syötteestä, ja `node-ical` antaa loppuhetken valmiiksi paikallisena keskiyönä,
+joten kesä- ja talviajan siirtymät hoituvat kirjaston puolella eikä päiviä
+lasketa käsin. Yhden tapahtuman laajennus on rajattu 60 vuorokauteen, jottei
+virheellinen syöte voi kasvattaa sitä hallitsemattomasti.
+
+### Pörssisähkön kuvaaja
+
+Kuvaajassa on aika-akseli kellonaikoineen ja hinta-akseli apuviivoineen.
+Aika-akseli käyttää **samaa 24 sarakkeen rakennetta kuin pylväät**, joten
+merkinnät osuvat oikeiden tuntien kohdalle eivätkä tasavälein arvattuina.
+Kapealla kortilla ylimääräiset merkinnät piilotetaan `visibility`-arvolla eikä
+`display`-arvolla, jolloin sarakeleveydet säilyvät eikä kohdistus lipsu.
+
+Tänään ja huomenna käyttävät **samaa asteikkoa**, jotta päivät ovat suoraan
+vertailukelpoisia — eri asteikko käyttäisi tilan paremmin, mutta samannäköinen
+pylväs tarkoittaisi eri hintaa. Negatiiviset hinnat piirtyvät nollaviivalta
+alaspäin, ja julkaisemattomat tunnit näkyvät viirutuksena — **eivät nollana**,
+koska nolla on oikea hinta ja "ei tiedossa" ei ole.
 
 ### Paneelien asettelu
 

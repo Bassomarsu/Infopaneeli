@@ -11,19 +11,93 @@ const props = defineProps<{
 const data = computed(() => props.snapshot?.data ?? null);
 
 /**
- * Bars are scaled against both days together so tomorrow is visually
- * comparable to today rather than each day being normalised on its own.
+ * Tänään ja huomenna käyttävät samaa asteikkoa (yhteinen min/max), jotta
+ * pylväät ovat suoraan vertailukelpoisia päivien välillä. Vaihtoehto olisi
+ * skaalata kumpikin päivä erikseen täyteen korkeuteen, mutta silloin
+ * samannäköinen pylväs voisi tarkoittaa eri hintaa eri päivinä, mikä on
+ * tälle "vilkaisulla luettavalle" kortille pahempi virhe kuin hukattu tila.
  */
 const scaleMax = computed(() => {
   const d = data.value;
   if (!d) return 1;
-  const maxima = [d.today?.max ?? 0, d.tomorrow?.max ?? 0];
+  // Huomisen PriceDay ei ole null heti kun ikkunassa on yksikin huomisen
+  // tunti, mutta korttti näyttää huomisen kaavion vasta kun
+  // tomorrowAvailable on tosi. Sitä ennen mukana oleva yksittäinen (ja
+  // mahdollisesti poikkeava) tunti ei saa venyttää tämän päivän asteikkoa.
+  const tomorrowMax = d.tomorrowAvailable ? d.tomorrow?.max ?? 0 : 0;
+  const maxima = [d.today?.max ?? 0, tomorrowMax];
   return Math.max(...maxima, 1);
 });
 
-function barHeight(price: number | null): string {
-  if (price === null) return "0%";
-  return `${Math.max((Math.max(price, 0) / scaleMax.value) * 100, 2)}%`;
+/** Alaraja on 0 paitsi jos jompikumpi näytetty päivä käy negatiiviseksi. */
+const scaleMin = computed(() => {
+  const d = data.value;
+  if (!d) return 0;
+  const tomorrowMin = d.tomorrowAvailable ? d.tomorrow?.min ?? 0 : 0;
+  const minima = [d.today?.min ?? 0, tomorrowMin];
+  return Math.min(0, ...minima);
+});
+
+/**
+ * Kolme apuviivaa/lukemaa: yläraja, keskikohta, alaraja. Jos asteikko
+ * ylittää nollan eikä nolla osu lähelle keskiviivaa, lisätään oma
+ * nollaviiva — sen täytyy erottua, koska negatiivinen pörssihinta on
+ * eri asia kuin "hintaa ei tiedossa".
+ */
+const yTicks = computed(() => {
+  const max = scaleMax.value;
+  const min = scaleMin.value;
+  const mid = (max + min) / 2;
+  const topTick = { value: max, pct: 100, zero: false, edge: true };
+  const midTick = { value: mid, pct: 50, zero: false, edge: false };
+  const bottomTick = { value: min, pct: 0, zero: false, edge: true };
+  const ticks = [topTick, midTick, bottomTick];
+  if (min < 0 && max > 0) {
+    const zeroPct = ((0 - min) / (max - min)) * 100;
+    if (Math.abs(zeroPct - 50) > 8) {
+      ticks.push({ value: 0, pct: zeroPct, zero: true, edge: false });
+    } else {
+      midTick.zero = true;
+    }
+  }
+  return ticks;
+});
+
+/**
+ * 24 pystysuoraa "sarakepaikkaa" x-akselille, samalla flex(1)+gap-mallilla
+ * kuin pylväät itse, jotta kellonaika osuu aina oikean pylvään kohdalle
+ * eikä vain arvaa tasaväliä. Vain kuuden tunnin välein näytetään teksti;
+ * loput pitävät paikkansa varattuna asettelun vuoksi.
+ */
+const hourTicks = computed(() =>
+  Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    label: hour % 6 === 0 ? String(hour) : "",
+    minor: hour % 12 !== 0,
+  }))
+);
+
+/** Palauttaa null julkaisemattomalle tunnille — sitä ei saa piirtää nollana. */
+function barFill(price: number | null): Record<string, string> | null {
+  if (price === null) return null;
+  const min = scaleMin.value;
+  const max = scaleMax.value;
+  const range = max - min || 1;
+  const zeroPct = ((0 - min) / range) * 100;
+  const pricePct = ((price - min) / range) * 100;
+  let height = Math.abs(pricePct - zeroPct);
+  // Pieni minimi vain siksi, ettei lähes-nolla-hinta katoa täysin näkymättömiin
+  // (0 px olisi helppo sekoittaa renderöintivirheeseen). Se ei yritä tehdä
+  // pienistä hinnoista keskenään erottuvia — kortti on vilkaisulle, ei
+  // tarkkuuslukemiseen, ja "kallis vai halpa" -viesti tulee jo väristä
+  // (barColor), ei pylvään tarkasta korkeudesta.
+  if (height < 1) height = 1;
+  const bottom = price >= 0 ? zeroPct : zeroPct - height;
+  return {
+    bottom: `${bottom}%`,
+    height: `${height}%`,
+    background: barColor(price),
+  };
 }
 
 function barColor(price: number | null): string {
@@ -37,8 +111,15 @@ function format(value: number | null | undefined): string {
   return typeof value === "number" ? value.toFixed(2).replace(".", ",") : "–";
 }
 
+/** Lyhyempi pyöristys akselilukemiin, jotta 2,3 rem:n sarake ei tavuta lukua. */
+function formatAxis(value: number): string {
+  const v = Math.abs(value) < 0.05 ? 0 : value;
+  const decimals = Math.abs(v) < 10 ? 1 : 0;
+  return v.toFixed(decimals).replace(".", ",");
+}
+
 function hourTitle(hour: number, price: number | null): string {
-  return price === null ? `klo ${hour}: ei hintaa` : `klo ${hour}: ${format(price)} snt/kWh`;
+  return price === null ? `klo ${hour}: ei tiedossa` : `klo ${hour}: ${format(price)} snt/kWh`;
 }
 
 /** "Elokuu 2026" -> "Elo 2026", so the two month chips stay on one line. */
@@ -117,15 +198,36 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
           <span>Tänään</span>
           <span v-if="data.today" class="power__dayavg tnum">ka {{ format(data.today.average) }}</span>
         </div>
-        <div v-if="data.today" class="bars">
-          <div
-            v-for="h in data.today.hours"
-            :key="h.hour"
-            class="bar"
-            :class="{ 'bar--now': h.hour === currentHour }"
-            :title="hourTitle(h.hour, h.price)"
-          >
-            <span class="bar__fill" :style="{ height: barHeight(h.price), background: barColor(h.price) }" />
+        <div v-if="data.today" class="power__chart">
+          <div class="power__yaxis">
+            <span
+              v-for="t in yTicks"
+              :key="t.value + '-' + t.pct"
+              class="power__ytick"
+              :class="{ 'power__ytick--zero': t.zero, 'power__ytick--minor': !t.edge && !t.zero }"
+              :style="{ bottom: t.pct + '%' }"
+            >{{ formatAxis(t.value) }}</span>
+          </div>
+          <div class="power__plot">
+            <span
+              v-for="t in yTicks"
+              :key="'grid-' + t.value + '-' + t.pct"
+              class="power__gridline"
+              :class="{ 'power__gridline--zero': t.zero }"
+              :style="{ bottom: t.pct + '%' }"
+            />
+            <div class="bars">
+              <div
+                v-for="h in data.today.hours"
+                :key="h.hour"
+                class="bar"
+                :class="{ 'bar--now': h.hour === currentHour }"
+                :title="hourTitle(h.hour, h.price)"
+              >
+                <span v-if="h.price !== null" class="bar__fill" :style="barFill(h.price)!" />
+                <span v-else class="bar__missing" />
+              </div>
+            </div>
           </div>
         </div>
         <p v-else class="power__empty">Ei hintatietoja</p>
@@ -138,21 +240,50 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
             ka {{ format(data.tomorrow.average) }}
           </span>
         </div>
-        <div v-if="data.tomorrowAvailable && data.tomorrow" class="bars">
-          <div
-            v-for="h in data.tomorrow.hours"
-            :key="h.hour"
-            class="bar"
-            :title="hourTitle(h.hour, h.price)"
-          >
-            <span class="bar__fill" :style="{ height: barHeight(h.price), background: barColor(h.price) }" />
+        <div v-if="data.tomorrowAvailable && data.tomorrow" class="power__chart">
+          <div class="power__yaxis">
+            <span
+              v-for="t in yTicks"
+              :key="t.value + '-' + t.pct"
+              class="power__ytick"
+              :class="{ 'power__ytick--zero': t.zero, 'power__ytick--minor': !t.edge && !t.zero }"
+              :style="{ bottom: t.pct + '%' }"
+            >{{ formatAxis(t.value) }}</span>
+          </div>
+          <div class="power__plot">
+            <span
+              v-for="t in yTicks"
+              :key="'grid-' + t.value + '-' + t.pct"
+              class="power__gridline"
+              :class="{ 'power__gridline--zero': t.zero }"
+              :style="{ bottom: t.pct + '%' }"
+            />
+            <div class="bars">
+              <div
+                v-for="h in data.tomorrow.hours"
+                :key="h.hour"
+                class="bar"
+                :title="hourTitle(h.hour, h.price)"
+              >
+                <span v-if="h.price !== null" class="bar__fill" :style="barFill(h.price)!" />
+                <span v-else class="bar__missing" />
+              </div>
+            </div>
           </div>
         </div>
         <p v-else class="power__empty">Julkaistaan noin klo 14</p>
       </div>
 
-      <div class="power__axis">
-        <span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>
+      <div class="power__xaxis">
+        <span class="power__xaxis-spacer" aria-hidden="true"></span>
+        <div class="power__xaxis-ticks">
+          <span
+            v-for="t in hourTicks"
+            :key="t.hour"
+            class="power__xtick"
+            :class="{ 'power__xtick--minor': t.minor }"
+          >{{ t.label }}</span>
+        </div>
       </div>
     </div>
   </CardShell>
@@ -165,6 +296,8 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   gap: 0.85rem;
   height: 100%;
   min-height: 0;
+  container-type: inline-size;
+  container-name: power-card;
 }
 
 .power__now {
@@ -251,19 +384,73 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   color: var(--text-faint);
 }
 
-.bars {
+/* Y-akseli + piirtoalue rinnakkain. Pystysuunnassa tarvitaan vähän
+   ylimääräistä tilaa (padding-block), jotta reunimmaiset lukemat eivät
+   mene aivan kortin reunaan kiinni. */
+.power__chart {
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: stretch;
+  gap: 0.35rem;
   flex: 1;
   min-height: 2.6rem;
+  padding-block: 0.55em;
+}
+
+.power__yaxis {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.3rem;
+  font-size: 0.62rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.power__ytick {
+  position: absolute;
+  right: 0;
+  left: 0;
+  transform: translateY(50%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.power__ytick--zero {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.power__plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.power__gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+
+.power__gridline--zero {
+  background: var(--text-faint);
+}
+
+.bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
 }
 
 .bar {
+  position: relative;
   flex: 1;
   height: 100%;
-  display: flex;
-  align-items: flex-end;
   border-radius: 2px;
 }
 
@@ -273,9 +460,26 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
 }
 
 .bar__fill {
-  display: block;
-  width: 100%;
+  position: absolute;
+  left: 0;
+  right: 0;
   border-radius: 2px 2px 0 0;
+}
+
+/* Julkaisematon tunti: viiruttu kenttä koko pylvään korkeudelta, jotta se
+   ei sekoitu nollahintaan (joka piirtyy ohuena palkkina nollaviivalle). */
+.bar__missing {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  opacity: 0.55;
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0,
+    transparent 3px,
+    var(--border) 3px,
+    var(--border) 4px
+  );
 }
 
 .power__empty {
@@ -287,11 +491,52 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   color: var(--text-faint);
 }
 
-.power__axis {
+.power__xaxis {
   display: flex;
-  justify-content: space-between;
-  font-size: 0.68rem;
+  gap: 0.35rem;
+  font-size: 0.66rem;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+}
+
+.power__xaxis-spacer {
+  flex: 0 0 auto;
+  width: 2.3rem;
+}
+
+.power__xaxis-ticks {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.power__xtick {
+  flex: 1;
+  text-align: center;
+}
+
+/* Kapealla kortilla (esim. 2 saraketta 6:sta) 24 tunnin ruudukko ja neljä
+   lukemaa alkavat ahtautua. Harvenna ensin apuviivat/tunnit sen sijaan
+   että teksti menisi päällekkäin — piiloon visibility:hidden:llä, jotta
+   flex-sarakkeiden leveys (ja siten pylväiden kohdistus) ei muutu. */
+@container power-card (max-width: 230px) {
+  .power__xtick--minor {
+    visibility: hidden;
+  }
+  .power__yaxis,
+  .power__xaxis-spacer {
+    width: 1.9rem;
+  }
+  .power__ytick,
+  .power__xtick {
+    font-size: 0.58rem;
+  }
+}
+
+@container power-card (max-width: 170px) {
+  .power__ytick--minor {
+    visibility: hidden;
+  }
 }
 </style>
