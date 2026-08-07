@@ -210,6 +210,47 @@ async function testSenderAndUnreadComeFromTheDetail(): Promise<void> {
   console.log("ok  sender and read state are taken from the message detail and cached");
 }
 
+/**
+ * Mitattu oikeaa Wilmaa vasten 7.8.2026: `status` tuli takaisin `null`, eikä
+ * kirjasto aseta kenttää missään. Vanha sääntö ("puuttuva = lukematon") olisi
+ * merkinnyt jokaisen viestin ikuisesti lukemattomaksi — laskuri ei olisi
+ * nollautunut koskaan ja tuntitarkistus olisi hakenut jokaisen viestin
+ * uudelleen loputtomiin.
+ */
+async function testMissingStatusMeansUnknownNotUnread(): Promise<void> {
+  const noStatus: Message = { ...listedMessage(20, "Aihe 20"), senderName: "Opettaja Virtanen", content: "<p>Terve</p>" };
+  delete noStatus.status;
+
+  const { client, counts } = fakeClient({
+    currentWeek: [lesson(today, "08:15", "Matematiikka"), lesson(shiftDateKey(today, 1), "08:15", "Kemia")],
+    nextWeek: [],
+    inbox: [listedMessage(20, "Retkestä")],
+    details: new Map([[20, noStatus]]),
+  });
+
+  const first = await fetchStudent(client, student, null);
+  const message = first.messages.find((m) => m.id === 20);
+
+  assert.equal(message?.unread, null, "puuttuva status tarkoittaa 'ei tiedossa', ei 'lukematon'");
+  assert.equal(message?.senderName, "Opettaja Virtanen", "lähettäjä tulee silti läpi");
+  assert.equal(
+    asPrevious(first).unreadCount,
+    0,
+    "tuntematonta tilaa ei saa laskea lukemattomaksi",
+  );
+
+  // Toinen kierros tunnin päästä: koska tila ei ole "lukematon", viestiä ei
+  // saa hakea uudelleen. Muuten jokainen viesti haettaisiin ikuisesti tunnin
+  // välein.
+  const aged = asPrevious(first);
+  for (const m of aged.messages) m.detailCheckedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  await fetchStudent(client, student, aged);
+
+  assert.equal(counts.messageDetail, 1, `tuntematonta tilaa ei saa tarkistaa uudelleen, haettiin ${counts.messageDetail}`);
+  console.log("ok  puuttuva status tarkoittaa 'ei tiedossa' eikä aiheuta ikuista uudelleenhakua");
+}
+
+await testMissingStatusMeansUnknownNotUnread();
 await testNextWeekIsFetchedOnceNotEveryCycle();
 await testNoExtraRequestWhenWeekHasFutureDays();
 await testSenderAndUnreadComeFromTheDetail();

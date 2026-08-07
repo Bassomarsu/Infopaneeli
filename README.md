@@ -107,16 +107,27 @@ dokumentoi, ovat nyt mitattuja eivätkä arvattuja:
   koodia vai ei. **Aja savutesti uudelleen elokuun lopussa** ja katso pysyykö
   vastaus monen viikon mittaisena.
 
-Yksi asia jäi **todentamatta**: postilaatikko ja arkisto olivat molemmat tyhjiä,
-joten viestien parsintaa eikä `Message.status`-kentän merkitystä (luettu vs.
-lukematon) ei ole nähty kertaakaan oikealla datalla. Savutesti sanoo tämän
-suoraan sen sijaan että raportoisi läpimenon.
+### Luettu-tilaa ei ole saatavilla — todennettu, ei arvattu
 
-Väärä tulkinta epäonnistuisi **äänettömästi**: aidosti lukematon kouluviesti
-näkyisi luettuna, eikä mitään virhettä syntyisi. Siksi provider kirjaa jokaisen
-uuden `status`-arvon lokiin kerran (`wilma_status_observed`). Kun ensimmäinen
-oikea viesti joskus saapuu, loki vastaa kysymykseen itse — kenenkään ei tarvitse
-muistaa ajaa savutestia juuri sillä hetkellä.
+Aamulla postilaatikko oli tyhjä, joten viestien parsinta jäi todentamatta.
+Iltapäivällä saapui oikea viesti, ja `wilma_status_observed`-lokirivi vastasi
+kysymykseen itse — juuri sitä varten se lisättiin.
+
+**Viestien parsinta toimii**: lähettäjä ja runko tulevat oikein viestin omista
+tiedoista. **Luettu-tilaa ei kuitenkaan saada**: `status` palautui arvona `null`,
+ja kirjaston lähdekoodi vahvistaa syyn — `parsers/messages.js` ei aseta kenttää
+missään, ei listaukselle eikä yksittäiselle viestille.
+
+Aiempi sääntö ("puuttuva arvo tarkoittaa lukematonta") olisi siis merkinnyt
+**jokaisen viestin ikuisesti lukemattomaksi**: laskuri ei olisi nollautunut
+koskaan, ja lukemattomien tuntitarkistus olisi hakenut jokaisen viestin uudelleen
+loputtomiin — juuri sitä turhaa kuormaa, jonka välttämiseksi koko välimuistikerros
+on olemassa.
+
+Nyt tuntematon tila on oma arvonsa (`unread: null`): kortti ei väitä viestiä
+luetuksi eikä lukemattomaksi, laskuri kertoo vain varmasti lukemattomat, eikä
+turhia uudelleenhakuja tehdä. Jos kirjasto joskus alkaa täyttää kentän, se
+ilmoittaa itsestään samalla lokirivillä.
 
 ### Kuukausikeskiarvot tulevat eri lähteestä kuin vuorokausihinnat
 

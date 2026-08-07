@@ -145,26 +145,35 @@ class WilmaClientPool {
 const pool = new WilmaClientPool();
 
 /**
- * Only the message *detail* carries a status; the list parser never sets one.
- * Wilma's status values are undocumented, but a zero or absent value on a
- * detail response means the message has not been opened.
+ * Read state, or `null` when Wilma did not tell us.
+ *
+ * Measured against a real message on 7.8.2026: `status` came back `null`, and
+ * grepping the library confirms why — `parsers/messages.js` never assigns the
+ * field at all, on either the list or the detail response. So the read state is
+ * simply not available through this library today.
+ *
+ * The earlier rule ("absent means unread") therefore marked *every* message
+ * unread forever: the badge could never return to zero, and the hourly
+ * re-check for unread messages would re-fetch every message for the rest of
+ * time — the exact pointless load this provider is built to avoid. Reporting
+ * "not known" is both honest and cheap, and the card already renders it as
+ * neither read nor unread.
+ *
+ * A number, if the library ever starts producing one, is interpreted the way
+ * Wilma's own markup implies: zero means not opened.
  */
-function isUnread(detail: Message): boolean {
+function isUnread(detail: Message): boolean | null {
   const status = detail.status;
-  return status === null || status === undefined || status === 0;
+  if (status === null || status === undefined) return null;
+  return status === 0;
 }
 
 /**
- * The status interpretation above has never been confirmed against real data:
- * on the first live run both the inbox and the archive were empty. Getting it
- * backwards would fail *silently* — a genuinely unread message from the school
- * would render as read, no error, no log line, in exactly the feature the card
- * exists for.
- *
- * So every distinct status value is recorded once. When the first real message
- * finally arrives, the log answers the question by itself, without anyone
- * having to remember to run the smoke test at that moment. Bounded by the set:
- * a handful of lines per process lifetime, never one per cycle.
+ * Every distinct status value is recorded once, which is how the `null` above
+ * was discovered in the first place. Keep it: a library update that starts
+ * populating the field will announce itself here instead of silently changing
+ * what the badge means. Bounded by the set — a handful of lines per process
+ * lifetime, never one per cycle.
  */
 const seenStatusValues = new Set<string>();
 
