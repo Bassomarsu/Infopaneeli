@@ -26,7 +26,9 @@ npm run build
 | `WILMA_USERNAME`, `WILMA_PASSWORD` | Huoltajatunnukset |
 | `CALENDAR_ICS_URL` | Google Calendar → kalenterin asetukset → **Salainen osoite iCal-muodossa** |
 | `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_PLACE` | Oletuksena Karstula |
-| `EDIT_PIN` | Vapaavalintainen. Ilman tätä muistilistaa voi muokata vain näyttölaitteelta. |
+| `EDIT_PIN` | Vapaavalintainen. Antaa puhelimelle oikeuden muokata muistilistaa, asetuksia ja hälytyksiä — **ei** lasten Wilma-tietoja. |
+| `FULL_PIN` | Vapaavalintainen, **vähintään 6 merkkiä**. Antaa puhelimelle täydet oikeudet, myös lasten Wilma-tiedot. Lyhyempää ei oteta käyttöön lainkaan. |
+| `TRUSTED_HOSTS` | Vapaavalintainen. Pilkulla erotettu lista IP-osoitteita tai konenimiä, jotka saavat täydet oikeudet ilman koodia. |
 
 `.env` ei mene gitiin. Wilma-salasana on selväkielisenä levyllä — se on tietoinen
 kompromissi, ks. **Tietoturva** alla.
@@ -104,8 +106,11 @@ Windows-kohtaisia.
 
 - Wilma-datan lukureitit vastaavat vain **localhostista**. Kotiverkon puhelin
   näkee sään, sähkön, kalenterin ja muistilistan — ei lasten koulutietoja.
-- Muistilistan ja asetusten muokkaus muualta kuin näyttölaitteelta vaatii
-  `EDIT_PIN`-koodin.
+- Muokkaus muualta kuin näyttölaitteelta vaatii PIN-koodin, joka syötetään
+  yläpalkin lukkokuvakkeesta. `EDIT_PIN` antaa muokkausoikeuden mutta **ei**
+  lasten Wilma-tietoja; `FULL_PIN` (väh. 6 merkkiä) antaa nekin. Vaihtoehtona
+  laite voidaan lisätä `TRUSTED_HOSTS`-listalle, jolloin koodia ei tarvita.
+  Tarkemmin: README, kohta **Tietoturva**.
 - Näyttö on yhteisessä tilassa: viestien sisällön voi piilottaa asetuksista,
   jolloin näkyy vain lähettäjä ja otsikko.
 - **Tilin lukituksen esto**: kolme peräkkäistä epäonnistunutta Wilma-kirjautumista

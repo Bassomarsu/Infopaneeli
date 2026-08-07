@@ -288,8 +288,11 @@ uudelleen: `sudo systemctl restart lightdm`. Tarkista samalla
 Samat periaatteet kuin Windows-ohjeessa:
 
 - Wilma-datan lukureitit vastaavat vain localhostista.
-- Muistilistan ja asetusten muokkaus muualta kuin näyttölaitteelta vaatii
-  `EDIT_PIN`-koodin.
+- Muokkaus muualta kuin näyttölaitteelta vaatii PIN-koodin, joka syötetään
+  yläpalkin lukkokuvakkeesta. `EDIT_PIN` antaa muokkausoikeuden mutta **ei**
+  lasten Wilma-tietoja; `FULL_PIN` (väh. 6 merkkiä) antaa nekin. Vaihtoehtona
+  laite voidaan lisätä `TRUSTED_HOSTS`-listalle, jolloin koodia ei tarvita.
+  Tarkemmin: README, kohta **Tietoturva**.
 - Salasanoja, evästeitä eikä viestien sisältöjä kirjoiteta lokiin.
 - `asenna-kioski.sh` tiukentaa `.env`-tiedoston oikeudet (`chmod 600`) joka
   ajolla eikä koskaan löysennä niitä, koska tiedostossa on Wilma-salasana
