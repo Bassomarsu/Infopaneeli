@@ -28,9 +28,10 @@ export interface ScheduleDay {
   /** "Tänään", "Huomenna" or a weekday name — always explicit on screen. */
   label: string;
   /**
-   * True only when the configured time of day is what moved the view forward.
-   * Skipping an empty weekend is a different reason and must not claim the
-   * clock did it.
+   * True only when the configured time of day actually changed which day is on
+   * screen. Skipping an empty weekend is a different reason and must not claim
+   * the clock did it — and during a holiday, when the next lessons are days
+   * away either way, the rollover changes nothing and says nothing.
    */
   rolledOver: boolean;
   lessonsByStudent: Array<{ studentNumber: string; name: string; lessons: ScheduleLesson[] }>;
@@ -89,9 +90,7 @@ export function useScheduleDay(
 
     const today = dateKey(now.value);
     const nowMinutes = now.value.getHours() * 60 + now.value.getMinutes();
-    const rolledOver = nowMinutes >= minutesOfDay(rolloverTime.value);
-
-    const startFrom = rolledOver ? shift(today, 1) : today;
+    const pastRolloverTime = nowMinutes >= minutesOfDay(rolloverTime.value);
 
     const lessonsOn = (date: string) =>
       students.value.map((student) => ({
@@ -105,28 +104,29 @@ export function useScheduleDay(
     // Walk forward until a day with lessons is found. Falling back to the
     // starting day keeps the header honest when the whole window is empty
     // (school holidays), instead of silently showing a date weeks away.
-    for (let offset = 0; offset <= MAX_LOOKAHEAD_DAYS; offset += 1) {
-      const candidate = shift(startFrom, offset);
-      const grouped = lessonsOn(candidate);
-      const total = grouped.reduce((sum, entry) => sum + entry.lessons.length, 0);
-      if (total > 0) {
-        return {
-          date: candidate,
-          label: `${describe(candidate, today)} ${shortDate(candidate)}`,
-          rolledOver,
-          lessonsByStudent: grouped,
-          totalLessons: total,
-        };
+    const firstDayWithLessons = (from: string): string => {
+      for (let offset = 0; offset <= MAX_LOOKAHEAD_DAYS; offset += 1) {
+        const candidate = shift(from, offset);
+        if (lessonsOn(candidate).some((entry) => entry.lessons.length > 0)) return candidate;
       }
-    }
+      return from;
+    };
 
-    const grouped = lessonsOn(startFrom);
+    const shown = firstDayWithLessons(pastRolloverTime ? shift(today, 1) : today);
+
+    // The hint on the card claims the clock moved the view. That is only true
+    // if it did: on a holiday the next lessons are the same days away whether
+    // the rollover has happened or not, and saying otherwise is a small lie
+    // that makes the display harder to trust.
+    const rolledOver = pastRolloverTime && shown !== firstDayWithLessons(today);
+
+    const grouped = lessonsOn(shown);
     return {
-      date: startFrom,
-      label: `${describe(startFrom, today)} ${shortDate(startFrom)}`,
+      date: shown,
+      label: `${describe(shown, today)} ${shortDate(shown)}`,
       rolledOver,
       lessonsByStudent: grouped,
-      totalLessons: 0,
+      totalLessons: grouped.reduce((sum, entry) => sum + entry.lessons.length, 0),
     };
   });
 

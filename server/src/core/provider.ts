@@ -1,7 +1,12 @@
 import { logger } from "./logging.ts";
 import { readCache, writeCache } from "./store.ts";
 
-export type ProviderStatus = "ok" | "stale" | "failed" | "idle";
+/**
+ * `hidden` is never set by a provider. The API layer stamps it when a payload
+ * is withheld from a non-local client, so the phone can say why the card is
+ * empty instead of showing a spinner that will never finish.
+ */
+export type ProviderStatus = "ok" | "stale" | "failed" | "idle" | "hidden";
 
 export interface ProviderSnapshot<T = unknown> {
   id: string;

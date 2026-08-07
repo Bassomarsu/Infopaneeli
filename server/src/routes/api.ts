@@ -20,7 +20,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     if (!local) {
       for (const id of SENSITIVE_PROVIDERS) {
         const snapshot = snapshots[id];
-        if (snapshot) snapshots[id] = { ...snapshot, data: null, error: null, status: "idle" };
+        // Deliberately not "idle": that renders as "Haetaan…" and would spin
+        // forever on the phone, since nothing is ever coming.
+        if (snapshot) {
+          snapshots[id] = { ...snapshot, data: null, error: null, fetchedAt: null, status: "hidden" };
+        }
       }
     }
 

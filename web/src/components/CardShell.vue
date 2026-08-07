@@ -17,6 +17,7 @@ const props = defineProps<{
  */
 const isStale = computed(() => props.status === "stale");
 const isFailed = computed(() => props.status === "failed");
+const isHidden = computed(() => props.status === "hidden");
 const isLoading = computed(() => props.status === "idle" || props.status === undefined);
 
 const staleLabel = computed(() => {
@@ -48,6 +49,10 @@ const staleLabel = computed(() => {
       <div v-if="isFailed" class="state">
         <span class="state__title">Tietoja ei saatu</span>
         <span>{{ error?.message ?? "Lähde ei vastaa" }}</span>
+      </div>
+      <div v-else-if="isHidden" class="state">
+        <span class="state__title">Vain infonäytöllä</span>
+        <span>Koulutiedot näkyvät vain keittiön näytöllä, eivät kotiverkon muilla laitteilla.</span>
       </div>
       <div v-else-if="isLoading" class="state">
         <span>Haetaan…</span>

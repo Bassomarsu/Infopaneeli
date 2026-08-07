@@ -9,9 +9,12 @@
     "noEmit": true,
     "jsx": "preserve",
     "isolatedModules": true,
+    // Testit ajetaan suoraan Nodella ilman käännösvaihetta, ja Node vaatii
+    // .ts-päätteen suhteellisiin tuonteihin.
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "test/**/*.ts", "vite.config.ts"]
 }

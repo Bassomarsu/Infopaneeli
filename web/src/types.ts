@@ -1,4 +1,5 @@
-export type ProviderStatus = "ok" | "stale" | "failed" | "idle";
+/** `hidden` = the server withheld this payload because the client is not the display. */
+export type ProviderStatus = "ok" | "stale" | "failed" | "idle" | "hidden";
 
 export interface ProviderSnapshot<T> {
   id: string;

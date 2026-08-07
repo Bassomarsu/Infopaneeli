@@ -26,10 +26,17 @@ function num(name: string, fallback: number): number {
  */
 const logLevel = str("LOG_LEVEL", "warn");
 
+/**
+ * Overridable so the test suite writes somewhere else. The log exists to answer
+ * "what broke on the wall display", and rows from fake providers named
+ * `test-flaky-1234` sitting in the middle of it make that harder, not easier.
+ */
+const logDirOverride = str("LOG_DIR");
+
 export const config = {
   projectRoot,
   dataDir: path.join(projectRoot, "data"),
-  logDir: path.join(projectRoot, "data", "logs"),
+  logDir: logDirOverride ? path.resolve(projectRoot, logDirOverride) : path.join(projectRoot, "data", "logs"),
   snapshotDir: path.join(projectRoot, "data", "snapshots"),
   dbPath: path.join(projectRoot, "data", "infonaytto.db"),
   webDist: path.join(projectRoot, "web", "dist"),

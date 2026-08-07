@@ -4,25 +4,39 @@
  *
  * Run with:  npm run test:providers --workspace=server
  */
+import "./log-to-temp.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { config } from "../src/core/config.ts";
 import { FatalProviderError, Provider } from "../src/core/provider.ts";
 
-const logFile = (): string => {
-  const files = fs
-    .readdirSync(config.logDir)
-    .filter((f) => f.endsWith(".log"))
-    .map((f) => `${config.logDir}/${f}`)
-    .sort();
-  const latest = files.at(-1);
-  assert.ok(latest, "no log file was created");
-  return latest;
+/**
+ * Null until pino's async transport has actually created the file. On a fresh
+ * checkout the log directory does not exist at all when the first assertion
+ * runs, and treating that as "no lines yet" is what lets `awaitLines` keep
+ * polling instead of failing on the first poll.
+ */
+const logFile = (): string | null => {
+  let files: string[];
+  try {
+    files = fs.readdirSync(config.logDir);
+  } catch {
+    return null;
+  }
+  return (
+    files
+      .filter((f) => f.endsWith(".log"))
+      .map((f) => `${config.logDir}/${f}`)
+      .sort()
+      .at(-1) ?? null
+  );
 };
 
 function linesFor(provider: string, event?: string): Array<Record<string, unknown>> {
+  const file = logFile();
+  if (file === null) return [];
   return fs
-    .readFileSync(logFile(), "utf8")
+    .readFileSync(file, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>)

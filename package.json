@@ -17,6 +17,7 @@
     "build": "npm run build --workspace=web",
     "start": "npm run start --workspace=server",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test:providers --workspace=server && npm run test:wilma --workspace=server"
+    "test": "npm run test:providers --workspace=server && npm run test:wilma --workspace=server && npm run test:schedule --workspace=web",
+    "test:smoke": "npm run test:smoke --workspace=server"
   }
 }

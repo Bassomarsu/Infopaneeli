@@ -8,7 +8,8 @@
     "start": "node --env-file-if-exists=../.env src/index.ts",
     "typecheck": "tsc --noEmit",
     "test:providers": "node test/provider-transitions.ts",
-    "test:wilma": "node test/wilma-fetch.ts"
+    "test:wilma": "node test/wilma-fetch.ts",
+    "test:smoke": "node --env-file-if-exists=../.env test/wilma-smoke.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",

@@ -27,7 +27,8 @@ Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 | `npm run dev:web` | Vite-kehityspalvelin frontendille |
 | `npm run build` | Kääntää frontendin `web/dist`-kansioon |
 | `npm run typecheck` | Tyyppitarkistus molemmille työtiloille |
-| `npm test` | Provider-kerroksen sopimustestit ja Wilma-hakulogiikan testit |
+| `npm test` | Provider-kerros, Wilma-hakulogiikka ja lukujärjestyksen päivänvalinta (ei verkkoa) |
+| `npm run test:smoke` | Savutesti **oikeaa Wilmaa vasten** — aja kirjastopäivityksen jälkeen |
 
 ## Arkkitehtuuri
 
@@ -56,7 +57,10 @@ palautumiset. `debug` = kaikki haut, konsolituloste ja rikkoutuneesta
 vastauksesta tallennetaan raaka HTML `data/snapshots`-kansioon vianetsintää
 varten.
 
-Lokit: `data/logs/`, päivittäin kierrätettynä ja kokorajattuna.
+Lokit: `data/logs/`, päivittäin kierrätettynä ja kokorajattuna. Testit kirjoittavat
+omaan kansioonsa `data/logs-test/` (`LOG_DIR`-muuttuja), jottei tuotantoloki
+täyty tekaistujen testiproviderien riveistä — loki on luettava silloin kun sitä
+oikeasti tarvitaan.
 
 ### Tilin lukituksen esto
 
@@ -81,11 +85,34 @@ Wilma on jo vaikeuksissa.
   vielä lukemattomat tarkistetaan uudelleen korkeintaan tunnin välein ja
   korkeintaan kolme per kierros.
 
+### Mitä oikeasta Wilmasta on todennettu (7.8.2026)
+
+`npm run test:smoke` ajettiin oikeilla tunnuksilla. Kaksi asiaa, joita Wilma ei
+dokumentoi, ovat nyt mitattuja eivätkä arvattuja:
+
+- **`schedule.list({date})` palauttaa viikon, ei yhtä päivää.** Providerin
+  oletus pitää.
+- **`overview.get()` palauttaa paljon enemmän kuin kuluvan viikon** — mittaus
+  antoi 79 tuntia 19 eri päivälle, lähes neljä viikkoa eteenpäin. Yksi kutsu
+  kattaa siis päivänvaihdon reilusti, ja seuraavan viikon lisähaku jää
+  käytännössä lepäämään keskellä lukuvuotta.
+
+Yksi asia jäi **todentamatta**: postilaatikko ja arkisto olivat molemmat tyhjiä,
+joten viestien parsintaa eikä `Message.status`-kentän merkitystä (luettu vs.
+lukematon) ei ole nähty kertaakaan oikealla datalla. Savutesti sanoo tämän
+suoraan sen sijaan että raportoisi läpimenon. Ensimmäinen oikea Wilma-viesti on
+se hetki, jolloin tulkinta kannattaa tarkistaa.
+
 ## Tietoturva
 
-- Tunnukset vain `.env`-tiedostossa, joka on `.gitignore`ssa.
+- Tunnukset vain `.env`-tiedostossa, joka on `.gitignore`ssa. `.env.example` on
+  malli ja **menee gittiin** — siihen ei kirjoiteta oikeita arvoja. Nimet ovat
+  hämäävän lähellä toisiaan, joten tämä on helppo sekoittaa.
 - Wilma-datan lukureitit vastaavat vain **localhostista** — kotiverkon puhelin
-  näkee sään ja muistilistan, ei lasten koulutietoja.
+  näkee sään ja muistilistan, ei lasten koulutietoja. Puhelimessa kortilla lukee
+  "Vain infonäytöllä" eikä se jää pyörimään ikuiseen "Haetaan…"-tilaan.
+  Todennettu oikealla datalla: lähiverkon vastauksesta ei löydy lapsen nimeä,
+  oppilasnumeroa, oppiainetta eikä opettajan nimeä.
 - Muistilistan ja asetusten muokkaus muualta kuin näyttölaitteelta vaatii
   `EDIT_PIN`-koodin.
 - Salasanoja, evästeitä eikä viestien sisältöjä ei kirjoiteta lokiin.
@@ -105,6 +132,13 @@ Lukujärjestys näyttää kuluvan päivän ja vaihtaa itsestään seuraavaan
 koulupäivään asetettuna kellonaikana (oletus 12:00). Viikonloput ja tunnittomat
 päivät ohitetaan. Näytettävät lapset ja asettelu (rinnakkain / allekkain)
 valitaan asetuksista, jotka tallennetaan palvelimelle.
+
+Otsikko kertoo aina eksplisiittisesti päivän ("Huomenna 12.8.", "Maanantaina
+17.8."), ja vihje *"vaihtui klo 12:00"* näytetään vain silloin kun kello
+**oikeasti** vaihtoi näkymän. Loman aikana seuraavat tunnit ovat yhtä kaukana
+kellonajasta riippumatta, joten vihjettä ei silloin näytetä. Säännöt on lukittu
+testeillä (`web/test/schedule-day.ts`) — tämä otsikko on ehtinyt valehdella
+kahdesti.
 
 ## Käyttöönotto Surfacella
 
