@@ -252,8 +252,16 @@ const isNight = computed(() => {
       @edit-layout="panelLayout.startEditing()"
     />
 
+    <!--
+      Ei v-if="settings": hälytysmoottorin (useAlarms-composable AlarmsPanelin
+      sisällä) pitää olla käynnissä heti sivun latauduttua, oletusarvoisesti
+      tyhjillä hälytyksillä, eikä vasta kun ensimmäinen /api/dashboard on
+      onnistunut. Muuten palvelimen hetkellinen tavoittamattomuus juuri
+      aamulla (esim. uudelleenkäynnistyksen jälkeen) jättäisi koko
+      hälytysjärjestelmän lataamatta sen sijaan että se vain odottaisi
+      asetuksia. AlarmsPanel käsittelee settings === null itse.
+    -->
     <AlarmsPanel
-      v-if="settings"
       :settings="settings"
       :students="allStudents"
       :wilma-data="wilmaData"

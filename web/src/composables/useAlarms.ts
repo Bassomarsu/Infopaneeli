@@ -175,17 +175,48 @@ export function describeOccurrence(occurrence: AlarmOccurrence, now: Date): stri
 
 // --- Vue-composable: reaktiivinen laukaisu, localStorage-kirjanpito ja ääni ---
 
-const STORAGE_KEY = "infonaytto.alarms.rung.v1";
+/**
+ * Pienin mahdollinen `localStorage`-yhteensopiva rajapinta. Composable ottaa
+ * tämän valinnaisena parametrina (`UseAlarmsOptions.storage`) jotta testit
+ * voivat antaa muistinvaraisen toteutuksen — Node ei tarjoa globaalia
+ * `localStorage`ia, eikä laukaisulogiikan tärkeintä reunatapausta
+ * (uudelleenlataus kesken kuittaamattoman hälytyksen) muuten voisi todentaa
+ * automaattisesti. Tuotannossa oletusarvo on selaimen oma `localStorage`.
+ */
+export interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+function memoryStorage(): StorageLike {
+  const map = new Map<string, string>();
+  return {
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => {
+      map.set(key, value);
+    },
+    removeItem: (key) => {
+      map.delete(key);
+    },
+  };
+}
+
+function defaultStorage(): StorageLike {
+  return typeof localStorage !== "undefined" ? localStorage : memoryStorage();
+}
+
+const RUNG_STORAGE_KEY = "infonaytto.alarms.rung.v1";
+const PENDING_STORAGE_KEY = "infonaytto.alarms.pending.v1";
 
 interface RungStore {
   dateKey: string;
   ids: string[];
 }
 
-function loadRungStore(): RungStore {
-  if (typeof localStorage === "undefined") return { dateKey: "", ids: [] };
+function loadRungStore(storage: StorageLike): RungStore {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = storage.getItem(RUNG_STORAGE_KEY);
     if (!raw) return { dateKey: "", ids: [] };
     const parsed = JSON.parse(raw) as Partial<RungStore>;
     if (typeof parsed.dateKey !== "string" || !Array.isArray(parsed.ids)) return { dateKey: "", ids: [] };
@@ -195,26 +226,31 @@ function loadRungStore(): RungStore {
   }
 }
 
-function saveRungStore(store: RungStore): void {
-  if (typeof localStorage === "undefined") return;
+function saveRungStore(storage: StorageLike, store: RungStore): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    storage.setItem(RUNG_STORAGE_KEY, JSON.stringify(store));
   } catch {
     // Esim. tallennustila täynnä — hälytys soi silti tämän istunnon ajan, se riittää.
   }
 }
 
 /**
- * Muistaa mitkä hälytykset ovat jo soineet tänään, selaimen `localStorage`iin
- * (näyttökohtainen tila, ei jaettu palvelimen kanssa). Säilyttää vain kuluvan
- * päivän merkinnät — päivän vaihtuessa vanhat pyyhkiytyvät automaattisesti
- * pois sen sijaan että kertyisivät loputtomiin.
+ * Muistaa mitkä hälytykset on KUITATTU tänään (ei "tullut näkyviin", vaan
+ * käyttäjä on nähnyt/kuullut ne) — ks. perustelu `acknowledge()`:n kommentissa
+ * alla. Säilyttää vain kuluvan päivän merkinnät — päivän vaihtuessa vanhat
+ * pyyhkiytyvät automaattisesti pois sen sijaan että kertyisivät loputtomiin.
  */
 class RungTracker {
   private store: RungStore;
+  private readonly storage: StorageLike;
 
-  constructor() {
-    this.store = loadRungStore();
+  // Ei TS:n parametrimuotoista kenttien lyhennettä (`constructor(private x)`):
+  // Node suorittaa lähdekoodin natiivilla tyyppienpoistolla ilman
+  // käännösvaihetta, eikä se osaa muuntaa sitä — vain tavallinen
+  // konstruktoriparametri + kenttäsijoitus toimii ajonaikaisesti.
+  constructor(storage: StorageLike) {
+    this.storage = storage;
+    this.store = loadRungStore(storage);
   }
 
   has(dateKey: string, alarmId: string): boolean {
@@ -226,15 +262,64 @@ class RungTracker {
     this.syncDate(dateKey);
     if (!this.store.ids.includes(alarmId)) {
       this.store.ids.push(alarmId);
-      saveRungStore(this.store);
+      saveRungStore(this.storage, this.store);
     }
   }
 
   private syncDate(dateKey: string): void {
     if (this.store.dateKey !== dateKey) {
       this.store = { dateKey, ids: [] };
-      saveRungStore(this.store);
+      saveRungStore(this.storage, this.store);
     }
+  }
+}
+
+interface PendingAck {
+  dateKey: string;
+  alarmId: string;
+  targetIso: string;
+}
+
+/**
+ * Näkyvillä oleva, vielä kuittaamaton hälytys tallennetaan tähän heti kun se
+ * tulee aktiiviseksi. Ilman tätä sivun uudelleenlataus kesken hälytyksen
+ * (kioskiselain voi käynnistyä uudelleen milloin tahansa) hukkaisi
+ * ilmoituksen jäljettömiin — kukaan ei näkisi eikä kuulisi mitään, vaikka
+ * hälytys "soi" muistin mukaan. Vain yksi kerrallaan tallennetaan (ei koko
+ * jonoa): jos useampi hälytys on samaan aikaan jonossa ja sivu latautuu
+ * uudelleen ennen ensimmäisen kuittausta, jonossa olleet muut häviävät —
+ * hyväksytty yksinkertaistus.
+ */
+function loadPendingAck(storage: StorageLike, dateKey: string): { alarmId: string; time: Date } | null {
+  try {
+    const raw = storage.getItem(PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingAck>;
+    if (parsed.dateKey !== dateKey || typeof parsed.alarmId !== "string" || typeof parsed.targetIso !== "string") {
+      return null;
+    }
+    const time = new Date(parsed.targetIso);
+    if (Number.isNaN(time.getTime())) return null;
+    return { alarmId: parsed.alarmId, time };
+  } catch {
+    return null;
+  }
+}
+
+function savePendingAck(storage: StorageLike, dateKey: string, alarmId: string, time: Date): void {
+  try {
+    const record: PendingAck = { dateKey, alarmId, targetIso: time.toISOString() };
+    storage.setItem(PENDING_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+    // Ei kriittinen — sama peruste kuin saveRungStoressa.
+  }
+}
+
+function clearPendingAck(storage: StorageLike): void {
+  try {
+    storage.removeItem(PENDING_STORAGE_KEY);
+  } catch {
+    // Ei kriittinen.
   }
 }
 
@@ -243,6 +328,8 @@ export interface UseAlarmsOptions {
   now: Ref<Date>;
   alarms: Ref<Alarm[]>;
   students: Ref<WilmaStudent[]>;
+  /** Vain testejä varten — tuotannossa jätetään pois, jolloin käytetään selaimen localStoragea. */
+  storage?: StorageLike;
 }
 
 /**
@@ -252,11 +339,18 @@ export interface UseAlarmsOptions {
  * soitetaan heti kun hälytys tulee aktiiviseksi; jos toisto epäonnistuu
  * (selaimen äänilukko), `soundError` kertoo siitä käyttöliittymälle sen
  * sijaan että laukeaminen jäisi hiljaa huomaamatta.
+ *
+ * Turvallista kutsua ennen kuin oikeat hälytysasetukset ovat edes latautuneet
+ * — `alarms` voi alkaa tyhjänä listana ja täyttyä myöhemmin, watch reagoi
+ * siihen normaalisti. Tämä on tahallista: moottorin pitää olla käynnissä heti
+ * eikä vasta kun palvelimelta on saatu ensimmäinen vastaus (ks. App.vuen
+ * kommentti AlarmsPanelin mount-kohdassa).
  */
 export function useAlarms(options: UseAlarmsOptions) {
   const { wilma, now, alarms, students } = options;
+  const storage = options.storage ?? defaultStorage();
 
-  const tracker = new RungTracker();
+  const tracker = new RungTracker(storage);
   const queue = ref<DueAlarm[]>([]);
   const active = ref<DueAlarm | null>(null);
   const soundError = ref<string | null>(null);
@@ -273,23 +367,39 @@ export function useAlarms(options: UseAlarmsOptions) {
     const next = queue.value.shift();
     if (!next) return;
     active.value = next;
+    savePendingAck(storage, toDateKey(now.value), next.alarm.id, next.time);
     playFor(next);
   }
 
   watch(
     [now, wilma, alarms, students],
     ([currentNow, currentWilma, currentAlarms, currentStudents]) => {
+      const todayKey = toDateKey(currentNow);
+
+      // Uudelleenlatauksen palautus: jos edelliseltä kerralta jäi hälytys
+      // kuittaamatta juuri ennen sivun sulkeutumista, näytetään se uudestaan
+      // sen sijaan että se katoaisi huomaamatta. Odotetaan että hälytykset on
+      // ladattu (epätyhjä lista), koska tyhjä lista voi tarkoittaa joko "ei
+      // hälytyksiä" tai "asetuksia ei ole vielä haettu" — näitä ei voi erottaa
+      // toisistaan, joten palautusyritys vain siirtyy myöhemmäksi eikä koskaan
+      // tulkitse listan tyhjyyttä vahingossa poistoksi.
+      if (active.value === null && queue.value.length === 0 && currentAlarms.length > 0) {
+        const pending = loadPendingAck(storage, todayKey);
+        if (pending) {
+          const alarm = currentAlarms.find((a) => a.id === pending.alarmId);
+          if (alarm) {
+            active.value = { alarm, time: pending.time };
+            playFor(active.value);
+          }
+        }
+      }
+
       const due = alarmsDueNow(currentAlarms, currentWilma, currentStudents, currentNow, (dateKey, id) =>
         tracker.has(dateKey, id),
       );
       if (due.length === 0) return;
-      const todayKey = toDateKey(currentNow);
       const alreadyQueued = new Set([...queue.value, ...(active.value ? [active.value] : [])].map((e) => e.alarm.id));
       for (const entry of due) {
-        // Merkitään soineeksi heti, ennen kuin ilmoitus on kuitattu — muuten
-        // seuraava kellosykli (20 s) lisäisi saman hälytyksen jonoon uudestaan
-        // sen ollessa vielä odottamassa kuittausta.
-        tracker.mark(todayKey, entry.alarm.id);
         if (!alreadyQueued.has(entry.alarm.id)) queue.value.push(entry);
       }
       activateNext();
@@ -297,8 +407,24 @@ export function useAlarms(options: UseAlarmsOptions) {
     { immediate: true },
   );
 
-  /** Kuittaa näkyvän hälytyksen ja näyttää seuraavan jonosta, jos sellainen on. */
+  /**
+   * Kuittaa näkyvän hälytyksen ja näyttää seuraavan jonosta, jos sellainen on.
+   *
+   * Vasta tässä merkitään hälytys soineeksi (`tracker.mark`) — ei heti kun se
+   * tulee jonoon. Jos merkintä tehtäisiin jo silloin, nopea kuittaus (ennen
+   * kuin 60 s:n laukeamisikkuna on ehtinyt sulkeutua) johtaisi siihen että
+   * seuraava kellosykli tulkitsisi saman hälytyksen taas laukeavaksi eikä enää
+   * "jo soineeksi" — `alarmsDueNow` ei nimittäin tiedä että se juuri
+   * kuitattiin, vain että kukaan ei ole merkinnyt sitä soineeksi. Yllä oleva
+   * `alreadyQueued`-tarkistus riittää yksinään estämään tuplauksen SILLÄ
+   * AIKAA kun hälytys on aktiivinen/jonossa; tämä merkintä on se mikä estää
+   * sen ilmestymisen takaisin sen JÄLKEEN kun käyttäjä on jo nähnyt sen.
+   */
   function acknowledge(): void {
+    if (active.value) {
+      tracker.mark(toDateKey(now.value), active.value.alarm.id);
+    }
+    clearPendingAck(storage);
     active.value = null;
     soundError.value = null;
     activateNext();

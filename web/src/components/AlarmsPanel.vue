@@ -5,7 +5,13 @@ import { describeOccurrence, nextAlarmOccurrence, useAlarms } from "../composabl
 import type { Alarm, Settings, WilmaData, WilmaStudent } from "../types.ts";
 
 const props = defineProps<{
-  settings: Settings;
+  /**
+   * Null ennen kuin ensimmäinen /api/dashboard on onnistunut. Hälytysmoottori
+   * (useAlarms alla) on silti käynnissä koko ajan, oletusarvoisesti tyhjällä
+   * hälytyslistalla — se vain täyttyy heti kun asetukset saapuvat. Ks. App.vuen
+   * kommentti AlarmsPanelin mount-kohdassa.
+   */
+  settings: Settings | null;
   students: WilmaStudent[];
   wilmaData: WilmaData | null;
   /** Hallintamodaalin (lista/muokkaus) auki-tila — hälytyksen soiminen ei riipu tästä. */
@@ -23,7 +29,7 @@ const REPEAT_MIN = 1;
 const REPEAT_MAX = 8;
 const LABEL_MAX_LENGTH = 60;
 
-const alarms = computed(() => props.settings.alarms ?? []);
+const alarms = computed(() => props.settings?.alarms ?? []);
 
 // useAlarms tarvitsee Refit, mutta computed() kelpaa (ks. samaa mallia
 // App.vuessa: useScheduleDay saa suoraan computed-arvoja Ref-parametreina).
@@ -43,7 +49,19 @@ function clockLabel(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+/**
+ * Hälytys voi jäädä osoittamaan oppilasta joka on sittemmin kadonnut
+ * Wilmasta (poistunut, tunnus vaihtunut). Silloin alarmTargetForDate
+ * palauttaa aina null ja paneeli näyttäisi tekstin "Ei tunteja lähipäivinä"
+ * — täsmälleen samalta kuin aito loma. Tämä erotetaan omaksi tarkistukseksi
+ * ettei rikkinäinen viittaus jää huomaamatta lomana.
+ */
+function isOrphanedStudent(alarm: Alarm): boolean {
+  return alarm.studentNumber !== null && !props.students.some((s) => s.studentNumber === alarm.studentNumber);
+}
+
 function occurrenceText(alarm: Alarm): string {
+  if (isOrphanedStudent(alarm)) return "Oppilasta ei löydy Wilmasta — tarkista hälytyksen kohde";
   if (!props.wilmaData) return "Lukujärjestystä ei tunneta";
   const occurrence = nextAlarmOccurrence(alarm, props.wilmaData, props.students, props.now);
   if (!occurrence) return "Ei tunteja lähipäivinä";
@@ -123,6 +141,16 @@ const draftStudentValue = computed<string>({
 });
 
 const formPreviewText = computed(() => (editingDraft.value ? occurrenceText(editingDraft.value) : ""));
+const editingIsOrphaned = computed(() => (editingDraft.value ? isOrphanedStudent(editingDraft.value) : false));
+
+// Oppilaskenttä näytetään aina kun nykyinen arvo ei ole null — myös
+// yhden (tunnetun) lapsen perheessä, jos hälytys silti osoittaa johonkin
+// tunnisteeseen (esim. kadonneeseen). Ilman tätä käyttäjä ei pääsisi edes
+// näkemään saati korjaamaan roikkuvaa viittausta, koska rivi "Kuka tahansa"
+// -oletuksen taakse piiloutuisi kokonaan.
+const showStudentField = computed(
+  () => props.students.length > 1 || (editingDraft.value?.studentNumber ?? null) !== null,
+);
 
 async function previewSound(): Promise<void> {
   if (!editingDraft.value) return;
@@ -305,7 +333,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
             <button type="button" class="alarm__info" @click="startEdit(alarm)">
               <span class="alarm__label">{{ alarm.label }}</span>
-              <span class="alarm__meta">{{ minutesBeforeText(alarm) }} · {{ occurrenceText(alarm) }}</span>
+              <span class="alarm__meta" :class="{ 'alarm__meta--warn': isOrphanedStudent(alarm) }">
+                {{ minutesBeforeText(alarm) }} · {{ occurrenceText(alarm) }}
+              </span>
             </button>
 
             <button type="button" class="alarm__edit-btn" aria-label="Muokkaa" @click="startEdit(alarm)">✎</button>
@@ -339,7 +369,12 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <input v-model.number="editingDraft.minutesBefore" type="number" :min="MINUTES_MIN" :max="MINUTES_MAX" step="1" />
           </label>
 
-          <label v-if="students.length > 1" class="field">
+          <p v-if="editingIsOrphaned" class="panel__warning">
+            Oppilasta ({{ editingDraft.studentNumber }}) ei löydy Wilmasta — hälytys ei voi laueta ennen kuin
+            valitset kelvollisen oppilaan tai "Kuka tahansa".
+          </p>
+
+          <label v-if="showStudentField" class="field">
             <span>Oppilas</span>
             <select v-model="draftStudentValue">
               <option value="">Kuka tahansa</option>
@@ -459,6 +494,16 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   font-size: 0.88rem;
 }
 
+.panel__warning {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  background: rgba(243, 194, 107, 0.1);
+  border: 1px solid rgba(243, 194, 107, 0.35);
+  color: #f3c26b;
+  font-size: 0.85rem;
+}
+
 .group__hint {
   margin: 0;
   font-size: 0.82rem;
@@ -538,6 +583,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
+}
+
+.alarm__meta--warn {
+  color: #f3c26b;
 }
 
 .alarm__edit-btn,
@@ -743,6 +792,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   font-size: 2.4rem;
   line-height: 1.15;
   color: var(--text);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .ring__time {

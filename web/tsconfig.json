@@ -9,6 +9,12 @@
     "noEmit": true,
     "jsx": "preserve",
     "isolatedModules": true,
+    // Web-testit ajetaan suoraan Nodella, joka vain riisuu tyypit eikä muunna
+    // syntaksia. Konstruktorin parametrikentät ja vastaavat läpäisivät
+    // tyyppitarkistuksen mutta kaatoivat ajon — sama rajoite kuin
+    // palvelinpuolella, joten sama suoja tänne. Virhe käännösaikana on
+    // parempi kuin kaatuminen selaimessa.
+    "erasableSyntaxOnly": true,
     // Testit ajetaan suoraan Nodella ilman käännösvaihetta, ja Node vaatii
     // .ts-päätteen suhteellisiin tuonteihin.
     "allowImportingTsExtensions": true,

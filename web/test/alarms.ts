@@ -8,13 +8,35 @@
  * Aja:  npm run test:alarms --workspace=web
  */
 import assert from "node:assert/strict";
+import { nextTick, ref } from "vue";
 import {
   alarmsDueNow,
   alarmTargetForDate,
   describeOccurrence,
   nextAlarmOccurrence,
+  useAlarms,
+  type StorageLike,
 } from "../src/composables/useAlarms.ts";
-import type { Alarm, ScheduleLesson, WilmaData } from "../src/types.ts";
+import type { Alarm, ScheduleLesson, WilmaData, WilmaStudent } from "../src/types.ts";
+
+/**
+ * Muistinvarainen `localStorage`-korvike: Node ei tarjoa globaalia
+ * `localStorage`ia, mutta useAlarms hyväksyy `storage`-parametrin juuri tätä
+ * varten (ks. StorageLike). Sama olio jaettuna kahden `useAlarms()`-kutsun
+ * kesken simuloi sivun uudelleenlatausta.
+ */
+function memoryStorage(): StorageLike {
+  const map = new Map<string, string>();
+  return {
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => {
+      map.set(key, value);
+    },
+    removeItem: (key) => {
+      map.delete(key);
+    },
+  };
+}
 
 function lesson(date: string, start: string): ScheduleLesson {
   return {
@@ -197,6 +219,134 @@ const neverRung = () => false;
   assert.equal(nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0)), null);
   console.log("ok  ei tunteja lähipäivinä -> esikatselu on null");
 }
+
+/**
+ * Seuraavat testit ajavat itse `useAlarms`-composablea (ei vain puhtaita
+ * funktioita) — ne todentavat katselmoinnissa löydetyt kaksi bugia:
+ *
+ *   1. Hälytysmoottorin pitää toimia vaikka se käynnistetään ennen kuin
+ *      oikeat asetukset ovat vielä latautuneet (App.vue ei enää piilota
+ *      AlarmsPaneli komponenttia settingsin taakse).
+ *   2. Hälytystä ei saa merkitä "soineeksi" ennen kuin se on kuitattu —
+ *      muuten nopea kuittaus samalla 60 s ikkunalla toisi saman hälytyksen
+ *      heti takaisin, ja sivun uudelleenlataus juuri ennen kuittausta
+ *      hukkaisi ilmoituksen jäljettömiin.
+ */
+
+// Hälytysmoottori ei kaadu eikä jää passiiviseksi jos se käynnistetään ennen
+// kuin todelliset hälytysasetukset ovat saapuneet, ja alkaa toimia heti kun
+// ne saapuvat myöhemmin (ei vasta composablen luontihetkellä).
+async function testEngineWorksBeforeSettingsHaveLoaded(): Promise<void> {
+  const now = ref(at(2026, 8, 11, 7, 30));
+  const wilma = ref<WilmaData | null>(null);
+  const alarmsRef = ref<Alarm[]>([]); // "asetuksia ei ole vielä haettu palvelimelta"
+  const students = ref<WilmaStudent[]>([]);
+
+  const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage() });
+  await nextTick();
+  assert.equal(active.value === null, true, "ei saa kaatua eikä näyttää mitään ennen kuin hälytyksiä on ladattu");
+
+  // Asetukset saapuvat myöhemmin (esim. /api/dashboard vastaa vasta nyt):
+  // moottorin, joka on jo käynnissä tyhjillä hälytyksillä, pitää reagoida.
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  wilma.value = wilmaData;
+  students.value = wilmaData.students;
+  alarmsRef.value = [alarm({ id: "a1", minutesBefore: 30 })];
+  await nextTick();
+
+  const entry = active.value;
+  assert.ok(entry, "moottorin pitää alkaa laukaista heti kun hälytykset saapuvat, ei vain luontihetkellä");
+  assert.equal(entry.alarm.id, "a1");
+  console.log("ok  hälytysmoottori toimii vaikka se käynnistetään ennen asetusten latautumista");
+}
+
+// Nopea kuittaus (ikkuna on vielä auki) ei saa tuoda samaa hälytystä heti
+// takaisin seuraavalla kellosyklillä.
+async function testAcknowledgedAlarmDoesNotReturnWithinTheSameWindow(): Promise<void> {
+  const now = ref(at(2026, 8, 11, 7, 30));
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const wilma = ref<WilmaData | null>(wilmaData);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30 })]);
+  const students = ref<WilmaStudent[]>(wilmaData.students);
+
+  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage() });
+  await nextTick();
+  const entry = active.value;
+  assert.ok(entry, "hälytyksen pitää laueta ikkunan alussa");
+  assert.equal(entry.alarm.id, "a1");
+
+  acknowledge();
+  assert.equal(active.value, null, "kuittaus tyhjentää aktiivisen ilmoituksen heti");
+
+  // Kymmenen sekuntia myöhemmin, yhä saman 60 s ikkunan sisällä.
+  now.value = at(2026, 8, 11, 7, 30, 10);
+  await nextTick();
+  assert.equal(active.value, null, "kuitattu hälytys ei saa ilmestyä uudestaan saman ikkunan sisällä");
+  console.log("ok  kuitattu hälytys ei laukea uudestaan samalla laukeamisikkunalla");
+}
+
+// Kuittaamaton hälytys ei saa alkaa soida uudestaan kun ikkuna sulkeutuu,
+// mutta sen pitää pysyä näkyvissä siihen asti kunnes joku kuittaa sen.
+async function testUnacknowledgedAlarmStaysVisibleAfterWindowCloses(): Promise<void> {
+  const now = ref(at(2026, 8, 11, 7, 30));
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const wilma = ref<WilmaData | null>(wilmaData);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30 })]);
+  const students = ref<WilmaStudent[]>(wilmaData.students);
+
+  const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage() });
+  await nextTick();
+  const firstEntry = active.value;
+  assert.ok(firstEntry, "hälytyksen pitää laueta");
+  const firedAlarmId = firstEntry.alarm.id;
+
+  // Ikkuna (60 s) on jo sulkeutunut, käyttäjä ei ole vielä kuitannut.
+  now.value = at(2026, 8, 11, 7, 32, 0);
+  await nextTick();
+  const stillEntry = active.value;
+  assert.ok(stillEntry, "kuittaamattoman hälytyksen pitää pysyä näkyvissä ikkunan sulkeuduttuakin");
+  assert.equal(stillEntry.alarm.id, firedAlarmId, "sama ilmoitus pysyy, ei uutta laukeamista");
+  console.log("ok  kuittaamaton hälytys pysyy näkyvissä eikä laukea uudestaan ikkunan sulkeuduttua");
+}
+
+// Sivun uudelleenlataus kesken kuittaamattoman hälytyksen ei saa hukata
+// ilmoitusta: uusi useAlarms()-instanssi (uusi "sivulataus") jakaa saman
+// tallennustilan edellisen kanssa ja palauttaa ilmoituksen näkyviin.
+async function testReloadRestoresUnacknowledgedAlarmFromSharedStorage(): Promise<void> {
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const storage = memoryStorage(); // vastaa selaimen jaettua localStoragea
+
+  {
+    const now = ref(at(2026, 8, 11, 7, 30));
+    const wilma = ref<WilmaData | null>(wilmaData);
+    const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, label: "Herätys" })]);
+    const students = ref<WilmaStudent[]>(wilmaData.students);
+    const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage });
+    await nextTick();
+    assert.ok(active.value, "ensimmäisen \"sivulatauksen\" pitää laueta normaalisti");
+  }
+  // Tämä lohko sulkeutuu ilman kuittausta — juuri se tilanne joka simuloi
+  // sivun sulkeutumista kesken hälytyksen.
+
+  // "Uudelleenlataus" kymmenen sekuntia myöhemmin, ennen kuin kukaan kuittasi.
+  {
+    const now = ref(at(2026, 8, 11, 7, 30, 10));
+    const wilma = ref<WilmaData | null>(wilmaData);
+    const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, label: "Herätys" })]);
+    const students = ref<WilmaStudent[]>(wilmaData.students);
+    const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage });
+    await nextTick();
+    const restored = active.value;
+    assert.ok(restored, "uudelleenlatauksen jälkeen kuittaamattoman hälytyksen pitää palautua näkyviin");
+    assert.equal(restored.alarm.id, "a1");
+  }
+  console.log("ok  uudelleenlataus palauttaa kuittaamattoman hälytyksen näkyviin jaetusta tallennustilasta");
+}
+
+await testEngineWorksBeforeSettingsHaveLoaded();
+await testAcknowledgedAlarmDoesNotReturnWithinTheSameWindow();
+await testUnacknowledgedAlarmStaysVisibleAfterWindowCloses();
+await testReloadRestoresUnacknowledgedAlarmFromSharedStorage();
 
 console.log("\nall alarm trigger tests passed");
 process.exit(0);

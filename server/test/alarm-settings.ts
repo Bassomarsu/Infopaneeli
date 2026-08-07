@@ -86,6 +86,17 @@ function testStudentNumberAcceptsStringOrNull(): void {
   assert.equal(parseAlarms([validAlarm({ studentNumber: null })])[0]?.studentNumber, null);
   assert.equal(parseAlarms([validAlarm({ studentNumber: "123" })])[0]?.studentNumber, "123");
   rejects([{ ...validAlarm(), studentNumber: 123 }], "numeerinen studentNumber torjutaan");
+  // Palvelin ei voi luotettavasti tietää mitkä oppilasnumerot ovat juuri nyt
+  // olemassa Wilmassa (data voi olla hetkellisesti tyhjä), joten se EI saa
+  // hylätä tuntematontakaan mutta muodoltaan kelvollista tunnistetta — muuten
+  // käyttäjä lukkiutuisi ulos omista asetuksistaan jos lapsi katoaa Wilmasta
+  // tai tunniste vaihtuu. Roikkuvan viittauksen tunnistaminen ja siitä
+  // varoittaminen on käyttöliittymän (AlarmsPanel.vue) vastuulla.
+  assert.equal(
+    parseAlarms([validAlarm({ studentNumber: "ei-olemassa-oleva-oppilas" })])[0]?.studentNumber,
+    "ei-olemassa-oleva-oppilas",
+    "tuntematon mutta muodoltaan kelvollinen studentNumber ei saa torjua koko hälytystä",
+  );
   console.log("ok  studentNumber hyväksyy merkkijonon tai nullin, ei muuta");
 }
 
