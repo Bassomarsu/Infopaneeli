@@ -5,6 +5,7 @@ import {
   DEFAULT_SOUND_ID,
   fetchCustomSounds,
   playAlarmSound,
+  stopAlarmSound,
   unlockAudio,
   type CustomSound,
 } from "./alarmSounds.ts";
@@ -172,6 +173,7 @@ function startNew(): void {
     listError.value = `Enintään ${MAX_ALARMS} hälytystä`;
     return;
   }
+  stopPreviewIfPlaying(); // edellisen hälytyksen esikuuntelu ei saa jäädä soimaan taustalle
   editingDraft.value = blankAlarm();
   isNewAlarm.value = true;
   formError.value = null;
@@ -179,6 +181,7 @@ function startNew(): void {
 }
 
 function startEdit(alarm: Alarm): void {
+  stopPreviewIfPlaying(); // sama peruste kuin startNew: rivin vaihto ei saa jättää vanhaa esikuuntelua soimaan
   editingDraft.value = { ...alarm };
   isNewAlarm.value = false;
   formError.value = null;
@@ -186,6 +189,7 @@ function startEdit(alarm: Alarm): void {
 }
 
 function cancelEdit(): void {
+  stopPreviewIfPlaying();
   editingDraft.value = null;
   formError.value = null;
   previewError.value = null;
@@ -218,15 +222,49 @@ const showStudentField = computed(
     (props.students.length > 1 || (editingDraft.value?.studentNumber ?? null) !== null),
 );
 
+// Esikuuntelun soiminen tallennetaan omaan reaktiiviseen tilaan (eikä
+// esim. pääteltynä playAlarmSoundin Promisesta) jotta "Kuuntele"-painike
+// tietää milloin sen pitää näyttäytyä "Pysäytä"-painikkeena — ks. template.
+const previewPlaying = ref(false);
+
+/**
+ * Pysäyttää esikuuntelun JOS se on juuri nyt käynnissä. Ei koske hälytyksen
+ * omaan ääneen (ring), vaikka molemmat käyttävät samaa
+ * stopAlarmSound()-mekanismia globaalisti "vain yksi ääni kerrallaan"
+ * -säännön takia — tämä funktio tarkistaa ensin previewPlaying-lipun, joten
+ * se ei koskaan sammuta ääntä joka kuuluu johonkin muuhun (esim. samaan
+ * aikaan sattuvaan oikeaan hälytykseen, joka on jo ehtinyt ottaa äänen
+ * haltuunsa esikuuntelulta yhden-äänen-kerrallaan -säännön mukaisesti).
+ * Kutsutaan aina kun esikuuntelun konteksti katoaa: muokkaus perutaan tai
+ * tallennetaan, toiseen hälytykseen vaihdetaan, paneeli suljetaan, tai koko
+ * komponentti puretaan (ks. cancelEdit, saveEdit, startNew, startEdit,
+ * onUnmounted alla).
+ */
+function stopPreviewIfPlaying(): void {
+  if (previewPlaying.value) {
+    stopAlarmSound();
+    previewPlaying.value = false;
+  }
+}
+
 async function previewSound(): Promise<void> {
+  if (previewPlaying.value) {
+    stopPreviewIfPlaying();
+    return;
+  }
   if (!editingDraft.value) return;
   previewError.value = null;
+  previewPlaying.value = true;
   try {
     // Esikuuntelu soittaa aina yhden kierroksen riippumatta toistoasetuksesta
-    // — äänen luonnetta testataan, ei koko hälytyksen kestoa.
+    // — äänen luonnetta testataan, ei koko hälytyksen kestoa. Pitkälläkin
+    // äänitiedostolla toisto on silti pysäytettävissä kesken kaiken tästä
+    // samasta painikkeesta (ks. template: "Kuuntele" -> "Pysäytä").
     await playAlarmSound(editingDraft.value.soundId, editingDraft.value.volume, 1);
   } catch (err) {
     previewError.value = err instanceof Error ? err.message : "Ääntä ei voitu soittaa";
+  } finally {
+    previewPlaying.value = false;
   }
 }
 
@@ -284,8 +322,12 @@ async function saveEdit(): Promise<void> {
   formError.value = null;
   const result = await persistAlarms(next);
   formSaving.value = false;
-  if (result.ok) editingDraft.value = null;
-  else formError.value = result.error;
+  if (result.ok) {
+    stopPreviewIfPlaying(); // tallennus sulkee muokkauslomakkeen, ei saa jäädä soimaan taustalle
+    editingDraft.value = null;
+  } else {
+    formError.value = result.error;
+  }
 }
 
 async function toggleEnabled(alarm: Alarm): Promise<void> {
@@ -333,6 +375,10 @@ async function confirmDelete(alarm: Alarm): Promise<void> {
 }
 
 onUnmounted(clearPendingDeleteTimer);
+// Varmuuden vuoksi: jos komponentti puretaan ilman että closePanel/cancelEdit
+// ehtii ajaa (esim. vanhempi poistaisi tämän suoraan DOM:ista), esikuuntelu
+// ei silti saa jäädä soimaan taustalle näkymän vaihtuessa.
+onUnmounted(stopPreviewIfPlaying);
 
 function closePanel(): void {
   cancelEdit();
@@ -480,7 +526,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
                   (puuttuva ääni: {{ editingDraft.soundId }})
                 </option>
               </select>
-              <button type="button" class="btn" @click="previewSound">Kuuntele</button>
+              <button
+                type="button"
+                class="btn"
+                :class="{ 'btn--playing': previewPlaying }"
+                @click="previewSound"
+              >
+                {{ previewPlaying ? "◼ Pysäytä" : "▶ Kuuntele" }}
+              </button>
             </div>
             <p v-if="soundListError" class="group__hint">{{ soundListError }}</p>
           </label>
@@ -748,6 +801,16 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .btn:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* Esikuuntelun "soi nyt" -tila: painike korostuu selvästi jotta pysäytys
+   löytyy, sen sijaan että sama neutraali "Kuuntele"-nappi jäisi harhaanjohtavasti
+   näkyviin ääni soidessa taustalla. */
+.btn--playing {
+  background: var(--accent-school);
+  border-color: transparent;
+  color: #0b0d12;
+  font-weight: 600;
 }
 
 .edit {

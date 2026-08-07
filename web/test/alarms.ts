@@ -15,6 +15,7 @@ import {
   describeOccurrence,
   nextAlarmOccurrence,
   useAlarms,
+  type AlarmSoundPlayer,
   type StorageLike,
 } from "../src/composables/useAlarms.ts";
 import type { Alarm, ScheduleLesson, WilmaData, WilmaStudent } from "../src/types.ts";
@@ -34,6 +35,30 @@ function memoryStorage(): StorageLike {
     },
     removeItem: (key) => {
       map.delete(key);
+    },
+  };
+}
+
+/**
+ * Vakoileva äänisoitin: Node ei tarjoa Web Audiota eikä <audio>-elementtiä,
+ * joten useAlarms hyväksyy `soundPlayer`-parametrin (ks. AlarmSoundPlayer)
+ * juuri tätä varten — sama ratkaisu kuin StorageLikellä yllä. `calls`
+ * tallentaa kutsujärjestyksen ("play:a1", "stop", "play:a2", ...) jotta
+ * testit voivat todentaa ETTÄ ja MISSÄ JÄRJESTYKSESSÄ stop() kutsutaan.
+ */
+function fakeSoundPlayer(): AlarmSoundPlayer & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    play: (soundId) => {
+      calls.push(`play:${soundId}`);
+      return new Promise<void>(() => {}); // ei koskaan resolvoidu itsestään — vastaa oikeaa pitkää äänitiedostoa
+    },
+    stop: () => {
+      calls.push("stop");
+    },
+    unlock: () => {
+      calls.push("unlock");
     },
   };
 }
@@ -343,10 +368,96 @@ async function testReloadRestoresUnacknowledgedAlarmFromSharedStorage(): Promise
   console.log("ok  uudelleenlataus palauttaa kuittaamattoman hälytyksen näkyviin jaetusta tallennustilasta");
 }
 
+/**
+ * Löydetty bugi: pitkä äänitiedosto (minuutteja) ei pysähtynyt millään muulla
+ * tavalla kuin sivun päivittämällä — pahin tapaus oli että KUITTAUSKIN jätti
+ * äänen soimaan taustalle. Seuraavat kolme testiä todentavat pysäytyslogiikan
+ * `useAlarms`-tasolla käyttäen `soundPlayer`-injektiota (ks. yllä) — itse
+ * Web Audio / <audio>-toteutus (alarmSounds.ts) vaatii oikean selaimen eikä
+ * ole tästä testattavissa (ks. tiimille palautettu rajoitusten lista).
+ */
+
+// Kuittaus pysäyttää äänen VÄLITTÖMÄSTI, vaikka jonossa ei ole seuraavaa
+// hälytystä joka muuten aloittaisi uuden — pelkkä "uusi ääni pysäyttää
+// vanhan" ei riitä tähän tapaukseen.
+async function testAcknowledgeStopsSoundEvenWithNothingQueuedNext(): Promise<void> {
+  const now = ref(at(2026, 8, 11, 7, 30));
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const wilma = ref<WilmaData | null>(wilmaData);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, soundId: "pitka-tiedosto" })]);
+  const students = ref<WilmaStudent[]>(wilmaData.students);
+  const player = fakeSoundPlayer();
+
+  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage(), soundPlayer: player });
+  await nextTick();
+  assert.ok(active.value, "hälytyksen pitää laueta");
+  assert.deepEqual(player.calls, ["play:pitka-tiedosto"], "ääni käynnistyy laukeamisen yhteydessä");
+
+  acknowledge();
+  assert.equal(active.value, null, "kuittaus tyhjentää aktiivisen ilmoituksen");
+  assert.deepEqual(
+    player.calls,
+    ["play:pitka-tiedosto", "stop"],
+    "kuittauksen pitää pysäyttää ääni VÄLITTÖMÄSTI vaikka jonossa ei ole mitään seuraavaa",
+  );
+  console.log("ok  kuittaus pysäyttää äänen heti, vaikka jonossa ei ole seuraavaa hälytystä");
+}
+
+// Kaksi jonossa olevaa hälytystä: kuittaus pysäyttää ensimmäisen äänen JA
+// käynnistää seuraavan — pysäytys ei saa estää jonon etenemistä.
+async function testAcknowledgeStopsCurrentAndStartsNextQueuedAlarm(): Promise<void> {
+  const now = ref(at(2026, 8, 11, 7, 30));
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const wilma = ref<WilmaData | null>(wilmaData);
+  const alarmsRef = ref<Alarm[]>([
+    alarm({ id: "a1", label: "Herätys", minutesBefore: 30, soundId: "s1" }),
+    alarm({ id: "a2", label: "Lähtö", minutesBefore: 30, soundId: "s2" }),
+  ]);
+  const students = ref<WilmaStudent[]>(wilmaData.students);
+  const player = fakeSoundPlayer();
+
+  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage(), soundPlayer: player });
+  await nextTick();
+  assert.equal(active.value?.alarm.id, "a1", "molemmat osuvat samaan hetkeen, mutta vain yksi on aktiivinen kerrallaan");
+  assert.deepEqual(player.calls, ["play:s1"]);
+
+  acknowledge();
+  assert.equal(active.value?.alarm.id, "a2", "kuittaus näyttää jonossa olevan seuraavan hälytyksen");
+  assert.deepEqual(
+    player.calls,
+    ["play:s1", "stop", "play:s2"],
+    "ensimmäinen ääni pysäytetään ennen kuin seuraava käynnistyy — ei koskaan päällekkäin",
+  );
+  console.log("ok  kuittaus pysäyttää nykyisen äänen ja käynnistää jonossa olevan seuraavan hälytyksen");
+}
+
+// retrySound avaa äänilukon uudelleen ja käynnistää saman aktiivisen
+// hälytyksen äänen uudestaan (ei pysäytä mitään ensin — sen tekee
+// playAlarmSound/registerSession itse "vain yksi ääni kerrallaan" -säännöllä).
+async function testRetrySoundUnlocksAndReplaysActiveAlarm(): Promise<void> {
+  const now = ref(at(2026, 8, 11, 7, 30));
+  const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const wilma = ref<WilmaData | null>(wilmaData);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, soundId: "s1" })]);
+  const students = ref<WilmaStudent[]>(wilmaData.students);
+  const player = fakeSoundPlayer();
+
+  const { retrySound } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage(), soundPlayer: player });
+  await nextTick();
+  assert.deepEqual(player.calls, ["play:s1"]);
+
+  retrySound();
+  assert.deepEqual(player.calls, ["play:s1", "unlock", "play:s1"], "uudelleenyritys avaa äänilukon ja soittaa saman hälytyksen äänen uudestaan");
+  console.log("ok  retrySound avaa äänilukon ja soittaa aktiivisen hälytyksen äänen uudestaan");
+}
+
 await testEngineWorksBeforeSettingsHaveLoaded();
 await testAcknowledgedAlarmDoesNotReturnWithinTheSameWindow();
 await testUnacknowledgedAlarmStaysVisibleAfterWindowCloses();
 await testReloadRestoresUnacknowledgedAlarmFromSharedStorage();
+await testAcknowledgeStopsSoundEvenWithNothingQueuedNext();
+await testAcknowledgeStopsCurrentAndStartsNextQueuedAlarm();
+await testRetrySoundUnlocksAndReplaysActiveAlarm();
 
 console.log("\nall alarm trigger tests passed");
 process.exit(0);

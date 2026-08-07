@@ -1,5 +1,5 @@
 import { ref, watch, type Ref } from "vue";
-import { playAlarmSound, unlockAudio } from "../components/alarmSounds.ts";
+import { playAlarmSound, stopAlarmSound, unlockAudio } from "../components/alarmSounds.ts";
 import type { Alarm, ScheduleLesson, WilmaData, WilmaStudent } from "../types.ts";
 
 /**
@@ -323,6 +323,24 @@ function clearPendingAck(storage: StorageLike): void {
   }
 }
 
+/**
+ * Äänen soitto on eristetty tämän pienen rajapinnan taakse kahdesta syystä:
+ * testit voivat antaa vakoilevan/muistinvaraisen toteutuksen — Node ei
+ * tarjoa Web Audiota eikä <audio>-elementtiä, sama peruste kuin
+ * `StorageLike`llä yllä — eikä composablen itsensä tarvitse tietää
+ * SOITTOTAVASTA, vain että `play` palauttaa Promisen joka hylätään jos
+ * toisto epäonnistuu, ja että `stop` vaientaa käynnissä olevan äänen HETI.
+ */
+export interface AlarmSoundPlayer {
+  play(soundId: string, volume: number, repeatCount: number): Promise<void>;
+  stop(): void;
+  unlock(): void;
+}
+
+function defaultSoundPlayer(): AlarmSoundPlayer {
+  return { play: playAlarmSound, stop: stopAlarmSound, unlock: unlockAudio };
+}
+
 export interface UseAlarmsOptions {
   wilma: Ref<WilmaData | null>;
   now: Ref<Date>;
@@ -330,6 +348,8 @@ export interface UseAlarmsOptions {
   students: Ref<WilmaStudent[]>;
   /** Vain testejä varten — tuotannossa jätetään pois, jolloin käytetään selaimen localStoragea. */
   storage?: StorageLike;
+  /** Vain testejä varten — tuotannossa jätetään pois, jolloin käytetään oikeaa ääntä (ks. alarmSounds.ts). */
+  soundPlayer?: AlarmSoundPlayer;
 }
 
 /**
@@ -349,6 +369,7 @@ export interface UseAlarmsOptions {
 export function useAlarms(options: UseAlarmsOptions) {
   const { wilma, now, alarms, students } = options;
   const storage = options.storage ?? defaultStorage();
+  const soundPlayer = options.soundPlayer ?? defaultSoundPlayer();
 
   const tracker = new RungTracker(storage);
   const queue = ref<DueAlarm[]>([]);
@@ -357,7 +378,7 @@ export function useAlarms(options: UseAlarmsOptions) {
 
   function playFor(entry: DueAlarm): void {
     soundError.value = null;
-    playAlarmSound(entry.alarm.soundId, entry.alarm.volume, entry.alarm.repeatCount).catch((err: unknown) => {
+    soundPlayer.play(entry.alarm.soundId, entry.alarm.volume, entry.alarm.repeatCount).catch((err: unknown) => {
       soundError.value = err instanceof Error ? err.message : "Ääntä ei voitu soittaa";
     });
   }
@@ -419,8 +440,18 @@ export function useAlarms(options: UseAlarmsOptions) {
    * `alreadyQueued`-tarkistus riittää yksinään estämään tuplauksen SILLÄ
    * AIKAA kun hälytys on aktiivinen/jonossa; tämä merkintä on se mikä estää
    * sen ilmestymisen takaisin sen JÄLKEEN kun käyttäjä on jo nähnyt sen.
+   *
+   * `soundPlayer.stop()` on ensimmäinen rivi: kuittaus tarkoittaa "huomasin",
+   * joten äänen on loputtava VÄLITTÖMÄSTI, oli se sisäänrakennettu tai pitkä
+   * oma äänitiedosto joka olisi muuten jatkanut soimista minuutteja kuittauksen
+   * jälkeen (ks. alarmSounds.ts:n playAlarmSound/registerSession). Jos jono
+   * sisältää seuraavan hälytyksen, activateNext() käynnistää sen oman äänensä
+   * heti perään — se pysäyttää tämän saman kutsun jo automaattisesti, mutta
+   * emme voi luottaa siihen: jos jonossa ei ole mitään, mikään ei muuten
+   * pysäyttäisi ääntä ollenkaan.
    */
   function acknowledge(): void {
+    soundPlayer.stop();
     if (active.value) {
       tracker.mark(toDateKey(now.value), active.value.alarm.id);
     }
@@ -436,7 +467,7 @@ export function useAlarms(options: UseAlarmsOptions) {
    * joten tämä usein myös korjaa ongelman eikä vain yritä uudelleen turhaan.
    */
   function retrySound(): void {
-    unlockAudio();
+    soundPlayer.unlock();
     if (active.value) playFor(active.value);
   }
 

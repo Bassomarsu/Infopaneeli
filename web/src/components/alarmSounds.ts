@@ -80,6 +80,68 @@ export function isAudioUnlocked(): boolean {
   return sharedContext?.state === "running";
 }
 
+// --- Pysäytettävyys: vain yksi hälytysääni kerrallaan, oli se kumpi tahansa toistotapa ---
+
+/**
+ * Yhden hälytyksen (tai esikuuntelun) äänen kokonaiskesto rajataan tähän.
+ * Perustelu: sisäänrakennetut äänet kestävät toistoineenkin aina alle 15 s,
+ * joten raja koskee käytännössä vain omia äänitiedostoja — kolmen minuutin
+ * tiedosto kahdeksalla toistolla (suurin sallittu repeatCount) olisi ilman
+ * ylärajaa lähes puoli tuntia yhtäjaksoista ääntä. Kolme minuuttia on reilusti
+ * pidempi kuin mikä tahansa järkevä hälytysääni tarvitsee tullakseen
+ * kuulluksi, mutta lyhyt verrattuna siihen mitä koko talo joutuisi muuten
+ * kestämään. Näkyvä ilmoitus EI noudata tätä rajaa — se pysyy ruudulla
+ * kunnes käyttäjä kuittaa (ks. AlarmsPanel.vue), joten itse hälytystä ei voi
+ * menettää vaikka ääni vaikenee ajastimen takia.
+ */
+const MAX_TOTAL_PLAYBACK_MS = 3 * 60 * 1000;
+
+interface PlaybackSession {
+  /** Vaientaa äänen HETI. Idempotentti — turvallinen kutsua useasti tai kun mikään ei enää soi. */
+  stop(): void;
+}
+
+/** Käynnissä oleva ääni, jos mikään soi — muuten null. Vain yksi kerrallaan. */
+let currentSession: PlaybackSession | null = null;
+
+/**
+ * Pysäyttää käynnissä olevan hälytysäänen HETI, oli se sisäänrakennettu tai
+ * oma äänitiedosto. Turvallinen kutsua vaikka mikään ei soisi. Käytetään
+ * sekä automaattisesti uuden toiston alussa (`registerSession`, alla — vain
+ * yksi ääni kerrallaan) että eksplisiittisesti: hälytyksen kuittauksesta
+ * (useAlarms.ts), esikuuntelun pysäytyspainikkeesta ja hälytyspaneelin
+ * sulkeutuessa/purkautuessa (AlarmsPanel.vue).
+ */
+export function stopAlarmSound(): void {
+  currentSession?.stop();
+}
+
+/**
+ * Rekisteröi uuden äänen käynnissä olevaksi istunnoksi. Pysäyttää ensin
+ * automaattisesti edellisen (jos jokin vielä soi) ja asettaa kokonaiskeston
+ * ylärajan (ks. MAX_TOTAL_PLAYBACK_MS yllä). `stopFn`:n on vaiennettava ääni
+ * synkronisesti ja välittömästi kun se kutsutaan.
+ */
+function registerSession(stopFn: () => void): PlaybackSession {
+  currentSession?.stop();
+  const session: PlaybackSession = {
+    stop: () => {
+      window.clearTimeout(capTimer);
+      stopFn();
+      if (currentSession === session) currentSession = null;
+    },
+  };
+  const capTimer = window.setTimeout(() => session.stop(), MAX_TOTAL_PLAYBACK_MS);
+  currentSession = session;
+  return session;
+}
+
+function clampVolume(volume: number): number {
+  return Math.min(Math.max(volume, 0), 1);
+}
+
+// --- Sisäänrakennetut äänet: Web Audio -oskillaattorit ---
+
 function gainEnvelope(ctx: AudioContext, gain: GainNode, peak: number, startAt: number, attack: number, release: number): void {
   gain.gain.setValueAtTime(0.0001, startAt);
   gain.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0001), startAt + attack);
@@ -149,9 +211,16 @@ function scheduleOne(ctx: AudioContext, master: GainNode, soundId: string, start
 /** Tauko toistojen välissä, jotta erilliset kierrokset erottuvat toisistaan. */
 const REPEAT_GAP_S = 0.5;
 
-/** Soittaa jonkin sisäänrakennetuista (oskillaattori-)äänistä `repeatCount` kertaa. */
+/**
+ * Soittaa jonkin sisäänrakennetuista (oskillaattori-)äänistä `repeatCount`
+ * kertaa. KAIKKI toiston sävelet ajastetaan tässä etukäteen yhteen
+ * `master`-solmuun (ei kutsu kutsua kohti) — pelkkä "älä ajasta seuraavaa
+ * toistoa" ei riittäisi pysäytykseen, koska koko jono on jo ajastettu
+ * ennen kuin funktio edes palaa. Pysäytys (ks. registerSession) siksi
+ * mykistää `master`-solmun HETI sen sijaan että yrittäisi perua jo
+ * ajastettuja `start`/`stop`-kutsuja yksitellen.
+ */
 async function playBuiltInSound(soundId: string, volume: number, repeatCount: number): Promise<void> {
-  unlockAudio();
   const ctx = sharedContext;
   if (!ctx) {
     throw new Error("Ääntä ei voi soittaa — selain ei tue Web Audio API:a");
@@ -168,17 +237,38 @@ async function playBuiltInSound(soundId: string, volume: number, repeatCount: nu
   master.connect(ctx.destination);
 
   let cursor = ctx.currentTime + 0.03;
-  const clampedVolume = Math.min(Math.max(volume, 0), 1);
+  const clampedVolume = clampVolume(volume);
   for (let i = 0; i < Math.max(1, repeatCount); i += 1) {
     const took = scheduleOne(ctx, master, soundId, cursor, clampedVolume);
     cursor += took + REPEAT_GAP_S;
   }
-
-  // Master-solmu irrotetaan kun viimeinenkin sävel on soinut loppuun, jotta
-  // se ei jää roikkumaan graafiin — pieni viive antaa "stop"-kutsuille aikaa.
   const totalMs = (cursor - ctx.currentTime) * 1000;
-  window.setTimeout(() => master.disconnect(), totalMs + 200);
+
+  const session = registerSession(() => {
+    try {
+      // Peruu kaikki jo ajastetut gain-arvot ja pudottaa äänen nollaan HETI —
+      // tämä vaientaa kaikki master-solmun kautta kulkevat sävelet
+      // riippumatta siitä montako niistä on vielä ajastettuna tulevaisuuteen.
+      master.gain.cancelScheduledValues(ctx.currentTime);
+      master.gain.setValueAtTime(0, ctx.currentTime);
+    } catch {
+      // Konteksti voi olla jo suljettu — disconnect alla riittää silti vaientamaan.
+    }
+    try {
+      master.disconnect();
+    } catch {
+      // Jo irrotettu.
+    }
+  });
+
+  // Luonnollinen loppu: vapautetaan istunto (ja irrotetaan solmu) kun
+  // viimeinenkin etukäteen ajastettu sävel on soinut loppuun. session.stop()
+  // on idempotentti, joten tämä on turvallinen kutsua vaikka joku on jo
+  // pysäyttänyt äänen aiemmin — silloin tämä ei tee mitään ylimääräistä.
+  window.setTimeout(() => session.stop(), totalMs + 200);
 }
+
+// --- Omat äänitiedostot: HTMLAudioElement ---
 
 /**
  * Kuinka kauan odotetaan tiedoston latautumista ennen kuin luovutetaan —
@@ -225,37 +315,124 @@ function loadAudioElement(url: string): Promise<HTMLAudioElement> {
 }
 
 /**
- * Soittaa yhden oman äänitiedoston kerran loppuun asti. `HTMLAudioElement`ia
- * koskee sama selaimen autoplay-lukko kuin Web Audio -kontekstia (ks.
- * unlockAudio) — kioskiselain käynnistetään
- * `--autoplay-policy=no-user-gesture-required`-lipulla juuri tämän takia,
- * mutta jos `play()` silti torjutaan, se näkyy hylättynä promisena eikä jää
- * hiljaiseksi.
+ * Yhden tiedostoäänen toiston tila muille tämän moduulin funktioille: onko
+ * pysäytetty, ja mikä <audio>-elementti on juuri nyt käynnissä (jotta
+ * `stop()` voi kutsua sen `pause()`ia synkronisesti). `stopped`-Promise
+ * ratkeaa heti kun pysäytetään — sitä käytetään keskeyttämään mahdollinen
+ * odotus (esim. toistojen välinen tauko) ilman että pitäisi odottaa koko
+ * tauon loppuun asti.
  */
-async function playCustomFileOnce(soundId: string, volume: number): Promise<void> {
+interface FileSession {
+  isStopped(): boolean;
+  bindAudio(audio: HTMLAudioElement): void;
+  readonly stopped: Promise<void>;
+}
+
+function createFileSession(): { session: PlaybackSession; file: FileSession } {
+  let stopped = false;
+  let currentAudio: HTMLAudioElement | null = null;
+  let resolveStopped: () => void = () => {};
+  const stoppedPromise = new Promise<void>((resolve) => {
+    resolveStopped = resolve;
+  });
+
+  const file: FileSession = {
+    isStopped: () => stopped,
+    bindAudio: (audio) => {
+      currentAudio = audio;
+    },
+    stopped: stoppedPromise,
+  };
+
+  const session = registerSession(() => {
+    stopped = true;
+    if (currentAudio) {
+      try {
+        currentAudio.pause();
+      } catch {
+        // Ei kriittinen — audio jää joka tapauksessa soittamatta enää eteenpäin.
+      }
+    }
+    resolveStopped();
+  });
+
+  return { session, file };
+}
+
+/**
+ * Soittaa yhden oman äänitiedoston kerran loppuun asti — tai kunnes
+ * `file.isStopped()` tulee todeksi. `HTMLAudioElement`ia koskee sama
+ * selaimen autoplay-lukko kuin Web Audio -kontekstia (ks. unlockAudio) —
+ * kioskiselain käynnistetään `--autoplay-policy=no-user-gesture-required`
+ * -lipulla juuri tämän takia. Jos `play()` silti torjutaan JOSTAIN MUUSTA
+ * syystä kuin siitä että joku juuri pysäytti äänen, se näkyy hylättynä
+ * promisena eikä jää hiljaiseksi.
+ */
+async function playCustomFileOnce(soundId: string, volume: number, file: FileSession): Promise<void> {
+  if (file.isStopped()) return;
   const url = `/api/alarm-sounds/${encodeURIComponent(soundId)}/file`;
-  const audio = await loadAudioElement(url);
-  audio.volume = Math.min(Math.max(volume, 0), 1);
-  await audio.play();
+
+  let audio: HTMLAudioElement;
+  try {
+    audio = await loadAudioElement(url);
+  } catch (err) {
+    if (file.isStopped()) return; // pysäytettiin latauksen aikana — ei virhe
+    throw err;
+  }
+  if (file.isStopped()) return;
+  file.bindAudio(audio);
+  audio.volume = clampVolume(volume);
+
+  try {
+    await audio.play();
+  } catch (err) {
+    if (file.isStopped()) return; // play() keskeytyi koska joku pysäytti äänen — ei virhe
+    throw err;
+  }
+  if (file.isStopped()) return; // ehdittiin pysäyttää juuri play():n ja tämän tarkistuksen välissä
+
   await new Promise<void>((resolve, reject) => {
     audio.addEventListener("ended", () => resolve(), { once: true });
-    audio.addEventListener("error", () => reject(new Error("Äänitiedoston toisto keskeytyi")), { once: true });
+    // stop() kutsuu audio.pause():a, joka laukaisee tämän — ilman tätä
+    // odotus jäisi ikuisesti roikkumaan koska 'ended' ei tule pausatusta
+    // äänestä.
+    audio.addEventListener(
+      "pause",
+      () => {
+        if (file.isStopped()) resolve();
+      },
+      { once: true },
+    );
+    audio.addEventListener(
+      "error",
+      () => {
+        if (file.isStopped()) resolve();
+        else reject(new Error("Äänitiedoston toisto keskeytyi"));
+      },
+      { once: true },
+    );
   });
 }
 
-async function playCustomFileRepeated(soundId: string, volume: number, repeatCount: number): Promise<void> {
+async function playCustomFileRepeated(soundId: string, volume: number, repeatCount: number, file: FileSession): Promise<void> {
   const count = Math.max(1, repeatCount);
   for (let i = 0; i < count; i += 1) {
-    await playCustomFileOnce(soundId, volume);
+    if (file.isStopped()) return;
+    await playCustomFileOnce(soundId, volume, file);
+    if (file.isStopped()) return;
     if (i < count - 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, REPEAT_GAP_S * 1000));
+      // Race stoppedin kanssa: pysäytys ei saa jäädä odottamaan tauon loppuun.
+      await Promise.race([new Promise<void>((resolve) => window.setTimeout(resolve, REPEAT_GAP_S * 1000)), file.stopped]);
     }
   }
 }
 
 /**
  * Soittaa hälytysäänen `repeatCount` kertaa annetulla äänenvoimakkuudella —
- * joko sisäänrakennetun (Web Audio) tai perheen oman äänitiedoston.
+ * joko sisäänrakennetun (Web Audio) tai perheen oman äänitiedoston. Vain
+ * yksi ääni kerrallaan: uuden toiston aloitus pysäyttää automaattisesti
+ * edellisen (ks. registerSession). Käynnissä oleva ääni voidaan aina
+ * pysäyttää `stopAlarmSound()`:lla.
  *
  * KADONNUT ÄÄNITIEDOSTO EI SAA VAIENTAA HÄLYTYSTÄ: jos `soundId` viittaa
  * tiedostoon jota ei enää ole (poistettu, nimetty uudelleen) tai jonka
@@ -263,6 +440,9 @@ async function playCustomFileRepeated(soundId: string, volume: number, repeatCou
  * sijaan ja virhe silti heitetään eteenpäin — kutsuja (AlarmsPanel.vue,
  * useAlarms.ts) näyttää sen käyttäjälle `soundError`/`previewError`-kentässä.
  * Ääni siis kuuluu joka tapauksessa, mutta tilanne ei jää huomaamatta.
+ * POIKKEUS: jos epäonnistuminen johtui siitä että käyttäjä itse pysäytti
+ * äänen (`stopAlarmSound()`), ei soiteta oletusääntä eikä heitetä virhettä —
+ * pysäytys ei ole vikatilanne.
  *
  * Jos sisäänrakennetun oletusäänenkin soitto epäonnistuu (esim. selain estää
  * äänen kokonaan), SE virhe kuuluu käyttäjälle — ei tiedosto-ongelma, koska
@@ -275,11 +455,19 @@ export async function playAlarmSound(soundId: string, volume: number, repeatCoun
     return playBuiltInSound(soundId, volume, repeatCount);
   }
 
+  const { session, file } = createFileSession();
   try {
-    await playCustomFileRepeated(soundId, volume, repeatCount);
+    await playCustomFileRepeated(soundId, volume, repeatCount, file);
   } catch (fileErr) {
+    if (file.isStopped()) return; // käyttäjä pysäytti — ei varakäytäntöä eikä virhettä
     await playBuiltInSound(DEFAULT_SOUND_ID, volume, repeatCount);
     const detail = fileErr instanceof Error ? fileErr.message : "tuntematon virhe";
     throw new Error(`Äänitiedostoa ei voitu toistaa (${detail}) — soitettiin oletusääni sen sijaan`);
+  } finally {
+    // Vapauttaa istunnon nyt kun toisto on aidosti ohi (onnistuneesti,
+    // pysäytettynä, tai varakäytännön jälkeen) — idempotentti, ei vaikuta
+    // enää mihinkään jos joku (esim. varakäytäntö yllä) on jo ehtinyt
+    // rekisteröidä uuden istunnon tämän tilalle.
+    session.stop();
   }
 }
