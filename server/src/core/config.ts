@@ -33,12 +33,20 @@ const logLevel = str("LOG_LEVEL", "warn");
  */
 const logDirOverride = str("LOG_DIR");
 
+/**
+ * Same reason as LOG_DIR: the test suite must not write its fake providers into
+ * the database the wall display actually reads. Cache rows named
+ * `test-recover-1234` accumulating next to the real ones make the state on disk
+ * impossible to reason about.
+ */
+const dbPathOverride = str("DB_PATH");
+
 export const config = {
   projectRoot,
   dataDir: path.join(projectRoot, "data"),
   logDir: logDirOverride ? path.resolve(projectRoot, logDirOverride) : path.join(projectRoot, "data", "logs"),
   snapshotDir: path.join(projectRoot, "data", "snapshots"),
-  dbPath: path.join(projectRoot, "data", "infonaytto.db"),
+  dbPath: dbPathOverride ? path.resolve(projectRoot, dbPathOverride) : path.join(projectRoot, "data", "infonaytto.db"),
   webDist: path.join(projectRoot, "web", "dist"),
 
   port: num("PORT", 4173),

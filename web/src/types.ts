@@ -25,6 +25,18 @@ export interface PriceDay {
   knownHours: number;
 }
 
+/** Kuukauden keskihinta. Erillinen tyyppi, koska lähde ja tuoreus ovat eri kuin vuorokausihinnoilla. */
+export interface MonthAverage {
+  /** "2026-08" */
+  month: string;
+  /** Valmiiksi suomeksi, esim. "Elokuu 2026". */
+  label: string;
+  average: number | null;
+  /** Montako tuntia keskiarvoon oikeasti saatiin — osittainen kuukausi on normaali, ei virhe. */
+  knownHours: number;
+  expectedHours: number;
+}
+
 export interface ElectricityData {
   unit: string;
   today: PriceDay | null;
@@ -32,6 +44,22 @@ export interface ElectricityData {
   tomorrowAvailable: boolean;
   currentPrice: number | null;
   currentHour: number;
+  /** Null jos historiaa ei saatu — kortin muut osat toimivat silti. */
+  currentMonth: MonthAverage | null;
+  previousMonth: MonthAverage | null;
+}
+
+/** Yhden tunnin sää. Käytetään päivän tuntinäkymässä. */
+export interface WeatherHour {
+  /** Paikallinen aika, "2026-08-07T14:00". */
+  time: string;
+  hour: number;
+  temperature: number;
+  apparentTemperature: number | null;
+  precipitation: number;
+  precipitationProbability: number | null;
+  windSpeed: number;
+  condition: { code: number; description: string; icon: string };
 }
 
 export interface ScheduleLesson {
@@ -107,6 +135,56 @@ export interface Note {
   createdAt: string;
 }
 
+/** Pidettävä samana kuin server/src/core/settings.ts. */
+export const GRID_COLUMNS = 6;
+export const GRID_ROWS = 8;
+
+/**
+ * Tätä pienempi paneeli leikkaisi sisältönsä piiloon otsikkoa ja
+ * "vanhentunut"-merkkiä myöten, jolloin rikkinäistä lähdettä ei enää huomaisi.
+ * Palvelin torjuu tätä pienemmät myös rajapinnassa.
+ */
+export const MIN_PANEL_SPAN = 2;
+
+export const PANEL_IDS = [
+  "schedule",
+  "messages",
+  "weather",
+  "electricity",
+  "calendar",
+  "notes",
+] as const;
+
+export type PanelId = (typeof PANEL_IDS)[number];
+
+export interface PanelPlacement {
+  /** 1-pohjainen, inklusiivinen. */
+  col: number;
+  row: number;
+  colSpan: number;
+  rowSpan: number;
+}
+
+export type PanelLayout = Record<PanelId, PanelPlacement>;
+
+export const PANEL_TITLES: Record<PanelId, string> = {
+  schedule: "Lukujärjestys",
+  messages: "Wilma-viestit",
+  weather: "Sää",
+  electricity: "Pörssisähkö",
+  calendar: "Kalenteri",
+  notes: "Muistilista",
+};
+
+export const defaultPanelLayout: PanelLayout = {
+  schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
+  messages: { col: 1, row: 4, colSpan: 4, rowSpan: 3 },
+  calendar: { col: 1, row: 7, colSpan: 4, rowSpan: 2 },
+  weather: { col: 5, row: 1, colSpan: 2, rowSpan: 3 },
+  electricity: { col: 5, row: 4, colSpan: 2, rowSpan: 3 },
+  notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
+};
+
 export interface Settings {
   visibleStudents: string[] | null;
   scheduleLayout: "single" | "split";
@@ -114,6 +192,8 @@ export interface Settings {
   hideMessagePreviews: boolean;
   nightModeStart: string;
   nightModeEnd: string;
+  /** Null = ei koskaan muokattu, käytetään oletusasettelua. */
+  panelLayout: PanelLayout | null;
 }
 
 export interface Dashboard {

@@ -1,5 +1,6 @@
 import { Provider } from "../core/provider.ts";
 import { localDateKey, localParts, shiftDateKey } from "../core/time.ts";
+import { getMonthlyAverages, type MonthAverage } from "./price-history.ts";
 
 const API_URL = "https://api.porssisahko.net/v1/latest-prices.json";
 
@@ -38,6 +39,9 @@ export interface ElectricityData {
   tomorrowAvailable: boolean;
   currentPrice: number | null;
   currentHour: number;
+  /** Null when the history fetch has never succeeded — the rest of the card still works. */
+  currentMonth: MonthAverage | null;
+  previousMonth: MonthAverage | null;
 }
 
 function toDay(date: string, raw: RawPrice[]): PriceDay | null {
@@ -94,6 +98,11 @@ async function fetchElectricity(): Promise<ElectricityData> {
   const tomorrowKey = shiftDateKey(todayKey, 1);
   const tomorrow = toDay(tomorrowKey, prices);
 
+  // A separate source (Elering) and its own once-a-day cache — see
+  // price-history.ts. Never throws, so a history outage cannot take the rest
+  // of this card down with it.
+  const history = await getMonthlyAverages();
+
   return {
     unit: "snt/kWh",
     today: toDay(todayKey, prices),
@@ -103,6 +112,8 @@ async function fetchElectricity(): Promise<ElectricityData> {
     tomorrowAvailable: tomorrow !== null && tomorrow.knownHours >= 23,
     currentPrice: currentPriceFrom(prices),
     currentHour: localParts().hour,
+    currentMonth: history?.currentMonth ?? null,
+    previousMonth: history?.previousMonth ?? null,
   };
 }
 

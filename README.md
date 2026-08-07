@@ -27,7 +27,7 @@ Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 | `npm run dev:web` | Vite-kehityspalvelin frontendille |
 | `npm run build` | Kääntää frontendin `web/dist`-kansioon |
 | `npm run typecheck` | Tyyppitarkistus molemmille työtiloille |
-| `npm test` | Provider-kerros, Wilma-hakulogiikka ja lukujärjestyksen päivänvalinta (ei verkkoa) |
+| `npm test` | Provider-kerros, Wilma-hakulogiikka, hintahistoria ja päivänvalinta (ei verkkoa) |
 | `npm run test:smoke` | Savutesti **oikeaa Wilmaa vasten** — aja kirjastopäivityksen jälkeen |
 
 ## Arkkitehtuuri
@@ -57,10 +57,14 @@ palautumiset. `debug` = kaikki haut, konsolituloste ja rikkoutuneesta
 vastauksesta tallennetaan raaka HTML `data/snapshots`-kansioon vianetsintää
 varten.
 
-Lokit: `data/logs/`, päivittäin kierrätettynä ja kokorajattuna. Testit kirjoittavat
-omaan kansioonsa `data/logs-test/` (`LOG_DIR`-muuttuja), jottei tuotantoloki
-täyty tekaistujen testiproviderien riveistä — loki on luettava silloin kun sitä
-oikeasti tarvitaan.
+Lokit: `data/logs/`, päivittäin kierrätettynä ja kokorajattuna.
+
+Testit ajetaan **eristettynä tuotantotilasta**: `LOG_DIR` ohjaa ne kansioon
+`data/logs-test/` ja `DB_PATH` tiedostoon `data/infonaytto-test.db`. Ilman tätä
+tekaistut testiproviderit jättivät jälkensä molempiin — lokiin rivejä nimellä
+`test-flaky-1234` ja tietokantaan kymmeniä `test-recover-*`-välimuistirivejä
+neljän oikean joukkoon. Kumpikin syö juuri sen, minkä varassa vianetsintä on:
+luettavan lokin ja tietokannan, jonka sisältö tarkoittaa mitä se sanoo.
 
 ### Tilin lukituksen esto
 
@@ -92,16 +96,55 @@ dokumentoi, ovat nyt mitattuja eivätkä arvattuja:
 
 - **`schedule.list({date})` palauttaa viikon, ei yhtä päivää.** Providerin
   oletus pitää.
-- **`overview.get()` palauttaa paljon enemmän kuin kuluvan viikon** — mittaus
-  antoi 79 tuntia 19 eri päivälle, lähes neljä viikkoa eteenpäin. Yksi kutsu
-  kattaa siis päivänvaihdon reilusti, ja seuraavan viikon lisähaku jää
-  käytännössä lepäämään keskellä lukuvuotta.
+- **`overview.get()` palautti paljon enemmän kuin kuluvan viikon** — 79 tuntia
+  19 eri päivälle, lähes neljä viikkoa eteenpäin. Yksi kutsu kattaa siis
+  päivänvaihdon reilusti.
+
+  ⚠️ Tämä on **yksi mittaus lukuvuoden alussa**, ei todistettu sääntö. Koulu
+  alkoi 12.8., ja on täysin mahdollista että Wilma julkaisi ensimmäiset viikot
+  kerralla ja palaa "vain kuluva viikko" -käytökseen lukuvuoden ollessa
+  käynnissä. Siitä riippuu, onko seuraavan viikon lisähaku käytännössä kuollutta
+  koodia vai ei. **Aja savutesti uudelleen elokuun lopussa** ja katso pysyykö
+  vastaus monen viikon mittaisena.
 
 Yksi asia jäi **todentamatta**: postilaatikko ja arkisto olivat molemmat tyhjiä,
 joten viestien parsintaa eikä `Message.status`-kentän merkitystä (luettu vs.
 lukematon) ei ole nähty kertaakaan oikealla datalla. Savutesti sanoo tämän
-suoraan sen sijaan että raportoisi läpimenon. Ensimmäinen oikea Wilma-viesti on
-se hetki, jolloin tulkinta kannattaa tarkistaa.
+suoraan sen sijaan että raportoisi läpimenon.
+
+Väärä tulkinta epäonnistuisi **äänettömästi**: aidosti lukematon kouluviesti
+näkyisi luettuna, eikä mitään virhettä syntyisi. Siksi provider kirjaa jokaisen
+uuden `status`-arvon lokiin kerran (`wilma_status_observed`). Kun ensimmäinen
+oikea viesti joskus saapuu, loki vastaa kysymykseen itse — kenenkään ei tarvitse
+muistaa ajaa savutestia juuri sillä hetkellä.
+
+### Kuukausikeskiarvot tulevat eri lähteestä kuin vuorokausihinnat
+
+`porssisahko.net` palauttaa vain noin 48 tuntia, joten kuukausikeskiarvoihin
+käytetään **Eleringin** (Viron kantaverkkoyhtiö) avointa rajapintaa, joka antaa
+Nord Poolin FI-hinnat mielivaltaiselta aikaväliltä yhdellä kutsulla ilman
+API-avainta.
+
+Se palauttaa **EUR/MWh ilman arvonlisäveroa**, kun kortti näyttää **snt/kWh
+sisältäen ALV:n**. Muunnos on `EUR/MWh × 0,1 × 1,255`, jossa 1,255 on Suomen
+25,5 %:n ALV. Kerroin ei ole arvattu: se johdettiin vertaamalla 24:ää
+samanaikaista tuntihintaa molemmista lähteistä, ja suhde asettui välille
+1,2528–1,2571. Muunnetut lukemat täsmäävät `porssisahko.net`:iin kolmen
+desimaalin tarkkuudella.
+
+Historia haetaan **korkeintaan kerran vuorokaudessa**, ei 20 minuutin välein
+muun hinnan mukana, ja päättynyttä kuukautta ei haeta uudelleen lainkaan.
+Kuluva kuukausi on aina kesken, joten kortti kertoo mihin asti keskiarvo
+ulottuu sen sijaan että esittäisi keskeneräisen luvun valmiina.
+
+Nord Pool siirtyi Suomessa 15 minuutin hintaresoluutioon, joten uudemmat
+kuukaudet tulevat 96 pisteenä vuorokaudessa ja vanhemmat 24:nä. Arvot
+ryhmitellään paikallisiin tunteihin ennen keskiarvoa, jottei resoluutio vinouta
+lukua — tämä on testattu.
+
+Lähteen muodon voi todentaa oikealla kutsulla: `ELERING_LIVE=1 npm run
+test:prices --workspace=server`. Oletuksena se ohitetaan, koska `npm test` ei
+saa tarvita verkkoa.
 
 ## Tietoturva
 
@@ -125,6 +168,7 @@ se hetki, jolloin tulkinta kannattaa tarkistaa.
 | Wilma-viestit | sama | sama |
 | Sää | Open-Meteo | 20 min |
 | Pörssisähkö | porssisahko.net | 20 min |
+| Kuukausikeskiarvot | Elering (Nord Pool FI) | kerran vrk |
 | Kalenteri | Google Calendarin ICS-syöte | 15 min |
 | Muistilista | oma SQLite | — |
 
@@ -139,6 +183,70 @@ Otsikko kertoo aina eksplisiittisesti päivän ("Huomenna 12.8.", "Maanantaina
 kellonajasta riippumatta, joten vihjettä ei silloin näytetä. Säännöt on lukittu
 testeillä (`web/test/schedule-day.ts`) — tämä otsikko on ehtinyt valehdella
 kahdesti.
+
+## Näytön käyttö kosketuksella
+
+Kaikki vuorovaikutus on suunniteltu sormella käytettäväksi parin metrin
+katseluetäisyydeltä: kosketuskohteet ovat vähintään 44×44 pikseliä.
+
+### Lukujärjestyksen selaus
+
+Nuolipainikkeet tai vaakapyyhkäisy kortin päällä siirtävät päivää. Pyyhkäisy
+vaatii selvän vaakasuuntaisen liikkeen (yli 50 px, enemmän vaaka- kuin
+pystysuuntaan), jottei napautus tai pystyvieritys vaihda päivää vahingossa.
+
+Selaus etenee **päivä kerrallaan, myös tunnittomien päivien yli** — toisin kuin
+automaattivalinta, joka hyppää suoraan seuraavaan koulupäivään. Nappi joka ei
+näytä tekevän mitään tuntuu rikkinäiseltä, joten perjantaista painamalla
+päädytään lauantaihin, jossa lukee "Ei tunteja".
+
+Taaksepäin ei pääse tätä päivää aikaisemmaksi (palvelin ei säilytä menneitä
+tunteja) eikä eteenpäin tunnetun datan ohi. Selaus **palautuu automaattitilaan
+itsestään viiden minuutin kuluttua**, jottei seinänäyttö jää jumiin satunnaiselle
+päivälle sen jälkeen kun joku selasi sitä ohimennen. "Tänään"-painike palauttaa
+heti.
+
+### Sään tuntinäkymä
+
+Minkä tahansa ennustepäivän napauttaminen avaa sen päivän 24 tuntia:
+lämpötila, tuntuu kuin, sade ja sateen todennäköisyys, tuuli ja säätila.
+Kuluvan päivän kohdalla nykyinen tunti korostetaan ja menneet himmennetään.
+Näkymä sulkeutuu painikkeesta, Esc-näppäimestä ja taustaa napauttamalla.
+
+### Paneelien asettelu
+
+Asetuksista avautuu **muokkaustila**, jossa paneeleita voi raahata uuteen
+paikkaan ja muuttaa niiden kokoa oikean alakulman kahvasta. Asettelu tallennetaan
+palvelimelle, joten se säilyy kioskiselaimen uudelleenkäynnistyksen yli.
+
+Muokkaus on tarkoituksella oma tilansa eikä aina päällä: seinänäytöllä
+vahinkoraahaus pöytää pyyhkiessä olisi kohtuuton haitta. Muokkaustilassa
+korttien oma vuorovaikutus on lukittu, joten paneelin siirtäminen ei voi
+samalla vaihtaa lukujärjestyksen päivää tai merkitä muistiinpanoa tehdyksi.
+
+Paneelin voi pudottaa toisen **päälle mistä kohtaa tahansa** — kohde tunnistetaan
+sormen alla olevasta ruudusta, ei raahatun paneelin kulmasta, jottei kosketuksen
+epätarkkuus hylkäisi siirtoa.
+
+**Samankokoiset paneelit vaihtavat paikkaa keskenään. Eri kokoiset eivät.**
+Tämä on tietoinen rajoitus, ei puute: oletusasettelu täyttää koko ruudukon, joten
+eri kokoiselle paneelille ei yksinkertaisesti ole tilaa mihin mennä. Kiertotie on
+yksi kosketus: kutista jompaakumpaa ensin, jolloin syntyy aidosti vapaata tilaa
+ja normaali siirto hoitaa lopun. Vaihtoehto olisi ollut kokonainen
+tiivistysalgoritmi, jonka turvallisuustodistus on paljon heikompi — nykyisessä
+mallissa molemmat paneelit siirtyvät toistensa **jo ennestään kelvollisille**
+paikoille, joten mikään ei voi mennä päällekkäin tai ruudukon ulkopuolelle.
+Hylätty siirto kertoo aina syyn.
+
+Ruudukko on 6 saraketta × 8 riviä. Paneelin **pienin koko on 2×2 solua** — sitä
+pienempänä kortti leikkaisi sisältönsä piiloon otsikkoa ja
+"vanhentunut"-merkkiä myöten, jolloin rikkinäistä lähdettä ei enää huomaisi.
+Palvelin torjuu liian pienet asettelut myös rajapinnassa, ei pelkästään
+käyttöliittymässä.
+
+Puhelinnäkymä ei käytä gridiä lainkaan vaan pinoaa kortit yhteen sarakkeeseen
+muistilista ensin, joten oma asettelu ei voi rikkoa muistilistan käyttöä
+puhelimella.
 
 ## Käyttöönotto Surfacella
 

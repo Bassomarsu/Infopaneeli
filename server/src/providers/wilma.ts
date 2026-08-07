@@ -155,6 +155,35 @@ function isUnread(detail: Message): boolean {
 }
 
 /**
+ * The status interpretation above has never been confirmed against real data:
+ * on the first live run both the inbox and the archive were empty. Getting it
+ * backwards would fail *silently* — a genuinely unread message from the school
+ * would render as read, no error, no log line, in exactly the feature the card
+ * exists for.
+ *
+ * So every distinct status value is recorded once. When the first real message
+ * finally arrives, the log answers the question by itself, without anyone
+ * having to remember to run the smoke test at that moment. Bounded by the set:
+ * a handful of lines per process lifetime, never one per cycle.
+ */
+const seenStatusValues = new Set<string>();
+
+function noteStatusValue(detail: Message, messageId: number): void {
+  const key = JSON.stringify(detail.status ?? null);
+  if (seenStatusValues.has(key)) return;
+  seenStatusValues.add(key);
+  logger.warn(
+    {
+      event: "wilma_status_observed",
+      status: detail.status ?? null,
+      treatedAsUnread: isUnread(detail),
+      messageId,
+    },
+    "first sighting of a Wilma message status value — confirms or refutes the unread rule",
+  );
+}
+
+/**
  * Only the parts of `WilmaClient` this provider actually uses. Narrowing it
  * here is what makes the schedule and message logic testable without a live
  * Wilma to talk to.
@@ -305,6 +334,7 @@ async function withDetails(
 
     try {
       const detail = await client.messages.get(message.id);
+      noteStatusValue(detail, message.id);
       message.senderName = detail.senderName ?? message.senderName;
       message.unread = isUnread(detail);
       message.content = stripHtml(detail.content ?? "");

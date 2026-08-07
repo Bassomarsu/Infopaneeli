@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
+import { NARROW_LAYOUT_BREAKPOINT_PX } from "../composables/usePanelLayout";
 import type { Settings, WilmaStudent } from "../types";
 
 const props = defineProps<{
@@ -8,11 +9,30 @@ const props = defineProps<{
   open: boolean;
 }>();
 
-const emit = defineEmits<{ close: []; saved: [Settings] }>();
+const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
 
 const draft = ref<Settings>({ ...props.settings });
 const error = ref<string | null>(null);
 const saving = ref(false);
+
+// Asettelun muokkaus mittaa ruudukkoa pikseleinä; kapealla näytöllä paneelit
+// on pinottu (App.vuen mobiilimediakysely), jolloin mittaus osuisi väärään
+// asetteluun ja jokainen raahaus hylättäisiin turhaan. Nappi siis piilotetaan
+// käytöstä sen sijaan että rikkinäinen tila olisi edes saavutettavissa.
+const narrowQuery = `(max-width: ${NARROW_LAYOUT_BREAKPOINT_PX}px)`;
+const isNarrow = ref(typeof window !== "undefined" ? window.matchMedia(narrowQuery).matches : false);
+let mediaQueryList: MediaQueryList | null = null;
+function syncNarrow(): void {
+  if (mediaQueryList) isNarrow.value = mediaQueryList.matches;
+}
+onMounted(() => {
+  mediaQueryList = window.matchMedia(narrowQuery);
+  syncNarrow();
+  mediaQueryList.addEventListener("change", syncNarrow);
+});
+onUnmounted(() => {
+  mediaQueryList?.removeEventListener("change", syncNarrow);
+});
 
 // Reopening must show what is actually stored, not whatever was typed and
 // abandoned last time.
@@ -43,7 +63,12 @@ function isVisible(studentNumber: string): boolean {
   return list === null || list.includes(studentNumber);
 }
 
-async function save(): Promise<void> {
+/**
+ * Yhteinen tallennus "Tallenna"-napille ja asettelun muokkaukseen
+ * siirtymiselle — kumpikaan ei saa hukata kesken jääneitä muutoksia
+ * äänettömästi. Palauttaa onnistuiko, jotta kutsuja voi päättää jatkaako.
+ */
+async function persistDraft(): Promise<boolean> {
   saving.value = true;
   error.value = null;
   try {
@@ -57,12 +82,30 @@ async function save(): Promise<void> {
       throw new Error(body?.error ?? `Tallennus epäonnistui (HTTP ${response.status})`);
     }
     emit("saved", (await response.json()) as Settings);
-    emit("close");
+    return true;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Tallennus epäonnistui";
+    return false;
   } finally {
     saving.value = false;
   }
+}
+
+// Siirtyminen asettelun muokkaukseen tallentaa keskeneräiset asetukset
+// ensin — muuten esim. juuri säädetty yötilan aika katoaisi huomaamatta.
+// Epäonnistunut tallennus jättää asetuspaneelin auki virheineen sen sijaan
+// että siirtyisi eteenpäin ja hukkaisi muutokset.
+async function editLayout(): Promise<void> {
+  if (isNarrow.value) return;
+  const ok = await persistDraft();
+  if (!ok) return;
+  emit("edit-layout");
+  emit("close");
+}
+
+async function save(): Promise<void> {
+  const ok = await persistDraft();
+  if (ok) emit("close");
 }
 </script>
 
@@ -88,6 +131,15 @@ async function save(): Promise<void> {
             />
             <span>{{ student.name }}</span>
           </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Paneelien asettelu</legend>
+          <p class="group__hint">Siirrä paneeleja ja muuta niiden kokoa suoraan näytöllä.</p>
+          <button type="button" class="btn" :disabled="isNarrow || saving" @click="editLayout">
+            {{ saving ? "Tallennetaan…" : "Muokkaa asettelua" }}
+          </button>
+          <p v-if="isNarrow" class="group__hint">Asettelua muokataan infonäytöllä — näkymä on nyt liian kapea.</p>
         </fieldset>
 
         <fieldset class="group">

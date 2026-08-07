@@ -40,6 +40,43 @@ function format(value: number | null | undefined): string {
 function hourTitle(hour: number, price: number | null): string {
   return price === null ? `klo ${hour}: ei hintaa` : `klo ${hour}: ${format(price)} snt/kWh`;
 }
+
+/** "Elokuu 2026" -> "Elo 2026", so the two month chips stay on one line. */
+function shortLabel(label: string): string {
+  return label.replace(/^(\S{3})\S*/, "$1");
+}
+
+function monthComplete(m: { knownHours: number; expectedHours: number }): boolean {
+  return m.expectedHours > 0 && m.knownHours >= m.expectedHours;
+}
+
+/** Reconstructs "as of which day" from expectedHours, which the server derives the same way. */
+function asOfDay(expectedHours: number): number {
+  return Math.floor((expectedHours - 1) / 24) + 1;
+}
+
+function monthTitle(m: { label: string; knownHours: number; expectedHours: number } | null): string {
+  if (!m) return "Ei kuukausihistoriaa saatavilla";
+  if (monthComplete(m)) return `${m.label} · koko kuukausi (${m.knownHours} h)`;
+  return `${m.label} · 1.–${asOfDay(m.expectedHours)}. pv (${m.knownHours}/${m.expectedHours} h)`;
+}
+
+/**
+ * Direction between last month's average and this month's so-far average.
+ * Comparing a partial month to a full one is not perfectly apples-to-apples,
+ * but it is exactly the "which way is it moving" signal that is useful here.
+ */
+const trend = computed<{ symbol: string; className: string; title: string } | null>(() => {
+  const cur = data.value?.currentMonth;
+  const prev = data.value?.previousMonth;
+  if (!cur?.average || !prev?.average) return null;
+  const changePct = ((cur.average - prev.average) / prev.average) * 100;
+  const title = `${changePct >= 0 ? "+" : ""}${changePct.toFixed(0)} % edellisestä kuukaudesta`;
+  if (Math.abs(changePct) < 1) return { symbol: "→", className: "power__trend--flat", title };
+  return changePct > 0
+    ? { symbol: "↑", className: "power__trend--up", title }
+    : { symbol: "↓", className: "power__trend--down", title };
+});
 </script>
 
 <template>
@@ -58,6 +95,20 @@ function hourTitle(hour: number, price: number | null): string {
         <span v-if="data.today" class="power__range tnum">
           tänään {{ format(data.today.min) }} – {{ format(data.today.max) }}
           · ka {{ format(data.today.average) }}
+        </span>
+      </div>
+
+      <div v-if="data.currentMonth || data.previousMonth" class="power__months">
+        <span v-if="data.previousMonth" class="power__month" :title="monthTitle(data.previousMonth)">
+          <span class="power__monthlabel">{{ shortLabel(data.previousMonth.label) }}</span>
+          <span class="power__monthvalue tnum">{{ format(data.previousMonth.average) }}</span>
+        </span>
+        <span v-if="trend" class="power__trend" :class="trend.className" :title="trend.title">{{ trend.symbol }}</span>
+        <span v-if="data.currentMonth" class="power__month" :title="monthTitle(data.currentMonth)">
+          <span class="power__monthlabel">
+            {{ shortLabel(data.currentMonth.label) }}<span v-if="!monthComplete(data.currentMonth)">*</span>
+          </span>
+          <span class="power__monthvalue tnum">{{ format(data.currentMonth.average) }}</span>
         </span>
       </div>
 
@@ -140,6 +191,47 @@ function hourTitle(hour: number, price: number | null): string {
   font-size: 0.78rem;
   color: var(--text-faint);
   width: 100%;
+}
+
+.power__months {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.power__month {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.power__monthlabel {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.power__monthvalue {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.power__trend {
+  font-weight: 700;
+}
+
+.power__trend--up {
+  color: var(--expensive);
+}
+
+.power__trend--down {
+  color: var(--cheap);
+}
+
+.power__trend--flat {
+  color: var(--text-faint);
 }
 
 .power__day {

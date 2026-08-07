@@ -4,7 +4,7 @@
  *
  * Run with:  npm run test:providers --workspace=server
  */
-import "./log-to-temp.ts";
+import "./test-env.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { config } from "../src/core/config.ts";

@@ -18,7 +18,10 @@ export interface WeatherHour {
   time: string;
   hour: number;
   temperature: number;
+  apparentTemperature: number | null;
+  precipitation: number;
   precipitationProbability: number | null;
+  windSpeed: number;
   condition: WeatherCondition;
 }
 
@@ -31,6 +34,8 @@ export interface WeatherDay {
   windMax: number;
   sunrise: string | null;
   sunset: string | null;
+  /** Full 24h of that day, oldest first. Used by the day-tap hourly view. */
+  hours: WeatherHour[];
 }
 
 export interface WeatherData {
@@ -59,8 +64,11 @@ interface OpenMeteoCurrent {
 interface OpenMeteoHourly {
   time: string[];
   temperature_2m: number[];
-  weather_code: number[];
+  apparent_temperature: number[];
+  precipitation: number[];
   precipitation_probability: number[];
+  weather_code: number[];
+  wind_speed_10m: number[];
 }
 
 interface OpenMeteoDaily {
@@ -134,6 +142,19 @@ function hourOf(localTime: string): number {
   return Number(localTime.slice(11, 13));
 }
 
+function buildHour(hourly: OpenMeteoHourly, i: number, time: string): WeatherHour {
+  return {
+    time,
+    hour: hourOf(time),
+    temperature: hourly.temperature_2m[i] ?? 0,
+    apparentTemperature: hourly.apparent_temperature[i] ?? null,
+    precipitation: hourly.precipitation[i] ?? 0,
+    precipitationProbability: hourly.precipitation_probability[i] ?? null,
+    windSpeed: hourly.wind_speed_10m[i] ?? 0,
+    condition: conditionFor(hourly.weather_code[i] ?? 0),
+  };
+}
+
 /** Only the rest of today is useful on a display; six days of hourly data is not. */
 function remainingHoursToday(hourly: OpenMeteoHourly): WeatherHour[] {
   const todayKey = localDateKey();
@@ -143,21 +164,27 @@ function remainingHoursToday(hourly: OpenMeteoHourly): WeatherHour[] {
   for (let i = 0; i < hourly.time.length; i++) {
     const time = hourly.time[i];
     if (!time || dateKeyOf(time) !== todayKey) continue;
-    const hour = hourOf(time);
-    if (hour < currentHour) continue;
-    hours.push({
-      time,
-      hour,
-      temperature: hourly.temperature_2m[i] ?? 0,
-      precipitationProbability: hourly.precipitation_probability[i] ?? null,
-      condition: conditionFor(hourly.weather_code[i] ?? 0),
-    });
+    if (hourOf(time) < currentHour) continue;
+    hours.push(buildHour(hourly, i, time));
   }
 
   return hours;
 }
 
-function dailyForecast(daily: OpenMeteoDaily): WeatherDay[] {
+/** All hours Open-Meteo returned for one calendar day, oldest first — the day-tap view. */
+function hoursForDate(hourly: OpenMeteoHourly, dateKey: string): WeatherHour[] {
+  const hours: WeatherHour[] = [];
+
+  for (let i = 0; i < hourly.time.length; i++) {
+    const time = hourly.time[i];
+    if (!time || dateKeyOf(time) !== dateKey) continue;
+    hours.push(buildHour(hourly, i, time));
+  }
+
+  return hours;
+}
+
+function dailyForecast(daily: OpenMeteoDaily, hourly: OpenMeteoHourly): WeatherDay[] {
   const days: WeatherDay[] = [];
 
   for (let i = 0; i < daily.time.length; i++) {
@@ -172,6 +199,7 @@ function dailyForecast(daily: OpenMeteoDaily): WeatherDay[] {
       windMax: daily.wind_speed_10m_max[i] ?? 0,
       sunrise: daily.sunrise[i] ?? null,
       sunset: daily.sunset[i] ?? null,
+      hours: hoursForDate(hourly, date),
     });
   }
 
@@ -184,9 +212,14 @@ async function fetchWeather(): Promise<WeatherData> {
     longitude: String(config.weather.longitude),
     current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation",
     daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunrise,sunset",
-    hourly: "temperature_2m,weather_code,precipitation_probability",
+    hourly: "temperature_2m,apparent_temperature,precipitation,precipitation_probability,weather_code,wind_speed_10m",
     timezone: config.timezone,
     forecast_days: "6",
+    // Open-Meteo antaa tuulen oletuksena km/h:na, mutta kortti on aina
+    // merkinnyt sen m/s:ksi — 17,3 km/h näkyi siis lukemana "17,3 m/s", joka on
+    // navakan tuulen sijaan myrsky. Yksikkö pyydetään suoraan oikeana, jottei
+    // muunnosta tarvitse muistaa kahdessa eri näkymässä.
+    wind_speed_unit: "ms",
   });
 
   const response = await fetch(`${API_URL}?${params.toString()}`, {
@@ -213,7 +246,7 @@ async function fetchWeather(): Promise<WeatherData> {
       precipitation: body.current.precipitation,
     },
     todayRemainingHours: remainingHoursToday(body.hourly),
-    days: dailyForecast(body.daily),
+    days: dailyForecast(body.daily, body.hourly),
   };
 }
 

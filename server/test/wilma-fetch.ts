@@ -5,7 +5,7 @@
  *
  * Run with:  npm run test:wilma --workspace=server
  */
-import "./log-to-temp.ts";
+import "./test-env.ts";
 import assert from "node:assert/strict";
 import type { Message, OverviewData, ScheduleLesson, StudentInfo } from "@wilm-ai/wilma-client";
 import { fetchStudent, type WilmaClientLike, type WilmaData } from "../src/providers/wilma.ts";

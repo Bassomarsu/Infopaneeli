@@ -126,5 +126,125 @@ assert.equal(empty.totalLessons, 0);
 assert.equal(empty.label, "Tänään 11.8.", "tyhjänäkin otsikon pitää nimetä päivä");
 console.log("ok  tunniton päivä nimetään silti");
 
+/**
+ * Selaustestit tarvitsevat suoran pääsyn composableen (ei vain `day.value`),
+ * jotta navigointifunktioita voi kutsua ja kelloa voi siirtää eteenpäin.
+ */
+function browsable(dates: string[], nowValue: Date, rolloverTimeValue = "12:00") {
+  const now = ref(nowValue);
+  return {
+    now,
+    api: useScheduleDay(
+      ref<WilmaData | null>(wilmaWith(dates)),
+      now,
+      ref(rolloverTimeValue),
+      ref<string[] | null>(null),
+    ),
+  };
+}
+
+function dateOf(api: ReturnType<typeof browsable>["api"]): string {
+  const value = api.day.value;
+  assert.ok(value, "päivää ei ratkennut lainkaan");
+  return value.date;
+}
+
+// Perjantai-aamu: automaattivalinta on itse perjantai (14.8., tunteja on).
+// Selaus eteenpäin ei saa hypätä suoraan maanantaihin, vaikka automaattinäkymä
+// tekisi niin — jokaisen napin painalluksen pitää tuottaa yksi näkyvä muutos.
+{
+  const { api } = browsable(SCHOOL_DAYS, at(2026, 8, 14, 8));
+  assert.equal(dateOf(api), "2026-08-14");
+
+  api.goToNextDay();
+  assert.equal(dateOf(api), "2026-08-15", "lauantaihin pitää päästä yksi päivä kerrallaan");
+  assert.equal(api.day.value?.totalLessons, 0);
+  // "Huomenna" siksi, että se on kalenterissa seuraava päivä tästä hetkestä —
+  // describe() nimeää huomisen aina näin, myös selattaessa.
+  assert.equal(api.day.value?.label, "Huomenna 15.8.");
+
+  api.goToNextDay();
+  assert.equal(dateOf(api), "2026-08-16", "sunnuntaihin pitää päästä yksi päivä kerrallaan");
+  assert.equal(api.day.value?.totalLessons, 0);
+
+  api.goToNextDay();
+  assert.equal(dateOf(api), "2026-08-17", "maanantaina on taas tunteja");
+  assert.ok((api.day.value?.totalLessons ?? 0) > 0);
+  console.log("ok  selaus etenee päivä kerrallaan myös tyhjän päivän yli");
+}
+
+// Taaksepäin ei pääse tätä päivää (todellista tätä hetkeä) aikaisemmaksi,
+// vaikka automaattinäkymä olisi hypännyt monta päivää eteenpäin.
+{
+  const { api } = browsable(SCHOOL_DAYS, at(2026, 8, 11, 13));
+  assert.equal(dateOf(api), "2026-08-12", "vaihtoajan jälkeen automaattivalinta on huominen");
+
+  api.goToNextDay();
+  assert.equal(dateOf(api), "2026-08-13");
+
+  api.goToPreviousDay();
+  assert.equal(dateOf(api), "2026-08-12");
+  api.goToPreviousDay();
+  assert.equal(dateOf(api), "2026-08-11", "taakse pääsee tähän päivään asti");
+
+  assert.equal(api.canGoBack.value, false, "tätä päivää aikaisemmalle ei saa päästä");
+  api.goToPreviousDay();
+  assert.equal(dateOf(api), "2026-08-11", "painallus ei saa siirtää päivää enää taaksepäin");
+  console.log("ok  taaksepäin ei pääse tätä päivää pidemmälle");
+}
+
+// Eteenpäin selaus ei saa mennä tunnetun datan ohi — muuten selaus johtaisi
+// loputtomaan tyhjään.
+{
+  const { api } = browsable(["2026-08-12", "2026-08-13"], at(2026, 8, 7, 13));
+  assert.equal(dateOf(api), "2026-08-12");
+
+  api.goToNextDay();
+  assert.equal(dateOf(api), "2026-08-13", "viimeinen tunnettu päivä on vielä selattavissa");
+
+  assert.equal(api.canGoForward.value, false, "tunnetun datan ohi ei saa päästä");
+  api.goToNextDay();
+  assert.equal(dateOf(api), "2026-08-13", "painallus ei saa siirtää päivää tunnetun datan ohi");
+  console.log("ok  eteenpäin ei pääse tunnetun datan ohi");
+}
+
+// Automaattinäkymässä vaihtumisvihje voi olla totta, mutta käyttäjän oma
+// valinta ei ole kellon ansiota — vihjeen pitää hävitä heti kun selataan.
+{
+  const { api } = browsable(SCHOOL_DAYS, at(2026, 8, 11, 13));
+  assert.equal(api.day.value?.rolledOver, true, "automaattinäkymässä vihje näkyy ennallaan");
+
+  api.goToNextDay();
+  assert.equal(api.day.value?.rolledOver, false, "selaustilassa vihje ei saa näkyä");
+
+  api.goToPreviousDay();
+  assert.equal(api.day.value?.rolledOver, false, "vihje pysyy pois myös takaisin selattaessa");
+  console.log("ok  selaustilassa rolledOver on false");
+}
+
+// Selaus ei saa jäädä jumiin: viiden minuutin hiljaisuuden jälkeen näkymä
+// palaa itsestään automaattivalintaan, ilman erillistä ajastinta — pelkkä
+// kellon (`now`) eteneminen riittää. Aikaleima otetaan tarkoituksella samasta
+// `now`-refistä eikä koneen omasta kellosta (ks. kommentti useScheduleDay.ts:ssä).
+{
+  const { api, now } = browsable(SCHOOL_DAYS, at(2026, 8, 11, 8));
+  assert.equal(dateOf(api), "2026-08-11");
+
+  api.goToNextDay();
+  assert.equal(api.browsing.value, true);
+  assert.equal(dateOf(api), "2026-08-12");
+
+  // Neljä minuuttia myöhemmin selaus on yhä voimassa.
+  now.value = new Date(now.value.getTime() + 4 * 60_000);
+  assert.equal(api.browsing.value, true, "selauksen pitää pysyä voimassa alle viisi minuuttia");
+  assert.equal(dateOf(api), "2026-08-12");
+
+  // Viiden minuutin ja hetken jälkeen selaus on jo rauennut.
+  now.value = new Date(now.value.getTime() + 61_000);
+  assert.equal(api.browsing.value, false, "selauksen pitää raueta viiden minuutin jälkeen");
+  assert.equal(dateOf(api), "2026-08-11", "näkymän pitää palata automaattivalintaan");
+  console.log("ok  selaus palautuu automaattitilaan viiden minuutin jälkeen");
+}
+
 console.log("\nall schedule day tests passed");
 process.exit(0);
