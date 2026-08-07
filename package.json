@@ -17,7 +17,7 @@
     "build": "npm run build --workspace=web",
     "start": "npm run start --workspace=server",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test:providers --workspace=server && npm run test:wilma --workspace=server && npm run test:prices --workspace=server && npm run test:message-reads --workspace=server && npm run test:calendar --workspace=server && npm run test:trusted-hosts --workspace=server && npm run test:schedule --workspace=web && npm run test:layout --workspace=web",
+    "test": "npm run test:providers --workspace=server && npm run test:wilma --workspace=server && npm run test:prices --workspace=server && npm run test:message-reads --workspace=server && npm run test:calendar --workspace=server && npm run test:trusted-hosts --workspace=server && npm run test:alarm-settings --workspace=server && npm run test:alarms --workspace=web && npm run test:schedule --workspace=web && npm run test:layout --workspace=web",
     "test:smoke": "npm run test:smoke --workspace=server"
   }
 }

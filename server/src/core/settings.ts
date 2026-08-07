@@ -50,6 +50,31 @@ export const defaultPanelLayout: PanelLayout = {
   notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
 };
 
+/**
+ * Koulukello: laukeaa X minuuttia ennen päivän ensimmäisen oppitunnin alkua.
+ * Pidettävä samana kuin web/src/types.ts:n Alarm.
+ */
+export interface Alarm {
+  id: string;
+  label: string;
+  /** Minuuttia ennen päivän ensimmäisen oppitunnin alkua. */
+  minutesBefore: number;
+  /** Null = mikä tahansa oppilas — aikaisin tunneista kaikkien lasten kesken. */
+  studentNumber: string | null;
+  enabled: boolean;
+  /**
+   * Äänen tunniste, ei tiedostopolku. Tämä pitää oven auki myöhemmin
+   * lisättävälle omalle äänitiedostolle ilman skeemamuutosta — kenttä ei siis
+   * ole suljettu enum, vaikka validointi tänään tunteekin vain sisäänrakennetut
+   * äänet (ks. parseAlarms).
+   */
+  soundId: string;
+  /** 0–1. */
+  volume: number;
+  /** Montako kertaa ääni toistetaan laukeamisen yhteydessä. */
+  repeatCount: number;
+}
+
 export interface Settings {
   /** Student numbers to show; null means every child found in Wilma. */
   visibleStudents: string[] | null;
@@ -63,6 +88,7 @@ export interface Settings {
   nightModeEnd: string;
   /** Where each panel sits. Null means "never edited", so the default is used. */
   panelLayout: PanelLayout | null;
+  alarms: Alarm[];
 }
 
 export const defaultSettings: Settings = {
@@ -73,6 +99,7 @@ export const defaultSettings: Settings = {
   nightModeStart: "21:30",
   nightModeEnd: "06:00",
   panelLayout: null,
+  alarms: [],
 };
 
 const KEY = "settings";
@@ -125,6 +152,10 @@ export function updateSettings(patch: unknown): Settings {
 
   if ("panelLayout" in input) {
     next.panelLayout = parsePanelLayout(input["panelLayout"]);
+  }
+
+  if ("alarms" in input) {
+    next.alarms = parseAlarms(input["alarms"]);
   }
 
   if ("hideMessagePreviews" in input) {
@@ -187,4 +218,112 @@ export function parsePanelLayout(value: unknown): PanelLayout | null {
   }
 
   return layout;
+}
+
+/**
+ * Yläraja hälytysten määrälle — nämä säilytetään yhdessä JSON-blobissa
+ * (ks. store.ts), joten mikään ei muuten estäisi listaa kasvamasta rajatta.
+ */
+export const MAX_ALARMS = 20;
+const ALARM_LABEL_MAX_LENGTH = 60;
+const ALARM_MINUTES_MIN = 1;
+const ALARM_MINUTES_MAX = 240;
+const ALARM_REPEAT_MIN = 1;
+const ALARM_REPEAT_MAX = 8;
+const ALARM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const ALARM_SOUND_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
+
+function numberInRange(value: unknown, label: string, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+    throw new SettingsValidationError(`${label}: luku väliltä ${min}–${max}`);
+  }
+  return value;
+}
+
+function integerInRange(value: unknown, label: string, min: number, max: number): number {
+  const num = numberInRange(value, label, min, max);
+  if (!Number.isInteger(num)) {
+    throw new SettingsValidationError(`${label}: kokonaisluku väliltä ${min}–${max}`);
+  }
+  return num;
+}
+
+/**
+ * Hälytykset tulevat kotiverkon puhelimelta siinä missä muutkin asetukset,
+ * joten jokainen kenttä rajataan tässä eikä luoteta clientin lähettämään
+ * muotoon. soundId ei ole suljettu enum (ks. kommentti Alarm-tyypissä), joten
+ * se hyväksytään minä tahansa tunnisteenomaisena merkkijonona sen sijaan että
+ * torjuttaisiin kaikki paitsi tämänhetkiset sisäänrakennetut äänet.
+ */
+export function parseAlarms(value: unknown): Alarm[] {
+  if (!Array.isArray(value)) {
+    throw new SettingsValidationError("alarms: lista");
+  }
+  if (value.length > MAX_ALARMS) {
+    throw new SettingsValidationError(`alarms: enintään ${MAX_ALARMS} hälytystä`);
+  }
+
+  const seenIds = new Set<string>();
+  return value.map((raw, index) => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new SettingsValidationError(`alarms[${index}]: objekti`);
+    }
+    const item = raw as Record<string, unknown>;
+
+    const id = item["id"];
+    if (typeof id !== "string" || !ALARM_ID_PATTERN.test(id)) {
+      throw new SettingsValidationError(`alarms[${index}].id: tunniste`);
+    }
+    if (seenIds.has(id)) {
+      throw new SettingsValidationError(`alarms[${index}].id: sama tunniste toistuu useammassa hälytyksessä`);
+    }
+    seenIds.add(id);
+
+    const label = item["label"];
+    if (typeof label !== "string" || label.trim().length === 0 || label.length > ALARM_LABEL_MAX_LENGTH) {
+      throw new SettingsValidationError(`alarms[${index}].label: teksti 1–${ALARM_LABEL_MAX_LENGTH} merkkiä`);
+    }
+
+    const minutesBefore = integerInRange(
+      item["minutesBefore"],
+      `alarms[${index}].minutesBefore`,
+      ALARM_MINUTES_MIN,
+      ALARM_MINUTES_MAX,
+    );
+
+    const studentNumber = item["studentNumber"];
+    if (studentNumber !== null && typeof studentNumber !== "string") {
+      throw new SettingsValidationError(`alarms[${index}].studentNumber: merkkijono tai null`);
+    }
+
+    const enabled = item["enabled"];
+    if (typeof enabled !== "boolean") {
+      throw new SettingsValidationError(`alarms[${index}].enabled: true tai false`);
+    }
+
+    const soundId = item["soundId"];
+    if (typeof soundId !== "string" || !ALARM_SOUND_ID_PATTERN.test(soundId)) {
+      throw new SettingsValidationError(`alarms[${index}].soundId: tunniste`);
+    }
+
+    const volume = numberInRange(item["volume"], `alarms[${index}].volume`, 0, 1);
+
+    const repeatCount = integerInRange(
+      item["repeatCount"],
+      `alarms[${index}].repeatCount`,
+      ALARM_REPEAT_MIN,
+      ALARM_REPEAT_MAX,
+    );
+
+    return {
+      id,
+      label,
+      minutesBefore,
+      studentNumber: studentNumber as string | null,
+      enabled,
+      soundId,
+      volume,
+      repeatCount,
+    };
+  });
 }

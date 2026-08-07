@@ -187,6 +187,30 @@ export const defaultPanelLayout: PanelLayout = {
   notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
 };
 
+/**
+ * Koulukello: laukeaa X minuuttia ennen päivän ensimmäisen oppitunnin alkua.
+ * Pidettävä samana kuin server/src/core/settings.ts:n Alarm.
+ */
+export interface Alarm {
+  id: string;
+  label: string;
+  /** Minuuttia ennen päivän ensimmäisen oppitunnin alkua. */
+  minutesBefore: number;
+  /** Null = mikä tahansa oppilas — aikaisin tunneista kaikkien lasten kesken. */
+  studentNumber: string | null;
+  enabled: boolean;
+  /**
+   * Äänen tunniste, ei tiedostopolku — ks. alarmSounds.ts. Kenttä ei ole
+   * suljettu enum, jotta oma äänitiedosto voidaan lisätä myöhemmin samaan
+   * paikkaan ilman skeemamuutosta.
+   */
+  soundId: string;
+  /** 0–1. */
+  volume: number;
+  /** Montako kertaa ääni toistetaan laukeamisen yhteydessä. */
+  repeatCount: number;
+}
+
 export interface Settings {
   visibleStudents: string[] | null;
   scheduleLayout: "single" | "split";
@@ -196,6 +220,7 @@ export interface Settings {
   nightModeEnd: string;
   /** Null = ei koskaan muokattu, käytetään oletusasettelua. */
   panelLayout: PanelLayout | null;
+  alarms: Alarm[];
 }
 
 export interface Dashboard {

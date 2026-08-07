@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, provide, ref } from "vue";
+import AlarmsPanel from "./components/AlarmsPanel.vue";
 import CalendarCard, { type CalendarData } from "./components/CalendarCard.vue";
 import ElectricityCard from "./components/ElectricityCard.vue";
 import LayoutEditor from "./components/LayoutEditor.vue";
@@ -18,6 +19,7 @@ const { now } = useClock();
 const { dashboard, connected, refresh } = useDashboard();
 
 const settingsOpen = ref(false);
+const alarmsOpen = ref(false);
 
 const timeLabel = computed(() =>
   now.value.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }),
@@ -40,6 +42,12 @@ const wilmaData = computed(() => wilma.value?.data ?? null);
 
 const rolloverTime = computed(() => settings.value?.rolloverTime ?? "12:00");
 const visibleStudents = computed(() => settings.value?.visibleStudents ?? null);
+
+// Kaikki tunnetut lapset, ei vain kortilla näytettävät — hälytys voi koskea
+// lasta joka on piilotettu lukujärjestyskortilta, joten AlarmsPanel ei saa
+// käyttää visibleStudents-suodatettua listaa.
+const allStudents = computed(() => wilmaData.value?.students ?? []);
+const activeAlarmCount = computed(() => settings.value?.alarms.filter((a) => a.enabled).length ?? 0);
 
 // Koko composable annetaan kortille yhtenä oliona, jotta selauspainikkeet ja
 // automaattinen päivänvaihto asuvat samassa paikassa eikä App.vue joudu
@@ -125,16 +133,33 @@ const isNight = computed(() => {
           v-if="canEdit"
           class="topbar__settings"
           type="button"
+          title="Hälytykset"
+          @click="alarmsOpen = true"
+        >
+          <!-- Kello, ei hammasratas eikä aurinko — muoto: kellon runko + kieli
+               alaosassa, tunnistettava hälytyskellon ikoni. -->
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+            />
+          </svg>
+          <span v-if="activeAlarmCount > 0" class="topbar__badge" aria-hidden="true"></span>
+          <span class="sr-only">Hälytykset{{ activeAlarmCount > 0 ? ` (${activeAlarmCount} päällä)` : "" }}</span>
+        </button>
+        <button
+          v-if="canEdit"
+          class="topbar__settings"
+          type="button"
           title="Asetukset"
           @click="settingsOpen = true"
         >
+          <!-- Oikea hammasratas: ympyrä ja säteittäiset viivat olisivat aurinko,
+               ei ratas — hampaiden pitää olla kehällä, ei siitä ulos osoittavia. -->
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6" />
             <path
-              d="M12 3.2v2M12 18.8v2M3.2 12h2M18.8 12h2M5.8 5.8l1.4 1.4M16.8 16.8l1.4 1.4M18.2 5.8l-1.4 1.4M7.2 16.8l-1.4 1.4"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
+              fill="currentColor"
+              d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.48.48 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84a.47.47 0 0 0-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
             />
           </svg>
           <span class="sr-only">Asetukset</span>
@@ -226,6 +251,17 @@ const isNight = computed(() => {
       @saved="refresh"
       @edit-layout="panelLayout.startEditing()"
     />
+
+    <AlarmsPanel
+      v-if="settings"
+      :settings="settings"
+      :students="allStudents"
+      :wilma-data="wilmaData"
+      :now="now"
+      :open="alarmsOpen"
+      @close="alarmsOpen = false"
+      @saved="refresh"
+    />
   </div>
 </template>
 
@@ -280,6 +316,7 @@ const isNight = computed(() => {
 }
 
 .topbar__settings {
+  position: relative;
   background: none;
   border: none;
   color: var(--text-faint);
@@ -292,6 +329,17 @@ const isNight = computed(() => {
 .topbar__settings:hover {
   color: var(--text);
   background: var(--surface);
+}
+
+/* Hienovarainen merkki siitä että vähintään yksi hälytys on päällä. */
+.topbar__badge {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent-school);
 }
 
 .topbar--editing {
