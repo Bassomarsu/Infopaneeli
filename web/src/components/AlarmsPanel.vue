@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ALARM_SOUNDS, DEFAULT_SOUND_ID, playAlarmSound, unlockAudio } from "./alarmSounds.ts";
 import { describeOccurrence, nextAlarmOccurrence, useAlarms } from "../composables/useAlarms.ts";
+import { useEditAccess } from "../composables/useEditAccess.ts";
 import type { Alarm, Settings, WilmaData, WilmaStudent } from "../types.ts";
 
 const props = defineProps<{
@@ -14,10 +15,21 @@ const props = defineProps<{
   settings: Settings | null;
   students: WilmaStudent[];
   wilmaData: WilmaData | null;
+  /**
+   * Vain näyttölaite ja luotetut laitteet saavat Wilma-datan palvelimelta
+   * (ks. server/src/routes/api.ts, SENSITIVE_PROVIDERS) — PIN:llä muokkausta
+   * käyttävä puhelin ei koskaan. `wilmaData` on siis aina null tällaisella
+   * laitteella, mutta se johtuu eri syystä kuin "lukujärjestystä ei ole vielä
+   * haettu": tämä lippu erottaa ne, jotta esikatselu ei väitä lukujärjestystä
+   * tyhjäksi kun se vain on piilotettu tältä laitteelta.
+   */
+  canPreviewSchedule: boolean;
   /** Hallintamodaalin (lista/muokkaus) auki-tila — hälytyksen soiminen ei riipu tästä. */
   open: boolean;
   now: Date;
 }>();
+
+const editAccess = useEditAccess();
 
 const emit = defineEmits<{ close: []; saved: [Settings] }>();
 
@@ -57,11 +69,16 @@ function clockLabel(date: Date): string {
  * ettei rikkinäinen viittaus jää huomaamatta lomana.
  */
 function isOrphanedStudent(alarm: Alarm): boolean {
+  // Ilman lukujärjestystietoa (ks. canPreviewSchedule) ei voida päätellä
+  // löytyykö oppilas Wilmasta vai ei — tyhjä props.students tällä laitteella
+  // tarkoittaa "piilotettu", ei "oppilasta ei ole".
+  if (!props.canPreviewSchedule) return false;
   return alarm.studentNumber !== null && !props.students.some((s) => s.studentNumber === alarm.studentNumber);
 }
 
 function occurrenceText(alarm: Alarm): string {
   if (isOrphanedStudent(alarm)) return "Oppilasta ei löydy Wilmasta — tarkista hälytyksen kohde";
+  if (!props.canPreviewSchedule) return "Esikatselu näkyy vain näyttölaitteella";
   if (!props.wilmaData) return "Lukujärjestystä ei tunneta";
   const occurrence = nextAlarmOccurrence(alarm, props.wilmaData, props.students, props.now);
   if (!occurrence) return "Ei tunteja lähipäivinä";
@@ -148,8 +165,16 @@ const editingIsOrphaned = computed(() => (editingDraft.value ? isOrphanedStudent
 // tunnisteeseen (esim. kadonneeseen). Ilman tätä käyttäjä ei pääsisi edes
 // näkemään saati korjaamaan roikkuvaa viittausta, koska rivi "Kuka tahansa"
 // -oletuksen taakse piiloutuisi kokonaan.
+//
+// canPreviewSchedule false: props.students on aina tyhjä (ks. yllä), joten
+// valinta näyttäisi tyhjän pudotusvalikon "Kuka tahansa" -vaihtoehdon
+// kanssa — käyttäjä voisi vahingossa nollata olemassa olevan kohdistuksen
+// tietämättä mitä on menettämässä. Kenttä piilotetaan kokonaan tällä
+// laitteella, jolloin editingDraft.studentNumber säilyy koskemattomana.
 const showStudentField = computed(
-  () => props.students.length > 1 || (editingDraft.value?.studentNumber ?? null) !== null,
+  () =>
+    props.canPreviewSchedule &&
+    (props.students.length > 1 || (editingDraft.value?.studentNumber ?? null) !== null),
 );
 
 async function previewSound(): Promise<void> {
@@ -181,7 +206,7 @@ function validateDraft(draft: Alarm): string | null {
 
 async function persistAlarms(next: Alarm[]): Promise<{ ok: boolean; error: string | null }> {
   try {
-    const response = await fetch("/api/settings", {
+    const response = await editAccess.editFetch("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ alarms: next }),
@@ -372,6 +397,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <p v-if="editingIsOrphaned" class="panel__warning">
             Oppilasta ({{ editingDraft.studentNumber }}) ei löydy Wilmasta — hälytys ei voi laueta ennen kuin
             valitset kelvollisen oppilaan tai "Kuka tahansa".
+          </p>
+          <p v-if="!canPreviewSchedule" class="group__hint">
+            Oppilaskohtainen kohdistus ja esikatselu näkyvät vain näyttölaitteella. Nykyinen kohdistus säilyy
+            ennallaan.
           </p>
 
           <label v-if="showStudentField" class="field">

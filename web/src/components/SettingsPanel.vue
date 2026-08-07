@@ -1,11 +1,26 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { NARROW_LAYOUT_BREAKPOINT_PX } from "../composables/usePanelLayout";
+import { useEditAccess, type PinLevel } from "../composables/useEditAccess.ts";
 import type { Settings, WilmaStudent } from "../types";
+
+const editAccess = useEditAccess();
 
 const props = defineProps<{
   settings: Settings;
   students: WilmaStudent[];
+  /**
+   * Palvelin piilottaa Wilma-datan laitteilta joilla ei ole täyttä
+   * luottamusta — EDIT_PIN ei riitä tähän, vain FULL_PIN/näyttölaite/
+   * TRUSTED_HOSTS (ks. server/src/routes/api.ts, SENSITIVE_PROVIDERS).
+   * `students` on siis tyhjä EDIT_PIN:llä muokkaavalla puhelimella. Tämä
+   * lippu erottaa sen "Wilma-yhteyttä ei ole vielä konfiguroitu" -tilasta,
+   * jotta hintteksti ei väitä väärää syytä (ks. sama erottelu
+   * AlarmsPanel.vuessa).
+   */
+  canPreviewSchedule: boolean;
+  /** Mitä tallennettu koodi tällä laitteella juuri nyt avaa — null jos ei mitään. Ks. App.vuen currentPinLevel. */
+  currentLevel: PinLevel | null;
   open: boolean;
 }>();
 
@@ -72,7 +87,7 @@ async function persistDraft(): Promise<boolean> {
   saving.value = true;
   error.value = null;
   try {
-    const response = await fetch("/api/settings", {
+    const response = await editAccess.editFetch("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(draft.value),
@@ -120,7 +135,8 @@ async function save(): Promise<void> {
       <div class="panel__body">
         <fieldset class="group">
           <legend>Näytettävät lapset</legend>
-          <p v-if="students.length === 0" class="group__hint">
+          <p v-if="!canPreviewSchedule" class="group__hint">Oppilasvalinta näkyy vain näyttölaitteella.</p>
+          <p v-else-if="students.length === 0" class="group__hint">
             Ei oppilaita — Wilma-yhteys ei ole vielä käytössä.
           </p>
           <label v-for="student in students" :key="student.studentNumber" class="check">
@@ -186,6 +202,22 @@ async function save(): Promise<void> {
             <input v-model="draft.hideMessagePreviews" type="checkbox" />
             <span>Piilota viestien sisältö — näytä vain lähettäjä ja otsikko</span>
           </label>
+        </fieldset>
+
+        <!-- Näkyy vain laitteella joka on ottanut jonkin tason käyttöön
+             koodilla — näyttölaitteella ei ole tallennettua koodia
+             unohdettavaksi. currentLevel on aina tuore (App.vue), joten
+             teksti ei voi jäädä väittämään väärää tasoa. -->
+        <fieldset v-if="editAccess.hasStoredPin.value" class="group">
+          <legend>Muokkausoikeus</legend>
+          <p class="group__hint">
+            {{
+              currentLevel === "full"
+                ? "Täydet oikeudet ovat käytössä tällä laitteella — myös lasten Wilma-tiedot."
+                : "Muokkaus on käytössä tällä laitteella koodilla. Ei lasten Wilma-tietoja."
+            }}
+          </p>
+          <button type="button" class="btn" @click="editAccess.forget()">Unohda koodi</button>
         </fieldset>
 
         <p v-if="error" class="panel__error">{{ error }}</p>

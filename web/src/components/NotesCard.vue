@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from "vue";
+import { useEditAccess } from "../composables/useEditAccess.ts";
 import CardShell from "./CardShell.vue";
+
+const editAccess = useEditAccess();
 
 export interface Note {
   id: number;
@@ -43,7 +46,7 @@ async function addNote(): Promise<void> {
   submitting.value = true;
   errorMessage.value = null;
   try {
-    const response = await fetch("/api/notes", {
+    const response = await editAccess.editFetch("/api/notes", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: draft.value.trim() }),
@@ -61,7 +64,7 @@ async function addNote(): Promise<void> {
 async function toggleDone(note: Note): Promise<void> {
   errorMessage.value = null;
   try {
-    const response = await fetch(`/api/notes/${note.id}`, {
+    const response = await editAccess.editFetch(`/api/notes/${note.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ done: !note.done }),
@@ -114,7 +117,7 @@ async function removeNote(note: Note): Promise<void> {
   errorMessage.value = null;
   cancelDelete();
   try {
-    const response = await fetch(`/api/notes/${note.id}`, { method: "DELETE" });
+    const response = await editAccess.editFetch(`/api/notes/${note.id}`, { method: "DELETE" });
     if (!response.ok) throw new Error(await errorFor(response, "Poisto epäonnistui"));
     emit("refresh");
   } catch (err) {
@@ -130,7 +133,9 @@ async function removeNote(note: Note): Promise<void> {
         <input v-model="draft" type="text" class="notes__input" placeholder="Uusi muistiinpano…" />
         <button type="submit" class="notes__add-btn" :disabled="!canSubmit">Lisää</button>
       </form>
-      <p v-else class="notes__hint">Muokkaus onnistuu näyttölaitteelta tai PIN-koodilla.</p>
+      <p v-else class="notes__hint">
+        Muokkaus onnistuu näyttölaitteelta tai ottamalla käyttöön PIN-koodi lukko-kuvakkeesta yläpalkissa.
+      </p>
 
       <p v-if="overLimit" class="notes__warn">Teksti on liian pitkä (max {{ MAX_LENGTH }} merkkiä)</p>
       <p v-if="errorMessage" class="notes__warn">{{ errorMessage }}</p>

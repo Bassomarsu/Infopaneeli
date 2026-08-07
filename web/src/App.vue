@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, provide, ref } from "vue";
+import { computed, provide, ref, watch } from "vue";
 import AlarmsPanel from "./components/AlarmsPanel.vue";
 import CalendarCard, { type CalendarData } from "./components/CalendarCard.vue";
+import EditAccessDialog from "./components/EditAccessDialog.vue";
 import ElectricityCard from "./components/ElectricityCard.vue";
 import LayoutEditor from "./components/LayoutEditor.vue";
 import MessagesCard from "./components/MessagesCard.vue";
@@ -11,15 +12,18 @@ import SettingsPanel from "./components/SettingsPanel.vue";
 import WeatherCard, { type WeatherData } from "./components/WeatherCard.vue";
 import { useClock } from "./composables/useClock";
 import { useDashboard } from "./composables/useDashboard";
+import { useEditAccess } from "./composables/useEditAccess.ts";
 import { panelGridKey, usePanelLayout } from "./composables/usePanelLayout";
 import { useScheduleDay } from "./composables/useScheduleDay";
 import type { ElectricityData, PanelLayout, ProviderSnapshot, Settings, WilmaData } from "./types";
 
 const { now } = useClock();
 const { dashboard, connected, refresh } = useDashboard();
+const editAccess = useEditAccess();
 
 const settingsOpen = ref(false);
 const alarmsOpen = ref(false);
+const editAccessOpen = ref(false);
 
 const timeLabel = computed(() =>
   now.value.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }),
@@ -56,7 +60,85 @@ const schedule = useScheduleDay(wilmaData, now, rolloverTime, visibleStudents);
 const { students } = schedule;
 
 const currentHour = computed(() => now.value.getHours());
-const canEdit = computed(() => dashboard.value?.localClient ?? false);
+
+// isTrustedClient = dashboard.localClient = palvelimen isTrustedRequest-
+// päätös tälle laitteelle: näyttölaite, TRUSTED_HOSTS-laite, TAI kelvollinen
+// FULL_PIN otsikossa (ks. server/src/routes/access.ts). Koska
+// useDashboard.ts lähettää tallennetun koodin joka pollauksella
+// (editAccess.editFetch), tämä kääntyy todeksi automaattisesti heti kun
+// FULL_PIN on tallessa — mitään erillistä "täysi taso" -kytkintä ei
+// tarvita täällä, se on jo täsmälleen sama asia kuin TRUSTED_HOSTS-laite.
+//
+// canEdit = isTrustedClient TAI kelvollinen EDIT_PIN tallessa
+// (editAccess.hasStoredPin — huom. FULL_PIN:kin päätyy tänne tallessa
+// olevana koodina, mutta silloin isTrustedClient on jo tosi eikä tarvitse
+// tätä toista ehtoa). EDIT_PIN itsessään EI koskaan laajenna
+// isTrustedClient-tilaa — Wilma-data pysyy palvelimen päättämänä
+// piilotettuna siltä, riippumatta tästä.
+const isTrustedClient = computed(() => dashboard.value?.localClient ?? false);
+const canEdit = computed(() => isTrustedClient.value || editAccess.hasStoredPin.value);
+
+// Puhelin jolla ei ole täyttä luottamusta ei näe Wilma-dataa (palvelin
+// piilottaa sen, ks. api.ts), joten hälytysten esikatselu ("soi klo 7.55")
+// ei voi toimia siellä vaikka hälytyksiä voisi muokata EDIT_PIN:llä.
+// AlarmsPanel/SettingsPanel käyttävät tätä erottaakseen "ei tunteja
+// lähipäivinä" -tilan "tätä laitetta ei ole luotettu" -tilasta.
+const canPreviewSchedule = computed(() => isTrustedClient.value);
+
+/**
+ * Mitä tallennettu koodi TÄLLÄ HETKELLÄ avaa — aina johdettu tuoreimmasta
+ * palvelinvastauksesta (isTrustedClient), ei erikseen muistiin talletetusta
+ * lipusta. Näin näyttö ei voi jäädä väittämään "täydet oikeudet" enää sen
+ * jälkeen kun FULL_PIN on esim. vaihdettu .env:ssä lyhyemmäksi tai
+ * poistettu — se korjautuu itsestään seuraavalla /api/dashboard-pollauksella
+ * aivan kuten Wilma-näkyvyyskin. Käytetään dialogin ja asetuspaneelin
+ * "kummalla tasolla olen" -tekstiin (vaatimus: se ei saa jäädä epäselväksi).
+ */
+const currentPinLevel = computed<"full" | "edit" | null>(() => {
+  if (!editAccess.hasStoredPin.value) return null;
+  return isTrustedClient.value ? "full" : "edit";
+});
+
+// Muokkausoikeus-lukko näkyy vain laitteille jotka eivät ole valmiiksi
+// luotettuja — näyttölaitteella se olisi merkityksetön (canEdit on jo tosi).
+// Piilotetaan vasta kun tiedetään VARMASTI ettei kumpikaan taso ole
+// käytössä palvelimella, jottei nappi vilku ennen ensimmäistä
+// /api/edit-access-vastausta (null = ei vielä kysytty).
+const showEditAccessButton = computed(() => {
+  if (isTrustedClient.value) return false;
+  return editAccess.editPinConfigured.value !== false || editAccess.fullPinConfigured.value !== false;
+});
+
+void editAccess.refreshPinConfigured();
+
+// Lukko-napin teksti/väri — sama kolmijako kuin dialogissa: vanhentunut
+// (huomiovärillä, riippumatta siitä mikä taso se oli) voittaa, muuten
+// kerrotaan suoraan kumpi taso on käytössä, jottei niitä voi sekoittaa
+// (vaatimus: "täydet oikeudet" ja "muokkaus" ovat eri asioita).
+const editAccessButtonLabel = computed(() => {
+  if (editAccess.expired.value) return "Tallennettu koodi ei enää kelpaa — syötä uusi";
+  if (currentPinLevel.value === "full") return "Täydet oikeudet käytössä (sis. lasten Wilma-tiedot)";
+  if (currentPinLevel.value === "edit") return "Muokkausoikeus käytössä";
+  return "Ota käyttöön PIN-koodilla";
+});
+const editAccessBadgeVisible = computed(() => editAccess.hasStoredPin.value || editAccess.expired.value);
+const editAccessBadgeModifier = computed(() => {
+  if (editAccess.expired.value) return "topbar__badge--warn";
+  if (currentPinLevel.value === "full") return "topbar__badge--full";
+  return null; // "edit": peruspiste riittää, ei omaa väriä
+});
+
+// Jos muokkausoikeus katoaa kesken kaiken (PIN vanhentui — EDIT_PIN vaihtui
+// .env:ssä), auki oleva asetus-/hälytyspaneeli jäisi näyttämään näkymän
+// jonka jokainen tallennus vain epäonnistuisi selittämättä. Suljetaan se ja,
+// jos syy oli nimenomaan vanhentunut PIN, avataan heti pyyntö uudelle.
+watch(canEdit, (isEditable, wasEditable) => {
+  if (wasEditable && !isEditable) {
+    settingsOpen.value = false;
+    alarmsOpen.value = false;
+    if (editAccess.expired.value) editAccessOpen.value = true;
+  }
+});
 
 // Ruudukkoelementin viittaus jaetaan LayoutEditor-lapsille provide/injectillä,
 // jotta jokainen paneeli ei mittaisi DOMia erikseen raahauksen aikana.
@@ -164,6 +246,28 @@ const isNight = computed(() => {
           </svg>
           <span class="sr-only">Asetukset</span>
         </button>
+        <button
+          v-if="showEditAccessButton"
+          class="topbar__settings"
+          type="button"
+          :title="editAccessButtonLabel"
+          @click="editAccessOpen = true"
+        >
+          <!-- Munalukko — kertoo onko muokkaus tai täydet oikeudet otettu
+               käyttöön PIN-koodilla tällä laitteella. Näytetään vain
+               laitteille jotka eivät ole valmiiksi luotettuja, ks.
+               showEditAccessButton yllä. Pisteen väri erottaa tason
+               (editAccessBadgeClass): vihreä = muokkaus, oranssi = täydet
+               oikeudet, keltainen = vanhentunut. -->
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 17a2 2 0 0 0 2-2 2 2 0 0 0-4 0 2 2 0 0 0 2 2m6-9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2h1V6a5 5 0 0 1 10 0v2h1M12 3a3 3 0 0 0-3 3v2h6V6a3 3 0 0 0-3-3z"
+            />
+          </svg>
+          <span v-if="editAccessBadgeVisible" class="topbar__badge" :class="editAccessBadgeModifier" aria-hidden="true"></span>
+          <span class="sr-only">{{ editAccessButtonLabel }}</span>
+        </button>
       </div>
     </header>
 
@@ -246,6 +350,8 @@ const isNight = computed(() => {
       v-if="settings"
       :settings="settings"
       :students="students"
+      :can-preview-schedule="canPreviewSchedule"
+      :current-level="currentPinLevel"
       :open="settingsOpen"
       @close="settingsOpen = false"
       @saved="refresh"
@@ -265,10 +371,18 @@ const isNight = computed(() => {
       :settings="settings"
       :students="allStudents"
       :wilma-data="wilmaData"
+      :can-preview-schedule="canPreviewSchedule"
       :now="now"
       :open="alarmsOpen"
       @close="alarmsOpen = false"
       @saved="refresh"
+    />
+
+    <EditAccessDialog
+      :open="editAccessOpen"
+      :current-level="currentPinLevel"
+      @close="editAccessOpen = false"
+      @authorized="refresh"
     />
   </div>
 </template>
@@ -352,6 +466,16 @@ const isNight = computed(() => {
   height: 0.5rem;
   border-radius: 50%;
   background: var(--accent-school);
+}
+
+/* Tallennettu koodi ei enää kelpaa — sama väri kuin muut varoitukset (ks. AlarmsPanelin panel__warning). */
+.topbar__badge--warn {
+  background: #f3c26b;
+}
+
+/* Täydet oikeudet (sis. lasten Wilma-tiedot) — oma, huomiota herättävämpi väri kuin pelkkä muokkausoikeus, jottei tasoja voi sekoittaa vilkaisulla. */
+.topbar__badge--full {
+  background: #e08a5a;
 }
 
 .topbar--editing {

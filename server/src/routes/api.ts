@@ -4,7 +4,7 @@ import { getSettings, SettingsValidationError, updateSettings } from "../core/se
 import { addNote, deleteNote, listNotes, listReadMessageIds, markMessageRead, setNoteDone } from "../core/store.ts";
 import { config } from "../core/config.ts";
 import type { WilmaData } from "../providers/wilma.ts";
-import { isTrustedRequest, requireEditAccess } from "./access.ts";
+import { fullPinEnabled, isTrustedRequest, requireEditAccess, verifyEditPin } from "./access.ts";
 
 /** Providers whose payload contains the children's school data. */
 const SENSITIVE_PROVIDERS = new Set(["wilma"]);
@@ -26,13 +26,39 @@ function withLocalReadState(data: WilmaData): WilmaData & { messages: Array<Wilm
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/health", async () => ({ ok: true, time: new Date().toISOString() }));
 
+  // Kertoo mitkä tasot on ylipäätään asetettu .env:ssä — ei koskaan itse
+  // koodeja. Puhelimen käyttöliittymä käyttää tätä päättääkseen kannattaako
+  // PIN-syöttöä edes tarjota, ja mitä sillä voi saavuttaa (ks.
+  // requireEditAccess/verifyEditPin: kumpikin tyhjä antaa 403:n eri
+  // viestillä joka tapauksessa, mutta tämä säästää turhalta väärältä-PIN-
+  // yritykseltä pelkän tilan selvittämiseksi). fullPinEnabled, ei
+  // config.fullPin.length > 0: liian lyhyt FULL_PIN ei ole käytössä
+  // lainkaan, ks. access.ts.
+  app.get("/api/edit-access", async () => ({
+    editPinConfigured: config.editPin.length > 0,
+    fullPinConfigured: fullPinEnabled,
+  }));
+
+  // Todentaa leipätekstissä annetun PIN:n ja kertoo minkä TASON se avaa
+  // ("edit" tai "full") ilman että se vielä tekee mitään kirjoitusta —
+  // selain kutsuu tätä ennen kuin tallentaa koodin itselleen. Sama rajoitin
+  // ja samat vastauskoodit kuin x-edit-pin-otsikolla varustetuilla
+  // kirjoituspyynnöillä (ks. access.ts:n attemptPin).
+  app.post("/api/edit-access", async (request, reply) => {
+    const body = request.body as { pin?: unknown } | undefined;
+    const level = verifyEditPin(request, reply, body?.pin);
+    if (level === null) return reply;
+    return { ok: true, level };
+  });
+
   app.get("/api/dashboard", async (request) => {
     const snapshots = registry.snapshots();
     const local = isTrustedRequest(request);
 
     // A phone on the home network gets the shopping list and the weather, but
     // the school data stays on the wall display — unless it's on the
-    // TRUSTED_HOSTS list, in which case isTrustedRequest already says so.
+    // TRUSTED_HOSTS list or presents a valid FULL_PIN, in which case
+    // isTrustedRequest already says so.
     if (!local) {
       for (const id of SENSITIVE_PROVIDERS) {
         const snapshot = snapshots[id];
@@ -105,11 +131,13 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   // Wilma itself never tells us a message was read (see providers/wilma.ts),
   // so "read" here means "opened on this display" — recorded the moment the
-  // dialog opens it. Trusted-only, not requireEditAccess: a PIN lets a phone
-  // touch the shopping list, but per access.ts's own rule the children's
-  // school data stays with the wall display and TRUSTED_HOSTS devices. An
-  // untrusted phone never even sees Wilma messages (SENSITIVE_PROVIDERS
-  // above), so it has no legitimate reason to call this route at all.
+  // dialog opens it. Trusted-only, not requireEditAccess: an EDIT_PIN lets a
+  // phone touch the shopping list, but per access.ts's own rule the
+  // children's school data stays with the wall display, TRUSTED_HOSTS
+  // devices, and FULL_PIN holders (isTrustedRequest covers all three). A
+  // phone without full trust never even sees Wilma messages
+  // (SENSITIVE_PROVIDERS above), so it has no legitimate reason to call this
+  // route at all.
   app.post("/api/wilma/messages/:id/read", async (request, reply) => {
     if (!isTrustedRequest(request)) return reply.code(403).send({ error: "Vain näyttölaitteelta" });
     const id = Number((request.params as { id: string }).id);

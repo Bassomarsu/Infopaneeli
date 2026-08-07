@@ -1,4 +1,5 @@
 import { computed, onUnmounted, ref, watch, type InjectionKey, type Ref } from "vue";
+import { useEditAccess } from "./useEditAccess.ts";
 import {
   GRID_COLUMNS,
   GRID_ROWS,
@@ -231,6 +232,7 @@ const RESIZE_BLOCKED_MESSAGE = "Ei mahdu tähän — toinen paneeli tiellä.";
 const MIN_SPAN_MESSAGE = `Pienin koko on ${MIN_PANEL_SPAN}×${MIN_PANEL_SPAN} solua.`;
 
 export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit: Ref<boolean>, onSaved?: () => void) {
+  const editAccess = useEditAccess();
   const editing = ref(false);
   const saving = ref(false);
   const error = ref<string | null>(null);
@@ -293,13 +295,25 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
     saving.value = true;
     error.value = null;
     try {
-      const response = await fetch("/api/settings", {
+      const response = await editAccess.editFetch("/api/settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ panelLayout: next }),
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        // 401 tarkoittaa että tallennettu PIN ei enää kelpaa (editFetch on
+        // jo tyhjentänyt sen) — muokkaustilan pitäminen auki johtaisi vain
+        // samaan virheeseen uudestaan jokaisella uudella yrityksellä, joten
+        // se suljetaan tässä sen sijaan että jäisi roikkumaan rikkinäisenä.
+        // Asettelun muokkaus on käytännössä aina näyttölaitteella (kapealla
+        // näytöllä nappi on piilotettu), joten tämä on harvinainen — mutta
+        // PIN:llä muokkaava, tarpeeksi leveä selain voi silti osua tähän.
+        if (response.status === 401) {
+          editing.value = false;
+          error.value = "PIN ei enää kelpaa — muokkaus suljettu. Ota käyttöön uusi PIN jatkaaksesi.";
+          return false;
+        }
         throw new Error(body?.error ?? `Asettelun tallennus epäonnistui (HTTP ${response.status})`);
       }
       onSaved?.();

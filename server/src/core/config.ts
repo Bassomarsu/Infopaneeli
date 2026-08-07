@@ -71,7 +71,15 @@ export const config = {
 
   calendarIcsUrl: str("CALENDAR_ICS_URL"),
 
+  /** Muistilistan, asetusten ja hälytysten muokkaus — ei lasten Wilma-tietoja. Ks. routes/access.ts. */
   editPin: str("EDIT_PIN"),
+
+  /**
+   * Täydet oikeudet — sama kuin TRUSTED_HOSTS-listalla oleva laite, myös
+   * lasten Wilma-tiedot. Vähimmäispituus (routes/access.ts) tarkistetaan
+   * siellä, ei tässä: config.ts vain lukee arvon, ei arvioi sitä.
+   */
+  fullPin: str("FULL_PIN"),
 
   /**
    * Comma-separated hostnames and/or literal IPs that get the same access as
