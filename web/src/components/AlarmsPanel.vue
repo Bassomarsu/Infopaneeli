@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ALARM_SOUNDS, DEFAULT_SOUND_ID, playAlarmSound, unlockAudio } from "./alarmSounds.ts";
+import {
+  ALARM_SOUNDS,
+  DEFAULT_SOUND_ID,
+  fetchCustomSounds,
+  playAlarmSound,
+  unlockAudio,
+  type CustomSound,
+} from "./alarmSounds.ts";
 import { describeOccurrence, nextAlarmOccurrence, useAlarms } from "../composables/useAlarms.ts";
 import { useEditAccess } from "../composables/useEditAccess.ts";
 import type { Alarm, Settings, WilmaData, WilmaStudent } from "../types.ts";
@@ -108,6 +115,40 @@ const formError = ref<string | null>(null);
 const formSaving = ref(false);
 const previewError = ref<string | null>(null);
 const listError = ref<string | null>(null);
+
+// --- Perheen omat äänitiedostot (ks. server/src/core/alarm-sounds.ts) ---
+
+const customSounds = ref<CustomSound[]>([]);
+const soundListError = ref<string | null>(null);
+
+/**
+ * Haetaan vain kun paneeli avataan (ks. watch(open) alla), ei hälytyskellon
+ * jokaisella 20 sekunnin syklillä — palvelinkin välimuistittaa listauksen,
+ * mutta turha verkkokutsu on syytä välttää tästäkin päästä.
+ */
+async function loadCustomSounds(): Promise<void> {
+  try {
+    customSounds.value = await fetchCustomSounds();
+    soundListError.value = null;
+  } catch (err) {
+    // Ei estä paneelin käyttöä — sisäänrakennetut äänet toimivat silti, ja jo
+    // valitut omat äänet toistuvat edelleen soittohetkellä (palvelin
+    // ratkaisee ne uudestaan silloin). Kerrotaan silti ettei listaus onnistunut.
+    customSounds.value = [];
+    soundListError.value = err instanceof Error ? err.message : "Omien äänitiedostojen listaus epäonnistui";
+  }
+}
+
+/**
+ * True jos hälytyksen ääni ei löydy kummastakaan listasta — sisäänrakennettu
+ * ääni ei koskaan katoa, joten tämä tarkoittaa aina omaa äänitiedostoa joka
+ * on poistettu tai nimetty uudelleen. Ei vaienna hälytystä (ks.
+ * alarmSounds.ts:n playAlarmSound), mutta näytetään silti selvänä
+ * varoituksena — sama periaate kuin isOrphanedStudentissa.
+ */
+function isUnknownSound(soundId: string): boolean {
+  return !ALARM_SOUNDS.some((s) => s.id === soundId) && !customSounds.value.some((s) => s.id === soundId);
+}
 
 function generateAlarmId(): string {
   return `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -309,6 +350,7 @@ watch(
   (open) => {
     if (open) {
       window.addEventListener("keydown", onKeydown);
+      void loadCustomSounds();
     } else {
       window.removeEventListener("keydown", onKeydown);
       cancelEdit();
@@ -358,8 +400,12 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
             <button type="button" class="alarm__info" @click="startEdit(alarm)">
               <span class="alarm__label">{{ alarm.label }}</span>
-              <span class="alarm__meta" :class="{ 'alarm__meta--warn': isOrphanedStudent(alarm) }">
+              <span
+                class="alarm__meta"
+                :class="{ 'alarm__meta--warn': isOrphanedStudent(alarm) || isUnknownSound(alarm.soundId) }"
+              >
                 {{ minutesBeforeText(alarm) }} · {{ occurrenceText(alarm) }}
+                <template v-if="isUnknownSound(alarm.soundId)"> · äänitiedosto puuttuu</template>
               </span>
             </button>
 
@@ -411,14 +457,32 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             </select>
           </label>
 
+          <p v-if="isUnknownSound(editingDraft.soundId)" class="panel__warning">
+            Valittua äänitiedostoa ei löydy palvelimen data/sounds-kansiosta — se on ehkä poistettu tai nimetty
+            uudelleen. Hälytys soittaa silti oletusäänen sen sijaan, ei jää hiljaiseksi.
+          </p>
+
           <label class="field">
             <span>Ääni</span>
             <div class="field-row field-row--sound">
               <select v-model="editingDraft.soundId">
-                <option v-for="sound in ALARM_SOUNDS" :key="sound.id" :value="sound.id">{{ sound.label }}</option>
+                <optgroup label="Sisäänrakennetut">
+                  <option v-for="sound in ALARM_SOUNDS" :key="sound.id" :value="sound.id">{{ sound.label }}</option>
+                </optgroup>
+                <optgroup v-if="customSounds.length > 0" label="Omat äänitiedostot">
+                  <option v-for="sound in customSounds" :key="sound.id" :value="sound.id">{{ sound.label }}</option>
+                </optgroup>
+                <!-- Säilyttää valinnan näkyvissä (muttei valittavissa) jos se osoittaa
+                     äänitiedostoon jota ei enää löydy — sama periaate kuin
+                     showStudentFieldin roikkuvan oppilasviittauksen kanssa: arvoa ei
+                     saa vaihtaa vahingossa vain koska pudotusvalikko ei näytä sitä. -->
+                <option v-if="isUnknownSound(editingDraft.soundId)" :value="editingDraft.soundId" disabled>
+                  (puuttuva ääni: {{ editingDraft.soundId }})
+                </option>
               </select>
               <button type="button" class="btn" @click="previewSound">Kuuntele</button>
             </div>
+            <p v-if="soundListError" class="group__hint">{{ soundListError }}</p>
           </label>
           <p v-if="previewError" class="panel__error">{{ previewError }}</p>
 
@@ -727,8 +791,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
  * vaihtoehdot perivät vaalean `--text`-värin, ne olivat käytännössä
  * näkymättömiä. Vain valittu rivi erottui, sen taakse piirtyvän korostuksen
  * ansiosta. Läpinäkymätön tausta ja eksplisiittinen väri korjaavat sen.
+ * `optgroup` (hälytysäänivalikon "Sisäänrakennetut"/"Omat äänitiedostot"
+ * -otsikot) kärsisi täsmälleen samasta ongelmasta samasta syystä.
  */
-.field select option {
+.field select option,
+.field select optgroup {
   background-color: #161b24;
   color: var(--text);
 }

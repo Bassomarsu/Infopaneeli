@@ -44,6 +44,13 @@ const dbPathOverride = str("DB_PATH");
 export const config = {
   projectRoot,
   dataDir: path.join(projectRoot, "data"),
+  /**
+   * Kansio johon perhe pudottaa omat hälytysäänitiedostonsa (ks.
+   * core/alarm-sounds.ts). Ei ladattavissa käyttöliittymästä — vain palvelin
+   * lukee tämän kansion sisällön. `data/` on jo .gitignoressa, joten äänet
+   * eivät päädy gittiin.
+   */
+  soundsDir: path.join(projectRoot, "data", "sounds"),
   logDir: logDirOverride ? path.resolve(projectRoot, logDirOverride) : path.join(projectRoot, "data", "logs"),
   snapshotDir: path.join(projectRoot, "data", "snapshots"),
   dbPath: dbPathOverride ? path.resolve(projectRoot, dbPathOverride) : path.join(projectRoot, "data", "infonaytto.db"),

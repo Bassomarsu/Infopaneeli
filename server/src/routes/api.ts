@@ -1,8 +1,10 @@
+import fs from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { registry, type ProviderSnapshot } from "../core/provider.ts";
 import { getSettings, SettingsValidationError, updateSettings } from "../core/settings.ts";
 import { addNote, deleteNote, listNotes, listReadMessageIds, markMessageRead, setNoteDone } from "../core/store.ts";
 import { config } from "../core/config.ts";
+import { listCustomSounds, resolveCustomSound } from "../core/alarm-sounds.ts";
 import type { WilmaData } from "../providers/wilma.ts";
 import { fullPinEnabled, isTrustedRequest, requireEditAccess, verifyEditPin } from "./access.ts";
 
@@ -98,6 +100,38 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       }
       throw err;
     }
+  });
+
+  // Hälytysten omat äänitiedostot (ks. core/alarm-sounds.ts): perhe pudottaa
+  // ne käsin config.soundsDir-kansioon, tämä vain listaa ja tarjoilee.
+  // Julkinen siinä missä /api/settingskin — soundId ei ole arkaluontoista
+  // dataa, ja esikuuntelu paneelissa tarvitsee tämän ilman PIN-koodia.
+  // forceRefresh=true: paneeli hakee tämän vain kun se avataan, ei
+  // hälytyskellon 20 s:n syklissä, joten tuore levyluku on tässä halpa.
+  app.get("/api/alarm-sounds", async () => listCustomSounds(true));
+
+  app.get("/api/alarm-sounds/:id/file", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const sound = resolveCustomSound(id);
+    if (!sound) return reply.code(404).send({ error: "Äänitiedostoa ei löydy" });
+
+    // Tiedosto on voinut hävitä listauksen ja tämän pyynnön välillä (perhe
+    // poisti/nimesi sen uudelleen juuri nyt) — stat varmistaa sen tuoreesti
+    // ennen kuin mitään lähetetään, sen sijaan että striimaus kaatuisi kesken.
+    try {
+      const stat = await fs.promises.stat(sound.path);
+      if (!stat.isFile()) return reply.code(404).send({ error: "Äänitiedostoa ei löydy" });
+    } catch {
+      return reply.code(404).send({ error: "Äänitiedostoa ei löydy" });
+    }
+
+    const stream = fs.createReadStream(sound.path);
+    stream.on("error", (err) => {
+      request.log.warn({ event: "alarm_sound_stream_error", err }, "hälytysäänen striimaus epäonnistui");
+    });
+    reply.header("cache-control", "no-store"); // perhe voi korvata tiedoston samalla nimellä — ei vanhentunutta välimuistia
+    reply.type(sound.mimeType);
+    return reply.send(stream);
   });
 
   app.get("/api/notes", async () => listNotes());

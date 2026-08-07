@@ -321,10 +321,24 @@ ruudun isolla kuittauspainikkeella ja näkyy kirkkaana myös yötilassa — aamu
 juuri se hetki jolloin hälytys on tärkein. Näin hälytys toimii vaikka ääni
 olisi estetty.
 
-Ääniä on kolme (kellon kilahdus, nouseva sarja, toistuva piippaus) ja ne
-tuotetaan selaimessa Web Audio -rajapinnalla, ei äänitiedostoina — ei uusia
-riippuvuuksia eikä binäärejä repoon, ja ääni toimii ilman verkkoa. Jokaisen
-vieressä on kuuntelupainike. **Omaa äänitiedostoa ei voi vielä valita.**
+Sisäänrakennettuja ääniä on kolme (kellon kilahdus, nouseva sarja, toistuva
+piippaus) ja ne tuotetaan selaimessa Web Audio -rajapinnalla, ei
+äänitiedostoina — ei uusia riippuvuuksia eikä binäärejä repoon, ja ääni toimii
+ilman verkkoa. Jokaisen vieressä on kuuntelupainike.
+
+**Oman äänitiedoston voi myös valita.** Pudota mp3-, wav-, ogg-, m4a- tai
+aac-tiedosto palvelimen `data/sounds/`-kansioon (luodaan automaattisesti jos
+sitä ei ole) — tiedostonimessä saa olla ääkköset ja välilyönnit. Palvelin
+listaa kansion sisällön hälytyspaneelin pudotusvalikkoon "Omat
+äänitiedostot" -ryhmään, kun paneeli avataan. **Latausta käyttöliittymästä ei
+ole** — tiedosto pitää siirtää kansioon esim. verkkolevyjaon tai USB-muistin
+kautta, koska kioskiselaimesta ei voi kätevästi valita tiedostoa eikä
+latauskäsittely kannata sen kustannuksella.
+
+Jos hälytys viittaa äänitiedostoon jota ei enää löydy (poistettu, nimetty
+uudelleen), **hälytys ei jää hiljaiseksi** — se soittaa sisäänrakennetun
+oletusäänen sen sijaan, ja tilanne näkyy selvänä varoituksena sekä
+hälytyksen soidessa että hälytysten hallintapaneelissa.
 
 Selain vaimentaa äänen kunnes sivulla on tehty jokin ele, eikä kukaan koske
 näyttöön aamuyöllä. Siksi molemmat asennusskriptit käynnistävät selaimen
