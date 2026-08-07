@@ -317,20 +317,20 @@ function onSwipeCancel(event: PointerEvent): void {
   border-bottom: none;
 }
 
+/* Kellonajat hieman aineen nimeä pienempinä: aine on rivin varsinainen
+   sisältö, aika sen tarkenne. Alku- ja loppuaika ovat keskenään samanlaiset —
+   ne luetaan yhtenä lukuna, eikä kumpaakaan pidä painottaa toisen yli. */
 .lesson__time {
-  font-size: 1.05rem;
+  font-size: 0.92rem;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
 }
 
-/* Loppuaika pienempänä ja himmeämpänä: alkuaika on se, jota rivistä
-   silmäillään, joten sen pitää yhä hallita — mutta loppuaika on nyt vieressä
-   eikä rivin toisessa päässä. */
 .lesson__end {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--text-faint);
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
 }
 
 .lesson__main {
