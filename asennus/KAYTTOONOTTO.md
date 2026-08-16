@@ -18,6 +18,13 @@ notepad .env      # täytä Wilma-tunnukset ja kalenterin ICS-osoite
 npm run build
 ```
 
+Jos `npm` ei käynnisty vaan PowerShell valittaa skriptien suorittamisesta, salli
+se ensin:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy Unrestricted
+```
+
 ### Mitä `.env`-tiedostoon
 
 | Muuttuja | Mistä saa |
@@ -75,6 +82,14 @@ Purku: `.\asenna-kioski.ps1 -Poista`
 1. **Automaattikirjautuminen**: `netplwiz` → poista rasti *"Käyttäjän on annettava
    käyttäjänimi ja salasana"*. Ilman tätä ajastetut tehtävät eivät käynnisty
    sähkökatkon jälkeen ennen kuin joku kirjautuu.
+
+   Jos rastia ei näy `netplwiz`-ikkunassa lainkaan, Windows piilottaa sen
+   salasanattoman kirjautumisen takia. Näytä se rekisteristä: `Win + R` →
+   `regedit` → avaa
+   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device`
+   → muuta arvon `DevicePasswordLessBuildVersion` tiedoksi `2` sijaan `0` →
+   käynnistä kone uudelleen. Rasti ilmestyy sen jälkeen.
+
 2. **Windows Update → aktiiviset tunnit** mahdollisimman laajaksi, ettei kone
    käynnisty uudelleen kesken päivän.
 3. **Kokeile**: käynnistä kone uudelleen ja katso että näyttö palaa itsestään.

@@ -10,6 +10,7 @@ import NotesCard from "./components/NotesCard.vue";
 import ScheduleCard from "./components/ScheduleCard.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import WeatherCard, { type WeatherData } from "./components/WeatherCard.vue";
+import { useBattery } from "./composables/useBattery.ts";
 import { useClock } from "./composables/useClock";
 import { useDashboard } from "./composables/useDashboard";
 import { useEditAccess } from "./composables/useEditAccess.ts";
@@ -18,6 +19,29 @@ import { useScheduleDay } from "./composables/useScheduleDay";
 import type { ElectricityData, PanelLayout, ProviderSnapshot, Settings, WilmaData } from "./types";
 
 const { now } = useClock();
+// Puretaan refit tässä, jotta template viittaa niihin suoraan ilman `.value`:a
+// — sisäkkäisenä oliossa Vue ei pura niitä automaattisesti.
+const {
+  supported: batterySupported,
+  percent: batteryPercent,
+  charging: batteryCharging,
+} = useBattery();
+
+const batteryVisible = computed(() => batterySupported.value && batteryPercent.value !== null);
+
+/**
+ * Kuvakkeen täyttöaste piirretään suoraan prosentista. Alaraja pitää täytön
+ * näkyvänä myös tyhjällä akulla, jottei kuvake näytä rikkinäiseltä.
+ */
+const batteryFillWidth = computed(() => Math.max(0.8, ((batteryPercent.value ?? 0) / 100) * 19.6));
+
+/**
+ * Seinänäyttö on tarkoitus pitää laturissa, joten laskeva varaus on merkki
+ * siitä että laturi on irronnut — siksi väri vaihtuu jo hyvissä ajoin.
+ * Latauksessa oleva akku ei ole matala vaikka lukema olisi pieni.
+ */
+const batteryLow = computed(() => !batteryCharging.value && (batteryPercent.value ?? 100) <= 20);
+const batteryCritical = computed(() => !batteryCharging.value && (batteryPercent.value ?? 100) <= 10);
 const { dashboard, connected, refresh } = useDashboard();
 const editAccess = useEditAccess();
 
@@ -211,6 +235,46 @@ const isNight = computed(() => {
       <div class="topbar__meta">
         <span v-if="dashboard?.place" class="topbar__place">{{ dashboard.place }}</span>
         <span v-if="!connected" class="badge badge--error">palvelin ei vastaa</span>
+
+        <!-- Näkyy vain kun laitteessa on akku ja selain kertoo siitä. -->
+        <span
+          v-if="batteryVisible"
+          class="battery"
+          :class="{ 'battery--low': batteryLow, 'battery--critical': batteryCritical }"
+        >
+          <svg viewBox="0 0 28 14" width="26" height="13" aria-hidden="true">
+            <rect
+              x="0.6"
+              y="0.6"
+              width="23"
+              height="12.8"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+            />
+            <path d="M25 4.6v4.8a2.6 2.6 0 0 0 0-4.8z" fill="currentColor" />
+            <rect
+              x="2.2"
+              y="2.2"
+              :width="batteryFillWidth"
+              height="9.6"
+              rx="1.6"
+              fill="currentColor"
+            />
+          </svg>
+          <svg
+            v-if="batteryCharging"
+            class="battery__bolt"
+            viewBox="0 0 24 24"
+            width="12"
+            height="12"
+            aria-hidden="true"
+          >
+            <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z" fill="currentColor" />
+          </svg>
+          <span class="battery__pct tnum">{{ batteryPercent }} %</span>
+        </span>
         <button
           v-if="canEdit"
           class="topbar__settings"
@@ -426,6 +490,33 @@ const isNight = computed(() => {
   font-size: 1rem;
   color: var(--text-dim);
   text-transform: capitalize;
+}
+
+.battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  color: var(--text-dim);
+}
+
+/* Latausmerkki kuvakkeen päälle, jottei rivi levene latauksen alkaessa. */
+.battery__bolt {
+  margin-left: -1.35rem;
+  margin-right: 0.35rem;
+  color: var(--accent-school);
+}
+
+.battery__pct {
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+}
+
+.battery--low {
+  color: var(--mid);
+}
+
+.battery--critical {
+  color: var(--expensive);
 }
 
 .topbar__meta {
