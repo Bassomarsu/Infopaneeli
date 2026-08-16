@@ -188,16 +188,54 @@ export const defaultPanelLayout: PanelLayout = {
 };
 
 /**
- * Koulukello: laukeaa X minuuttia ennen päivän ensimmäisen oppitunnin alkua.
- * Pidettävä samana kuin server/src/core/settings.ts:n Alarm.
+ * Ankkuri jota vasten "minuuttia ennen" lasketaan relative-tilan
+ * hälytyksessä. Pidettävä samana kuin server/src/core/settings.ts:n
+ * AlarmAnchor.
+ */
+export type AlarmAnchor = "schoolStart" | "breakfast";
+
+/**
+ * Yhden viikonpäivän sääntö relative-tilan hälytykselle — viikonpäivä
+ * (Date.getDayn numerointi, 0 = sunnuntai … 6 = lauantai) kantaa mukanaan
+ * sinä päivänä käytettävän ankkurin. Pidettävä samana kuin
+ * server/src/core/settings.ts:n AlarmWeekdayRule.
+ */
+export interface AlarmWeekdayRule {
+  weekday: number;
+  anchor: AlarmAnchor;
+}
+
+/**
+ * Kahden toisensa poissulkevan hälytystyypin unioni: `fixed` ei seuraa
+ * mitään (ei minuutteja, ei oppilasta, ei ankkuria), `relative` ei tunne
+ * kellonaikaa. Pidettävä samana kuin server/src/core/settings.ts:n
+ * AlarmTrigger.
+ */
+export type AlarmTrigger =
+  | {
+      mode: "relative";
+      /** Minuuttia ennen kunkin päivän ankkuria. */
+      minutesBefore: number;
+      /** Null = mikä tahansa oppilas — aikaisin tunneista kaikkien lasten kesken. */
+      studentNumber: string | null;
+      /** Viikonpäivät joina hälytys on aktiivinen; kukin omalla ankkurillaan. Tyhjä lista = ei koskaan. */
+      weekdays: AlarmWeekdayRule[];
+    }
+  | {
+      mode: "fixed";
+      /** "HH:MM" paikallista aikaa. */
+      time: string;
+      /** Viikonpäivät joina hälytys on aktiivinen. Tyhjä lista = ei koskaan. */
+      weekdays: number[];
+    };
+
+/**
+ * Koulukello. Pidettävä samana kuin server/src/core/settings.ts:n Alarm.
  */
 export interface Alarm {
   id: string;
   label: string;
-  /** Minuuttia ennen päivän ensimmäisen oppitunnin alkua. */
-  minutesBefore: number;
-  /** Null = mikä tahansa oppilas — aikaisin tunneista kaikkien lasten kesken. */
-  studentNumber: string | null;
+  trigger: AlarmTrigger;
   enabled: boolean;
   /**
    * Äänen tunniste, ei tiedostopolku — ks. alarmSounds.ts. Kenttä ei ole
@@ -218,6 +256,11 @@ export interface Settings {
   hideMessagePreviews: boolean;
   nightModeStart: string;
   nightModeEnd: string;
+  /**
+   * Aamupalan alkuaika, "HH:MM" paikallista aikaa. Yksi globaali asetus —
+   * ei hälytys- eikä lapsikohtainen.
+   */
+  breakfastTime: string;
   /** Null = ei koskaan muokattu, käytetään oletusasettelua. */
   panelLayout: PanelLayout | null;
   alarms: Alarm[];

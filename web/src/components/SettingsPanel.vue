@@ -182,6 +182,18 @@ async function save(): Promise<void> {
         </fieldset>
 
         <fieldset class="group">
+          <legend>Aamupala</legend>
+          <p class="group__hint">
+            Käytetään hälytysten "aamupala"-ankkurina (ks. Hälytykset) niinä päivinä kun lapsi menee kouluun
+            aamupalalle ennen varsinaisen oppitunnin alkua.
+          </p>
+          <label class="field">
+            <span>Alkuaika</span>
+            <input v-model="draft.breakfastTime" type="time" />
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
           <legend>Yötila</legend>
           <p class="group__hint">Näyttö himmenee tällä välillä.</p>
           <div class="field-row">

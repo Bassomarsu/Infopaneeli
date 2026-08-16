@@ -11,7 +11,7 @@ import {
 } from "./alarmSounds.ts";
 import { describeOccurrence, nextAlarmOccurrence, useAlarms } from "../composables/useAlarms.ts";
 import { useEditAccess } from "../composables/useEditAccess.ts";
-import type { Alarm, Settings, WilmaData, WilmaStudent } from "../types.ts";
+import type { Alarm, AlarmAnchor, AlarmWeekdayRule, Settings, WilmaData, WilmaStudent } from "../types.ts";
 
 const props = defineProps<{
   /**
@@ -49,7 +49,18 @@ const REPEAT_MIN = 1;
 const REPEAT_MAX = 8;
 const LABEL_MAX_LENGTH = 60;
 
+// Viikonpäivät Date.getDayn numeroinnilla (0 = sunnuntai), mutta
+// esitysjärjestys alkaa maanantaista — sama järjestys jossa suomalainen
+// katsoo viikkoa, vaikka data on indeksoitu sunnuntaista.
+const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const WEEKDAY_ABBR: Record<number, string> = { 0: "Su", 1: "Ma", 2: "Ti", 3: "Ke", 4: "To", 5: "Pe", 6: "La" };
+const WEEKDAYS_MON_FRI = [1, 2, 3, 4, 5];
+
 const alarms = computed(() => props.settings?.alarms ?? []);
+// Yksi globaali asetus (ks. server/src/core/settings.ts:n kommentti) —
+// oletusarvo tässä kattaa vain sen hetken ennen kuin ensimmäinen asetusvastaus
+// on ehtinyt saapua, sama tila jossa breakfastTime puuttuu vielä settingsistä.
+const breakfastTime = computed(() => props.settings?.breakfastTime ?? "08:00");
 
 // useAlarms tarvitsee Refit, mutta computed() kelpaa (ks. samaa mallia
 // App.vuessa: useScheduleDay saa suoraan computed-arvoja Ref-parametreina).
@@ -63,10 +74,27 @@ const { active, soundError, acknowledge, retrySound } = useAlarms({
   now: nowRef,
   alarms: alarmsRef,
   students: studentsRef,
+  breakfastTime,
 });
 
 function clockLabel(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Kummankin trigger-tilan viikonpäivät pelkkinä numeroina, esityskäyttöön. */
+function weekdaysOf(alarm: Alarm): number[] {
+  return alarm.trigger.mode === "fixed" ? alarm.trigger.weekdays : alarm.trigger.weekdays.map((r) => r.weekday);
+}
+
+/** "ma–pe", "joka päivä", "ei päiviä valittu" tai pilkuin eroteltu lyhennelista, aina Ma..Su-järjestyksessä. */
+function formatWeekdays(weekdays: number[]): string {
+  if (weekdays.length === 0) return "ei päiviä valittu";
+  if (weekdays.length === 7) return "joka päivä";
+  const set = new Set(weekdays);
+  if (WEEKDAYS_MON_FRI.length === set.size && WEEKDAYS_MON_FRI.every((d) => set.has(d))) return "ma–pe";
+  return WEEKDAY_ORDER.filter((d) => set.has(d))
+    .map((d) => WEEKDAY_ABBR[d])
+    .join(", ");
 }
 
 /**
@@ -74,27 +102,46 @@ function clockLabel(date: Date): string {
  * Wilmasta (poistunut, tunnus vaihtunut). Silloin alarmTargetForDate
  * palauttaa aina null ja paneeli näyttäisi tekstin "Ei tunteja lähipäivinä"
  * — täsmälleen samalta kuin aito loma. Tämä erotetaan omaksi tarkistukseksi
- * ettei rikkinäinen viittaus jää huomaamatta lomana.
+ * ettei rikkinäinen viittaus jää huomaamatta lomana. Fixed-tila ei koskaan
+ * osoita oppilaaseen (ks. AlarmTrigger-tyyppi), joten se ei voi olla tässä.
  */
 function isOrphanedStudent(alarm: Alarm): boolean {
   // Ilman lukujärjestystietoa (ks. canPreviewSchedule) ei voida päätellä
   // löytyykö oppilas Wilmasta vai ei — tyhjä props.students tällä laitteella
   // tarkoittaa "piilotettu", ei "oppilasta ei ole".
   if (!props.canPreviewSchedule) return false;
-  return alarm.studentNumber !== null && !props.students.some((s) => s.studentNumber === alarm.studentNumber);
+  if (alarm.trigger.mode !== "relative" || alarm.trigger.studentNumber === null) return false;
+  return !props.students.some((s) => s.studentNumber === (alarm.trigger as { studentNumber: string }).studentNumber);
 }
 
 function occurrenceText(alarm: Alarm): string {
+  if (weekdaysOf(alarm).length === 0) return "Ei valittuja viikonpäiviä — hälytys ei koskaan laukea";
   if (isOrphanedStudent(alarm)) return "Oppilasta ei löydy Wilmasta — tarkista hälytyksen kohde";
   if (!props.canPreviewSchedule) return "Esikatselu näkyy vain näyttölaitteella";
   if (!props.wilmaData) return "Lukujärjestystä ei tunneta";
-  const occurrence = nextAlarmOccurrence(alarm, props.wilmaData, props.students, props.now);
+  const occurrence = nextAlarmOccurrence(alarm, props.wilmaData, props.students, props.now, breakfastTime.value);
   if (!occurrence) return "Ei tunteja lähipäivinä";
   return `soi ${describeOccurrence(occurrence, props.now)}`;
 }
 
-function minutesBeforeText(alarm: Alarm): string {
-  return `${alarm.minutesBefore} min ennen`;
+/** Ankkurin yhteinen kuvaus valituille päiville, tai null jos päiviä ei ole tai ankkuri vaihtelee. */
+function uniformAnchorOf(weekdays: AlarmWeekdayRule[]): AlarmAnchor | null {
+  if (weekdays.length === 0) return null;
+  const first = weekdays[0]!.anchor;
+  return weekdays.every((r) => r.anchor === first) ? first : null;
+}
+
+function anchorLabel(anchor: AlarmAnchor): string {
+  return anchor === "breakfast" ? "aamupalaa" : "koulun alkua";
+}
+
+/** Rivin/esikatselun yhteenveto: "30 min ennen koulun alkua · ma–pe" tai "klo 07:30 · ma–pe". */
+function triggerSummaryText(alarm: Alarm): string {
+  const days = formatWeekdays(weekdaysOf(alarm));
+  if (alarm.trigger.mode === "fixed") return `klo ${alarm.trigger.time} · ${days}`;
+  const uniform = uniformAnchorOf(alarm.trigger.weekdays);
+  const anchorText = uniform !== null ? anchorLabel(uniform) : "eri ankkuria eri päivinä";
+  return `${alarm.trigger.minutesBefore} min ennen ${anchorText} · ${days}`;
 }
 
 // Mikä tahansa kosketus näytöllä avaa selaimen äänilukon mahdollisimman
@@ -155,12 +202,17 @@ function generateAlarmId(): string {
   return `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Uuden hälytyksen oletus: yleisin tapaus eli ma–pe, koulun alusta. */
 function blankAlarm(): Alarm {
   return {
     id: generateAlarmId(),
     label: "",
-    minutesBefore: 30,
-    studentNumber: null,
+    trigger: {
+      mode: "relative",
+      minutesBefore: 30,
+      studentNumber: null,
+      weekdays: WEEKDAYS_MON_FRI.map((weekday) => ({ weekday, anchor: "schoolStart" })),
+    },
     enabled: true,
     soundId: DEFAULT_SOUND_ID,
     volume: 0.8,
@@ -178,14 +230,34 @@ function startNew(): void {
   isNewAlarm.value = true;
   formError.value = null;
   previewError.value = null;
+  showAdvancedAnchor.value = false;
+}
+
+/**
+ * Syvempi kuin `{ ...alarm }`: trigger (ja relative-tilan weekdays-lista) on
+ * sisäkkäinen olio/taulukko, joten pelkkä pintakopio jakaisi saman viitteen
+ * tallennetun hälytyksen kanssa. Ilman tätä viikonpäivän napauttaminen
+ * lomakkeessa muuttaisi listassa näkyvää hälytystä JO ENNEN tallennusta —
+ * ja "Peruuta" ei palauttaisi mitään, koska muutos olisi jo tehty samaan
+ * olioon.
+ */
+function cloneAlarm(alarm: Alarm): Alarm {
+  return {
+    ...alarm,
+    trigger:
+      alarm.trigger.mode === "fixed"
+        ? { ...alarm.trigger, weekdays: [...alarm.trigger.weekdays] }
+        : { ...alarm.trigger, weekdays: alarm.trigger.weekdays.map((rule) => ({ ...rule })) },
+  };
 }
 
 function startEdit(alarm: Alarm): void {
   stopPreviewIfPlaying(); // sama peruste kuin startNew: rivin vaihto ei saa jättää vanhaa esikuuntelua soimaan
-  editingDraft.value = { ...alarm };
+  editingDraft.value = cloneAlarm(alarm);
   isNewAlarm.value = false;
   formError.value = null;
   previewError.value = null;
+  showAdvancedAnchor.value = false;
 }
 
 function cancelEdit(): void {
@@ -196,14 +268,21 @@ function cancelEdit(): void {
 }
 
 const draftStudentValue = computed<string>({
-  get: () => editingDraft.value?.studentNumber ?? "",
+  get: () => (editingDraft.value?.trigger.mode === "relative" ? (editingDraft.value.trigger.studentNumber ?? "") : ""),
   set: (value: string) => {
-    if (editingDraft.value) editingDraft.value.studentNumber = value === "" ? null : value;
+    if (editingDraft.value?.trigger.mode === "relative") {
+      editingDraft.value.trigger.studentNumber = value === "" ? null : value;
+    }
   },
 });
 
 const formPreviewText = computed(() => (editingDraft.value ? occurrenceText(editingDraft.value) : ""));
 const editingIsOrphaned = computed(() => (editingDraft.value ? isOrphanedStudent(editingDraft.value) : false));
+const editingHasNoWeekdays = computed(() => (editingDraft.value ? weekdaysOf(editingDraft.value).length === 0 : false));
+/** Vain näyttötekstiä varten (ks. editingIsOrphaned) — vältetään tyyppimuunnos templatessa. */
+const editingOrphanedStudentNumber = computed(() =>
+  editingDraft.value?.trigger.mode === "relative" ? editingDraft.value.trigger.studentNumber : null,
+);
 
 // Oppilaskenttä näytetään aina kun nykyinen arvo ei ole null — myös
 // yhden (tunnetun) lapsen perheessä, jos hälytys silti osoittaa johonkin
@@ -215,12 +294,92 @@ const editingIsOrphaned = computed(() => (editingDraft.value ? isOrphanedStudent
 // valinta näyttäisi tyhjän pudotusvalikon "Kuka tahansa" -vaihtoehdon
 // kanssa — käyttäjä voisi vahingossa nollata olemassa olevan kohdistuksen
 // tietämättä mitä on menettämässä. Kenttä piilotetaan kokonaan tällä
-// laitteella, jolloin editingDraft.studentNumber säilyy koskemattomana.
-const showStudentField = computed(
-  () =>
-    props.canPreviewSchedule &&
-    (props.students.length > 1 || (editingDraft.value?.studentNumber ?? null) !== null),
-);
+// laitteella, jolloin editingDraft.trigger.studentNumber säilyy
+// koskemattomana. Fixed-tilassa kenttä piilotetaan aina — se ei seuraa
+// mitään oppilasta (ks. AlarmTrigger-tyyppi).
+const showStudentField = computed(() => {
+  const trigger = editingDraft.value?.trigger;
+  if (!trigger || trigger.mode !== "relative") return false;
+  return props.canPreviewSchedule && (props.students.length > 1 || trigger.studentNumber !== null);
+});
+
+// --- Tyyppi (relative/fixed), viikonpäivät ja ankkuri muokkauslomakkeessa ---
+
+/**
+ * Vaihtaa laukaisutyypin. Uudelle triggerille lasketaan järkevä oletus
+ * edellisestä (viikonpäivät säilyvät, minuutit/kellonaika alkavat uudesta
+ * oletuksesta) sen sijaan että lomake tyhjenisi kokonaan — käyttäjä on jo
+ * ehkä säätänyt viikonpäivät kohdalleen ennen tyypin vaihtoa.
+ */
+function setMode(mode: "relative" | "fixed"): void {
+  const draft = editingDraft.value;
+  if (!draft || draft.trigger.mode === mode) return;
+  const days = weekdaysOf(draft);
+  draft.trigger =
+    mode === "fixed"
+      ? { mode: "fixed", time: "07:30", weekdays: days }
+      : { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: days.map((weekday) => ({ weekday, anchor: "schoolStart" })) };
+}
+
+function isWeekdaySelected(weekday: number): boolean {
+  return editingDraft.value ? weekdaysOf(editingDraft.value).includes(weekday) : false;
+}
+
+/** Ankkuri jota uusi viikonpäivä saa kun se lisätään relative-tilassa: sama kuin muilla valituilla, tai koulun alku. */
+function anchorForNewDay(weekdays: AlarmWeekdayRule[]): AlarmAnchor {
+  return uniformAnchorOf(weekdays) ?? "schoolStart";
+}
+
+function toggleWeekday(weekday: number): void {
+  const trigger = editingDraft.value?.trigger;
+  if (!trigger) return;
+  if (trigger.mode === "fixed") {
+    const idx = trigger.weekdays.indexOf(weekday);
+    if (idx >= 0) trigger.weekdays.splice(idx, 1);
+    else trigger.weekdays.push(weekday);
+    return;
+  }
+  const idx = trigger.weekdays.findIndex((r) => r.weekday === weekday);
+  if (idx >= 0) trigger.weekdays.splice(idx, 1);
+  else trigger.weekdays.push({ weekday, anchor: anchorForNewDay(trigger.weekdays) });
+}
+
+/** "Ma–Pe"-pikavalinta: korvaa koko viikonpäivävalinnan, säilyttäen nykyisen (yhteisen) ankkurin relative-tilassa. */
+function applyWeekdayPreset(days: number[]): void {
+  const trigger = editingDraft.value?.trigger;
+  if (!trigger) return;
+  if (trigger.mode === "fixed") {
+    trigger.weekdays = [...days];
+    return;
+  }
+  const anchor = anchorForNewDay(trigger.weekdays);
+  trigger.weekdays = days.map((weekday) => ({ weekday, anchor }));
+}
+
+/** Ankkuri kaikille tällä hetkellä valituille päiville yhtä aikaa — nopea polku yleisimpään tapaukseen. */
+const editingUniformAnchor = computed<AlarmAnchor | null>(() => {
+  const trigger = editingDraft.value?.trigger;
+  if (!trigger || trigger.mode !== "relative") return null;
+  return uniformAnchorOf(trigger.weekdays);
+});
+
+function setUniformAnchor(anchor: AlarmAnchor): void {
+  const trigger = editingDraft.value?.trigger;
+  if (!trigger || trigger.mode !== "relative") return;
+  trigger.weekdays = trigger.weekdays.map((r) => ({ ...r, anchor }));
+}
+
+// Päiväkohtainen ankkuri on oletuksena piilossa — yleisin tapaus on sama
+// ankkuri kaikille päiville (yllä oleva pikavalinta), eikä paneelin pidä
+// paisua ruudukoksi jota ei useimmiten tarvita.
+const showAdvancedAnchor = ref(false);
+
+function setDayAnchor(weekday: number, anchor: AlarmAnchor): void {
+  const trigger = editingDraft.value?.trigger;
+  if (!trigger || trigger.mode !== "relative") return;
+  const rule = trigger.weekdays.find((r) => r.weekday === weekday);
+  if (rule) rule.anchor = anchor;
+}
 
 // Esikuuntelun soiminen tallennetaan omaan reaktiiviseen tilaan (eikä
 // esim. pääteltynä playAlarmSoundin Promisesta) jotta "Kuuntele"-painike
@@ -271,8 +430,14 @@ async function previewSound(): Promise<void> {
 function validateDraft(draft: Alarm): string | null {
   if (draft.label.trim().length === 0) return "Selite ei voi olla tyhjä";
   if (draft.label.length > LABEL_MAX_LENGTH) return `Selite on liian pitkä (max ${LABEL_MAX_LENGTH} merkkiä)`;
-  if (!Number.isInteger(draft.minutesBefore) || draft.minutesBefore < MINUTES_MIN || draft.minutesBefore > MINUTES_MAX) {
-    return `Minuuttien on oltava kokonaisluku väliltä ${MINUTES_MIN}–${MINUTES_MAX}`;
+  if (draft.trigger.mode === "relative") {
+    const minutesBefore = draft.trigger.minutesBefore;
+    if (!Number.isInteger(minutesBefore) || minutesBefore < MINUTES_MIN || minutesBefore > MINUTES_MAX) {
+      return `Minuuttien on oltava kokonaisluku väliltä ${MINUTES_MIN}–${MINUTES_MAX}`;
+    }
+  } else {
+    // <input type="time"> pitää muodon HH:MM:ssä jo selaimen puolesta; tyhjä arvo on ainoa oikeasti mahdollinen virhe tästä kentästä.
+    if (draft.trigger.time.trim().length === 0) return "Kellonaika puuttuu";
   }
   if (!Number.isInteger(draft.repeatCount) || draft.repeatCount < REPEAT_MIN || draft.repeatCount > REPEAT_MAX) {
     return `Toistojen on oltava kokonaisluku väliltä ${REPEAT_MIN}–${REPEAT_MAX}`;
@@ -448,9 +613,12 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <span class="alarm__label">{{ alarm.label }}</span>
               <span
                 class="alarm__meta"
-                :class="{ 'alarm__meta--warn': isOrphanedStudent(alarm) || isUnknownSound(alarm.soundId) }"
+                :class="{
+                  'alarm__meta--warn':
+                    isOrphanedStudent(alarm) || isUnknownSound(alarm.soundId) || weekdaysOf(alarm).length === 0,
+                }"
               >
-                {{ minutesBeforeText(alarm) }} · {{ occurrenceText(alarm) }}
+                {{ triggerSummaryText(alarm) }} · {{ occurrenceText(alarm) }}
                 <template v-if="isUnknownSound(alarm.soundId)"> · äänitiedosto puuttuu</template>
               </span>
             </button>
@@ -481,16 +649,113 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <input v-model="editingDraft.label" type="text" maxlength="60" placeholder="esim. Herätys" />
           </label>
 
-          <label class="field">
-            <span>Minuuttia ennen ensimmäistä tuntia</span>
-            <input v-model.number="editingDraft.minutesBefore" type="number" :min="MINUTES_MIN" :max="MINUTES_MAX" step="1" />
+          <div class="field">
+            <span>Tyyppi</span>
+            <div class="segmented">
+              <button
+                type="button"
+                class="segmented__btn"
+                :class="{ 'segmented__btn--active': editingDraft.trigger.mode === 'relative' }"
+                @click="setMode('relative')"
+              >
+                Ennen tapahtumaa
+              </button>
+              <button
+                type="button"
+                class="segmented__btn"
+                :class="{ 'segmented__btn--active': editingDraft.trigger.mode === 'fixed' }"
+                @click="setMode('fixed')"
+              >
+                Kiinteä kellonaika
+              </button>
+            </div>
+          </div>
+
+          <label v-if="editingDraft.trigger.mode === 'relative'" class="field">
+            <span>Minuuttia ennen</span>
+            <input
+              v-model.number="editingDraft.trigger.minutesBefore"
+              type="number"
+              :min="MINUTES_MIN"
+              :max="MINUTES_MAX"
+              step="1"
+            />
+          </label>
+          <label v-else class="field">
+            <span>Kellonaika</span>
+            <input v-model="editingDraft.trigger.time" type="time" />
           </label>
 
+          <div class="field">
+            <span>Viikonpäivät</span>
+            <div class="weekdays">
+              <button
+                v-for="d in WEEKDAY_ORDER"
+                :key="d"
+                type="button"
+                class="weekday-chip"
+                :class="{ 'weekday-chip--active': isWeekdaySelected(d) }"
+                @click="toggleWeekday(d)"
+              >
+                {{ WEEKDAY_ABBR[d] }}
+              </button>
+              <button type="button" class="btn btn--small" @click="applyWeekdayPreset(WEEKDAYS_MON_FRI)">Ma–Pe</button>
+            </div>
+            <p v-if="editingHasNoWeekdays" class="panel__warning">
+              Ei valittuja viikonpäiviä — hälytys ei koskaan laukea.
+            </p>
+          </div>
+
+          <template v-if="editingDraft.trigger.mode === 'relative'">
+            <label class="field">
+              <span>Ankkuri</span>
+              <select
+                :value="editingUniformAnchor ?? ''"
+                @change="setUniformAnchor(($event.target as HTMLSelectElement).value as AlarmAnchor)"
+              >
+                <option v-if="editingUniformAnchor === null" value="" disabled>Vaihtelee päivittäin</option>
+                <option value="schoolStart">Koulun alku</option>
+                <option value="breakfast">Aamupala</option>
+              </select>
+            </label>
+            <button
+              v-if="editingDraft.trigger.weekdays.length > 1"
+              type="button"
+              class="btn btn--small"
+              @click="showAdvancedAnchor = !showAdvancedAnchor"
+            >
+              {{ showAdvancedAnchor ? "Piilota päiväkohtainen ankkuri" : "Aseta ankkuri päivittäin" }}
+            </button>
+            <div v-if="showAdvancedAnchor" class="weekday-anchors">
+              <div v-for="rule in editingDraft.trigger.weekdays" :key="rule.weekday" class="weekday-anchor-row">
+                <span class="weekday-anchor-row__label">{{ WEEKDAY_ABBR[rule.weekday] }}</span>
+                <div class="segmented segmented--small">
+                  <button
+                    type="button"
+                    class="segmented__btn"
+                    :class="{ 'segmented__btn--active': rule.anchor === 'schoolStart' }"
+                    @click="setDayAnchor(rule.weekday, 'schoolStart')"
+                  >
+                    Koulu
+                  </button>
+                  <button
+                    type="button"
+                    class="segmented__btn"
+                    :class="{ 'segmented__btn--active': rule.anchor === 'breakfast' }"
+                    @click="setDayAnchor(rule.weekday, 'breakfast')"
+                  >
+                    Aamupala
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
           <p v-if="editingIsOrphaned" class="panel__warning">
-            Oppilasta ({{ editingDraft.studentNumber }}) ei löydy Wilmasta — hälytys ei voi laueta ennen kuin
+            Oppilasta ({{ editingOrphanedStudentNumber }}) ei löydy Wilmasta — hälytys ei voi laueta ennen kuin
             valitset kelvollisen oppilaan tai "Kuka tahansa".
           </p>
-          <p v-if="!canPreviewSchedule" class="group__hint">
+          <p v-if="!canPreviewSchedule && editingDraft.trigger.mode === 'relative'" class="group__hint">
             Oppilaskohtainen kohdistus ja esikatselu näkyvät vain näyttölaitteella. Nykyinen kohdistus säilyy
             ennallaan.
           </p>
@@ -877,6 +1142,100 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .field-row--sound select {
   flex: 1;
   min-width: 0;
+}
+
+/* Kaksi- tai kolmivaihtoehtoinen segmentoitu valitsin (tyyppi, päiväkohtainen
+   ankkuri) — jokainen vaihtoehto on oma painikkeensa yhtenäisen taustan
+   sisällä, sama kosketuskohteiden 44 px -vaatimus kuin muuallakin paneelissa. */
+.segmented {
+  display: flex;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.2rem;
+}
+
+.segmented__btn {
+  flex: 1;
+  min-height: 44px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.segmented__btn--active {
+  background: var(--accent-school);
+  color: #0b0d12;
+  font-weight: 600;
+}
+
+/* Päiväkohtaisen ankkurin rivit (showAdvancedAnchor) ovat pienempiä koska
+   niitä voi olla seitsemän allekkain — silti 44 px korkeita, ei kapeampia. */
+.segmented--small .segmented__btn {
+  font-size: 0.78rem;
+  padding: 0 0.4rem;
+}
+
+/* Viikonpäivävalinta: seitsemän 44×44 px -kosketuskohdetta rivissä, joka
+   rullaa tarvittaessa sen sijaan että ahtaisi itsensä liian pieneksi
+   kapealla näytöllä — sama periaate kuin taulukoiden overflow-x muualla. */
+.weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.weekday-chip {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.weekday-chip--active {
+  background: var(--accent-school);
+  border-color: transparent;
+  color: #0b0d12;
+  font-weight: 600;
+}
+
+.btn--small {
+  min-height: 44px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+.weekday-anchors {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.weekday-anchor-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.weekday-anchor-row__label {
+  width: 2rem;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.weekday-anchor-row .segmented {
+  flex: 1;
 }
 
 .check {

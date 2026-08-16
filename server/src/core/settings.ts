@@ -51,16 +51,64 @@ export const defaultPanelLayout: PanelLayout = {
 };
 
 /**
- * Koulukello: laukeaa X minuuttia ennen päivän ensimmäisen oppitunnin alkua.
- * Pidettävä samana kuin web/src/types.ts:n Alarm.
+ * Ankkuri jota vasten "minuuttia ennen" lasketaan relative-tilan
+ * hälytyksessä: joko päivän ensimmäisen oppitunnin alku tai globaali
+ * aamupalan alkuaika (ks. Settings.breakfastTime).
+ */
+export type AlarmAnchor = "schoolStart" | "breakfast";
+
+/**
+ * Yhden viikonpäivän sääntö relative-tilan hälytykselle: viikonpäivä
+ * (Date.getDayn numerointi, 0 = sunnuntai … 6 = lauantai — sama kuin
+ * web/src/composables/useAlarms.ts:n WEEKDAYS-taulukko) kantaa mukanaan
+ * sinä päivänä käytettävän ankkurin. Näin sama hälytys voi maanantaina
+ * seurata aamupalaa ja tiistaina koulun alkua ilman erillistä per-päivä
+ * enable-lippua ja ankkuria toisistaan irrallaan.
+ */
+export interface AlarmWeekdayRule {
+  weekday: number;
+  anchor: AlarmAnchor;
+}
+
+/**
+ * Kahden toisensa poissulkevan hälytystyypin unioni. Tämä (eikä yhteinen
+ * "minutesBefore + anchor + fixedTime" -kenttäjoukko) on tahallinen valinta:
+ * kiinteän kellonajan hälytykselle (`fixed`) EI OLE minuutteja, oppilasta
+ * eikä ankkuria — se ei seuraa mitään — ja relative-hälytykselle ei ole
+ * kellonaikaa. Kelvottomia yhdistelmiä (esim. kiinteä aika + "30 min ennen
+ * koulun alkua") ei siis voi edes muodostaa, ei vain validointi torju niitä.
+ */
+export type AlarmTrigger =
+  | {
+      mode: "relative";
+      /** Minuuttia ennen kunkin päivän ankkuria. */
+      minutesBefore: number;
+      /** Null = mikä tahansa oppilas — aikaisin tunneista kaikkien lasten kesken. */
+      studentNumber: string | null;
+      /** Viikonpäivät joina hälytys on aktiivinen; kukin omalla ankkurillaan. Tyhjä lista = ei koskaan. */
+      weekdays: AlarmWeekdayRule[];
+    }
+  | {
+      mode: "fixed";
+      /** "HH:MM" paikallista aikaa. */
+      time: string;
+      /** Viikonpäivät joina hälytys on aktiivinen. Tyhjä lista = ei koskaan. */
+      weekdays: number[];
+    };
+
+/**
+ * Koulukello. Pidettävä samana kuin web/src/types.ts:n Alarm.
+ *
+ * Vanhoja (ennen trigger-kenttää tallennettuja) hälytyksiä ei enää ole
+ * tässä muodossa muistissa — ne muunnetaan tähän heti luvun yhteydessä, ks.
+ * parseTrigger ja getSettings alla. Levylle tallennettuna ne voivat silti
+ * olla vanhaa muotoa kunnes käyttäjä tallentaa jotain, koska getSettings ei
+ * kirjoita normalisoitua muotoa takaisin — vain lukee sen läpinäkyvästi.
  */
 export interface Alarm {
   id: string;
   label: string;
-  /** Minuuttia ennen päivän ensimmäisen oppitunnin alkua. */
-  minutesBefore: number;
-  /** Null = mikä tahansa oppilas — aikaisin tunneista kaikkien lasten kesken. */
-  studentNumber: string | null;
+  trigger: AlarmTrigger;
   enabled: boolean;
   /**
    * Äänen tunniste, ei tiedostopolku. Tämä pitää oven auki myöhemmin
@@ -86,6 +134,12 @@ export interface Settings {
   hideMessagePreviews: boolean;
   nightModeStart: string;
   nightModeEnd: string;
+  /**
+   * Aamupalan alkuaika, "HH:MM" paikallista aikaa. Yksi globaali asetus —
+   * ei hälytys- eikä lapsikohtainen (ks. AlarmTrigger.mode "relative"
+   * -haaran anchor: "breakfast").
+   */
+  breakfastTime: string;
   /** Where each panel sits. Null means "never edited", so the default is used. */
   panelLayout: PanelLayout | null;
   alarms: Alarm[];
@@ -98,6 +152,7 @@ export const defaultSettings: Settings = {
   hideMessagePreviews: false,
   nightModeStart: "21:30",
   nightModeEnd: "06:00",
+  breakfastTime: "08:00",
   panelLayout: null,
   alarms: [],
 };
@@ -106,7 +161,9 @@ const KEY = "settings";
 
 export function getSettings(): Settings {
   const stored = getSetting<Partial<Settings>>(KEY);
-  return { ...defaultSettings, ...(stored ?? {}) };
+  const merged = { ...defaultSettings, ...(stored ?? {}) };
+  merged.alarms = normalizeStoredAlarms(merged.alarms);
+  return merged;
 }
 
 export class SettingsValidationError extends Error {}
@@ -141,7 +198,7 @@ export function updateSettings(patch: unknown): Settings {
     next.scheduleLayout = value;
   }
 
-  for (const key of ["rolloverTime", "nightModeStart", "nightModeEnd"] as const) {
+  for (const key of ["rolloverTime", "nightModeStart", "nightModeEnd", "breakfastTime"] as const) {
     if (!(key in input)) continue;
     const value = input[key];
     if (typeof value !== "string" || parseClockTime(value) === null) {
@@ -233,6 +290,9 @@ const ALARM_REPEAT_MAX = 8;
 const ALARM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const ALARM_SOUND_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 
+/** Kaikki viikonpäivät Date.getDayn numeroinnilla, sunnuntaista alkaen. */
+const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
+
 function numberInRange(value: unknown, label: string, min: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
     throw new SettingsValidationError(`${label}: luku väliltä ${min}–${max}`);
@@ -248,6 +308,130 @@ function integerInRange(value: unknown, label: string, min: number, max: number)
   return num;
 }
 
+function parseWeekdayNumber(value: unknown, label: string): number {
+  return integerInRange(value, label, 0, 6);
+}
+
+/**
+ * Relative-tilan viikonpäivälista: jokainen alkio kantaa oman ankkurinsa
+ * (ks. AlarmWeekdayRule), ja sama viikonpäivä saa esiintyä listassa vain
+ * kerran — muuten kaksi sääntöä kilpailisi samasta päivästä.
+ */
+function parseRelativeWeekdays(value: unknown, index: number): AlarmWeekdayRule[] {
+  if (!Array.isArray(value)) {
+    throw new SettingsValidationError(`alarms[${index}].trigger.weekdays: lista`);
+  }
+  const seen = new Set<number>();
+  return value.map((raw, i) => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new SettingsValidationError(`alarms[${index}].trigger.weekdays[${i}]: objekti`);
+    }
+    const item = raw as Record<string, unknown>;
+    const weekday = parseWeekdayNumber(item["weekday"], `alarms[${index}].trigger.weekdays[${i}].weekday`);
+    if (seen.has(weekday)) {
+      throw new SettingsValidationError(`alarms[${index}].trigger.weekdays: viikonpäivä ${weekday} toistuu`);
+    }
+    seen.add(weekday);
+    const anchor = item["anchor"];
+    if (anchor !== "schoolStart" && anchor !== "breakfast") {
+      throw new SettingsValidationError(
+        `alarms[${index}].trigger.weekdays[${i}].anchor: 'schoolStart' tai 'breakfast'`,
+      );
+    }
+    return { weekday, anchor };
+  });
+}
+
+/** Fixed-tilan viikonpäivälista: pelkkiä viikonpäivänumeroita, ei ankkuria. */
+function parseFixedWeekdays(value: unknown, index: number): number[] {
+  if (!Array.isArray(value)) {
+    throw new SettingsValidationError(`alarms[${index}].trigger.weekdays: lista`);
+  }
+  const seen = new Set<number>();
+  return value.map((raw, i) => {
+    const weekday = parseWeekdayNumber(raw, `alarms[${index}].trigger.weekdays[${i}]`);
+    if (seen.has(weekday)) {
+      throw new SettingsValidationError(`alarms[${index}].trigger.weekdays: viikonpäivä ${weekday} toistuu`);
+    }
+    seen.add(weekday);
+    return weekday;
+  });
+}
+
+/** Tiukka validointi uuden muodon trigger-oliolle (ks. AlarmTrigger). */
+function parseTriggerObject(value: unknown, index: number): AlarmTrigger {
+  if (typeof value !== "object" || value === null) {
+    throw new SettingsValidationError(`alarms[${index}].trigger: objekti`);
+  }
+  const t = value as Record<string, unknown>;
+  const mode = t["mode"];
+
+  if (mode === "relative") {
+    const minutesBefore = integerInRange(
+      t["minutesBefore"],
+      `alarms[${index}].trigger.minutesBefore`,
+      ALARM_MINUTES_MIN,
+      ALARM_MINUTES_MAX,
+    );
+    const studentNumberRaw = t["studentNumber"];
+    if (studentNumberRaw !== null && typeof studentNumberRaw !== "string") {
+      throw new SettingsValidationError(`alarms[${index}].trigger.studentNumber: merkkijono tai null`);
+    }
+    const weekdays = parseRelativeWeekdays(t["weekdays"], index);
+    return { mode: "relative", minutesBefore, studentNumber: studentNumberRaw as string | null, weekdays };
+  }
+
+  if (mode === "fixed") {
+    const time = t["time"];
+    if (typeof time !== "string" || parseClockTime(time) === null) {
+      throw new SettingsValidationError(`alarms[${index}].trigger.time: kellonaika muodossa HH:MM`);
+    }
+    const weekdays = parseFixedWeekdays(t["weekdays"], index);
+    return { mode: "fixed", time, weekdays };
+  }
+
+  throw new SettingsValidationError(`alarms[${index}].trigger.mode: 'relative' tai 'fixed'`);
+}
+
+/**
+ * Palauttaa hälytyksen triggerin — joko uuden muodon `trigger`-kentästä, tai
+ * jos sitä ei ole, tulkitsee ennen tätä muutosta tallennetun vanhan muodon
+ * (pelkkä top-level minutesBefore + studentNumber, ei viikonpäiviä eikä
+ * ankkuria) migraationa.
+ *
+ * Migraation oletus on KAIKKI viikonpäivät, ei esim. ma–pe: vanha hälytys
+ * laukesi aiemmin minä tahansa päivänä jolloin päivän ensimmäinen tunti
+ * löytyi, riippumatta viikonpäivästä (ks. entinen alarmTargetForDate web-
+ * puolella). Jos migraatio rajaisi sen ma–pe:hen, poikkeuksellinen
+ * koulupäivä (esim. lauantaityöpäivä) hiljenisi äänettömästi — sama
+ * hälytyksen pitää siis jatkaa toimimista TÄSMÄLLEEN entiseen tapaan ilman
+ * että käyttäjä koskee siihen, ei "järkevän oloisesti mutta eri tavalla".
+ */
+function parseTrigger(item: Record<string, unknown>, index: number): AlarmTrigger {
+  if (item["trigger"] !== undefined) {
+    return parseTriggerObject(item["trigger"], index);
+  }
+
+  const minutesBefore = integerInRange(
+    item["minutesBefore"],
+    `alarms[${index}].minutesBefore`,
+    ALARM_MINUTES_MIN,
+    ALARM_MINUTES_MAX,
+  );
+  const studentNumberRaw = item["studentNumber"];
+  if (studentNumberRaw !== null && typeof studentNumberRaw !== "string" && studentNumberRaw !== undefined) {
+    throw new SettingsValidationError(`alarms[${index}].studentNumber: merkkijono tai null`);
+  }
+  const studentNumber = typeof studentNumberRaw === "string" ? studentNumberRaw : null;
+
+  return {
+    mode: "relative",
+    minutesBefore,
+    studentNumber,
+    weekdays: ALL_WEEKDAYS.map((weekday) => ({ weekday, anchor: "schoolStart" })),
+  };
+}
+
 /**
  * Hälytykset tulevat kotiverkon puhelimelta siinä missä muutkin asetukset,
  * joten jokainen kenttä rajataan tässä eikä luoteta clientin lähettämään
@@ -255,6 +439,46 @@ function integerInRange(value: unknown, label: string, min: number, max: number)
  * se hyväksytään minä tahansa tunnisteenomaisena merkkijonona sen sijaan että
  * torjuttaisiin kaikki paitsi tämänhetkiset sisäänrakennetut äänet.
  */
+function parseAlarm(raw: unknown, index: number): Alarm {
+  if (typeof raw !== "object" || raw === null) {
+    throw new SettingsValidationError(`alarms[${index}]: objekti`);
+  }
+  const item = raw as Record<string, unknown>;
+
+  const id = item["id"];
+  if (typeof id !== "string" || !ALARM_ID_PATTERN.test(id)) {
+    throw new SettingsValidationError(`alarms[${index}].id: tunniste`);
+  }
+
+  const label = item["label"];
+  if (typeof label !== "string" || label.trim().length === 0 || label.length > ALARM_LABEL_MAX_LENGTH) {
+    throw new SettingsValidationError(`alarms[${index}].label: teksti 1–${ALARM_LABEL_MAX_LENGTH} merkkiä`);
+  }
+
+  const trigger = parseTrigger(item, index);
+
+  const enabled = item["enabled"];
+  if (typeof enabled !== "boolean") {
+    throw new SettingsValidationError(`alarms[${index}].enabled: true tai false`);
+  }
+
+  const soundId = item["soundId"];
+  if (typeof soundId !== "string" || !ALARM_SOUND_ID_PATTERN.test(soundId)) {
+    throw new SettingsValidationError(`alarms[${index}].soundId: tunniste`);
+  }
+
+  const volume = numberInRange(item["volume"], `alarms[${index}].volume`, 0, 1);
+
+  const repeatCount = integerInRange(
+    item["repeatCount"],
+    `alarms[${index}].repeatCount`,
+    ALARM_REPEAT_MIN,
+    ALARM_REPEAT_MAX,
+  );
+
+  return { id, label, trigger, enabled, soundId, volume, repeatCount };
+}
+
 export function parseAlarms(value: unknown): Alarm[] {
   if (!Array.isArray(value)) {
     throw new SettingsValidationError("alarms: lista");
@@ -265,65 +489,34 @@ export function parseAlarms(value: unknown): Alarm[] {
 
   const seenIds = new Set<string>();
   return value.map((raw, index) => {
-    if (typeof raw !== "object" || raw === null) {
-      throw new SettingsValidationError(`alarms[${index}]: objekti`);
-    }
-    const item = raw as Record<string, unknown>;
-
-    const id = item["id"];
-    if (typeof id !== "string" || !ALARM_ID_PATTERN.test(id)) {
-      throw new SettingsValidationError(`alarms[${index}].id: tunniste`);
-    }
-    if (seenIds.has(id)) {
+    const alarm = parseAlarm(raw, index);
+    if (seenIds.has(alarm.id)) {
       throw new SettingsValidationError(`alarms[${index}].id: sama tunniste toistuu useammassa hälytyksessä`);
     }
-    seenIds.add(id);
-
-    const label = item["label"];
-    if (typeof label !== "string" || label.trim().length === 0 || label.length > ALARM_LABEL_MAX_LENGTH) {
-      throw new SettingsValidationError(`alarms[${index}].label: teksti 1–${ALARM_LABEL_MAX_LENGTH} merkkiä`);
-    }
-
-    const minutesBefore = integerInRange(
-      item["minutesBefore"],
-      `alarms[${index}].minutesBefore`,
-      ALARM_MINUTES_MIN,
-      ALARM_MINUTES_MAX,
-    );
-
-    const studentNumber = item["studentNumber"];
-    if (studentNumber !== null && typeof studentNumber !== "string") {
-      throw new SettingsValidationError(`alarms[${index}].studentNumber: merkkijono tai null`);
-    }
-
-    const enabled = item["enabled"];
-    if (typeof enabled !== "boolean") {
-      throw new SettingsValidationError(`alarms[${index}].enabled: true tai false`);
-    }
-
-    const soundId = item["soundId"];
-    if (typeof soundId !== "string" || !ALARM_SOUND_ID_PATTERN.test(soundId)) {
-      throw new SettingsValidationError(`alarms[${index}].soundId: tunniste`);
-    }
-
-    const volume = numberInRange(item["volume"], `alarms[${index}].volume`, 0, 1);
-
-    const repeatCount = integerInRange(
-      item["repeatCount"],
-      `alarms[${index}].repeatCount`,
-      ALARM_REPEAT_MIN,
-      ALARM_REPEAT_MAX,
-    );
-
-    return {
-      id,
-      label,
-      minutesBefore,
-      studentNumber: studentNumber as string | null,
-      enabled,
-      soundId,
-      volume,
-      repeatCount,
-    };
+    seenIds.add(alarm.id);
+    return alarm;
   });
+}
+
+/**
+ * Sama muunnos kuin parseAlarms, mutta lukua varten: ei koskaan heitä.
+ * Tallennettu data on normaalisti aina joko jo tätä muotoa (parseAlarmsin
+ * kautta kirjoitettu) tai ennen tätä muutosta tallennettua vanhaa muotoa
+ * (parseTrigger tulkitsee sen migraationa, ks. yllä) — kummankin pitäisi
+ * onnistua aina. Yksittäisen rivin odottamaton hylkääminen on siis
+ * viimesijainen suoja aidosti korruptoitunutta dataa vastaan, ei odotettu
+ * polku: sellaisen ei pidä kaataa koko infonäyttöä, joten rivi jätetään pois
+ * ja virhe kirjataan konsoliin sen sijaan.
+ */
+function normalizeStoredAlarms(value: unknown): Alarm[] {
+  if (!Array.isArray(value)) return [];
+  const out: Alarm[] = [];
+  value.forEach((raw, index) => {
+    try {
+      out.push(parseAlarm(raw, index));
+    } catch (err) {
+      console.error(`Tallennettu hälytys #${index} ei kelpaa, jätetään pois asetuksista:`, err);
+    }
+  });
+  return out;
 }

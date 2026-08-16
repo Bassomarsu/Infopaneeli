@@ -31,26 +31,24 @@ function earliestLessonStart(lessons: ScheduleLesson[], dateKey: string): string
   return earliest;
 }
 
+function hasAnyLesson(lessons: ScheduleLesson[], dateKey: string): boolean {
+  return lessons.some((l) => l.date === dateKey);
+}
+
 /** Null studentNumber = "mikä tahansa oppilas" — kaikki tunnetut lapset. */
-function relevantStudentIds(alarm: Alarm, allStudents: WilmaStudent[]): string[] {
-  if (alarm.studentNumber !== null) return [alarm.studentNumber];
+function relevantStudentIds(studentNumber: string | null, allStudents: WilmaStudent[]): string[] {
+  if (studentNumber !== null) return [studentNumber];
   return allStudents.map((s) => s.studentNumber);
 }
 
 /**
- * Aikaisin tunti annetulle kalenteripäivälle hälytyksen kannalta relevanteille
- * oppilaille, tai null jos kellekään heistä ei ole tunteja sinä päivänä
- * (viikonloppu, loma) — silloin hälytys ei voi laueta lainkaan.
+ * Aikaisin tunti annetulle kalenteripäivälle relevanteille oppilaille, tai
+ * null jos kellekään heistä ei ole tunteja sinä päivänä (viikonloppu, loma).
  */
-function earliestStartForAlarm(
-  alarm: Alarm,
-  wilma: WilmaData | null,
-  allStudents: WilmaStudent[],
-  dateKey: string,
-): string | null {
+function earliestStart(studentIds: string[], wilma: WilmaData | null, dateKey: string): string | null {
   if (!wilma) return null;
   let earliest: string | null = null;
-  for (const id of relevantStudentIds(alarm, allStudents)) {
+  for (const id of studentIds) {
     const lessons = wilma.byStudent[id]?.lessons ?? [];
     const start = earliestLessonStart(lessons, dateKey);
     if (start !== null && (earliest === null || start < earliest)) earliest = start;
@@ -58,23 +56,62 @@ function earliestStartForAlarm(
   return earliest;
 }
 
+/** True jos jollain relevantilla oppilaalla on ylipäätään tunteja sinä päivänä. */
+function isSchoolDay(studentIds: string[], wilma: WilmaData | null, dateKey: string): boolean {
+  if (!wilma) return false;
+  return studentIds.some((id) => hasAnyLesson(wilma.byStudent[id]?.lessons ?? [], dateKey));
+}
+
+/** Date.getDayn numerointi (0 = sunnuntai … 6 = lauantai) annetulle "YYYY-MM-DD"-avaimelle. */
+function weekdayOf(dateKey: string): number {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).getDay();
+}
+
+function dateAt(dateKey: string, clockTime: string): Date {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const [h, min] = clockTime.split(":").map(Number);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, h ?? 0, min ?? 0, 0, 0);
+}
+
 /**
- * Hälytyksen tavoiteajankohta annetulle kalenteripäivälle: päivän ensimmäisen
- * tunnin alku miinus `minutesBefore`, paikallisessa ajassa. Null jos päivänä
- * ei ole tunteja relevanteille oppilaille.
+ * Hälytyksen tavoiteajankohta annetulle kalenteripäivälle, paikallisessa
+ * ajassa. Null jos hälytys ei ole aktiivinen sinä viikonpäivänä, tai (relative-
+ * tilassa) jos relevanteilla oppilailla ei ole tunteja sinä päivänä — sekä
+ * `schoolStart`- että `breakfast`-ankkuri seuraavat siis samaa "ei tunteja =
+ * ei koulupäivä = ei hälytystä" -sääntöä, koska aamupalakin on koulupäivän
+ * osa. `fixed`-tila on tästä tahallisesti riippumaton: se ei seuraa mitään,
+ * joten pelkkä viikonpäivävalinta ratkaisee.
  */
 export function alarmTargetForDate(
   alarm: Alarm,
   wilma: WilmaData | null,
   allStudents: WilmaStudent[],
   dateKey: string,
+  breakfastTime: string,
 ): Date | null {
-  const start = earliestStartForAlarm(alarm, wilma, allStudents, dateKey);
-  if (start === null) return null;
-  const [y, m, d] = dateKey.split("-").map(Number);
-  const [h, min] = start.split(":").map(Number);
-  const target = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, h ?? 0, min ?? 0, 0, 0);
-  target.setMinutes(target.getMinutes() - alarm.minutesBefore);
+  const weekday = weekdayOf(dateKey);
+  const trigger = alarm.trigger;
+
+  if (trigger.mode === "fixed") {
+    if (!trigger.weekdays.includes(weekday)) return null;
+    return dateAt(dateKey, trigger.time);
+  }
+
+  const rule = trigger.weekdays.find((r) => r.weekday === weekday);
+  if (!rule) return null;
+
+  const studentIds = relevantStudentIds(trigger.studentNumber, allStudents);
+  let anchorTime: string | null;
+  if (rule.anchor === "schoolStart") {
+    anchorTime = earliestStart(studentIds, wilma, dateKey);
+  } else {
+    anchorTime = isSchoolDay(studentIds, wilma, dateKey) ? breakfastTime : null;
+  }
+  if (anchorTime === null) return null;
+
+  const target = dateAt(dateKey, anchorTime);
+  target.setMinutes(target.getMinutes() - trigger.minutesBefore);
   return target;
 }
 
@@ -102,6 +139,7 @@ export function alarmsDueNow(
   wilma: WilmaData | null,
   allStudents: WilmaStudent[],
   now: Date,
+  breakfastTime: string,
   alreadyRung: (dateKey: string, alarmId: string) => boolean,
 ): DueAlarm[] {
   const todayKey = toDateKey(now);
@@ -109,7 +147,7 @@ export function alarmsDueNow(
   for (const alarm of alarms) {
     if (!alarm.enabled) continue;
     if (alreadyRung(todayKey, alarm.id)) continue;
-    const target = alarmTargetForDate(alarm, wilma, allStudents, todayKey);
+    const target = alarmTargetForDate(alarm, wilma, allStudents, todayKey, breakfastTime);
     if (target === null) continue;
     const diff = now.getTime() - target.getTime();
     if (diff >= 0 && diff < FIRE_WINDOW_MS) due.push({ alarm, time: target });
@@ -128,20 +166,21 @@ export interface AlarmOccurrence {
 
 /**
  * Seuraava hetki jolloin hälytys oikeasti soi: tänään jos tavoiteaika ei ole
- * vielä mennyt, muuten seuraava koulupäivä jolla relevanteilla oppilailla on
- * tunteja. Käytetään hälytyspaneelissa esikatseluun ("soi tänään klo 7.55"),
- * ei itse laukaisuun.
+ * vielä mennyt, muuten seuraava päivä jona hälytys on aktiivinen (viikonpäivä
+ * valittu, ja relative-tilassa relevanteilla oppilailla tunteja). Käytetään
+ * hälytyspaneelissa esikatseluun ("soi tänään klo 7.55"), ei itse laukaisuun.
  */
 export function nextAlarmOccurrence(
   alarm: Alarm,
   wilma: WilmaData | null,
   allStudents: WilmaStudent[],
   now: Date,
+  breakfastTime: string,
 ): AlarmOccurrence | null {
   const todayKey = toDateKey(now);
   for (let offset = 0; offset <= MAX_LOOKAHEAD_DAYS; offset += 1) {
     const dateKey = shiftDateKey(todayKey, offset);
-    const target = alarmTargetForDate(alarm, wilma, allStudents, dateKey);
+    const target = alarmTargetForDate(alarm, wilma, allStudents, dateKey, breakfastTime);
     if (target === null) continue;
     if (offset === 0 && target.getTime() <= now.getTime()) continue;
     return { dateKey, time: target, isToday: offset === 0 };
@@ -346,6 +385,8 @@ export interface UseAlarmsOptions {
   now: Ref<Date>;
   alarms: Ref<Alarm[]>;
   students: Ref<WilmaStudent[]>;
+  /** Aamupalan alkuaika ("HH:MM"), ks. Settings.breakfastTime — käytetään breakfast-ankkurin hälytyksissä. */
+  breakfastTime: Ref<string>;
   /** Vain testejä varten — tuotannossa jätetään pois, jolloin käytetään selaimen localStoragea. */
   storage?: StorageLike;
   /** Vain testejä varten — tuotannossa jätetään pois, jolloin käytetään oikeaa ääntä (ks. alarmSounds.ts). */
@@ -367,7 +408,7 @@ export interface UseAlarmsOptions {
  * kommentti AlarmsPanelin mount-kohdassa).
  */
 export function useAlarms(options: UseAlarmsOptions) {
-  const { wilma, now, alarms, students } = options;
+  const { wilma, now, alarms, students, breakfastTime } = options;
   const storage = options.storage ?? defaultStorage();
   const soundPlayer = options.soundPlayer ?? defaultSoundPlayer();
 
@@ -393,8 +434,8 @@ export function useAlarms(options: UseAlarmsOptions) {
   }
 
   watch(
-    [now, wilma, alarms, students],
-    ([currentNow, currentWilma, currentAlarms, currentStudents]) => {
+    [now, wilma, alarms, students, breakfastTime],
+    ([currentNow, currentWilma, currentAlarms, currentStudents, currentBreakfastTime]) => {
       const todayKey = toDateKey(currentNow);
 
       // Uudelleenlatauksen palautus: jos edelliseltä kerralta jäi hälytys
@@ -415,7 +456,7 @@ export function useAlarms(options: UseAlarmsOptions) {
         }
       }
 
-      const due = alarmsDueNow(currentAlarms, currentWilma, currentStudents, currentNow, (dateKey, id) =>
+      const due = alarmsDueNow(currentAlarms, currentWilma, currentStudents, currentNow, currentBreakfastTime, (dateKey, id) =>
         tracker.has(dateKey, id),
       );
       if (due.length === 0) return;

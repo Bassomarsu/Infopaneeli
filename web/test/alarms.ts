@@ -1,9 +1,9 @@
 /**
  * Kouluhälytysten laukaisulogiikka (useAlarms.ts) on tässä eristetty puhtaiksi
  * funktioiksi juuri jotta se voidaan testata ilman selainta, localStoragea tai
- * Web Audiota. Kaksi sääntöä ovat kriittisimmät: hälytys ei saa laueta
- * jälkijunassa (sivun lataus keskellä päivää) eikä koskaan kahdesti samana
- * aamuna.
+ * Web Audiota. Kolme sääntöä ovat kriittisimmät: hälytys ei saa laueta
+ * jälkijunassa (sivun lataus keskellä päivää), ei koskaan kahdesti samana
+ * aamuna, eikä vääränä viikonpäivänä tai väärällä ankkurilla.
  *
  * Aja:  npm run test:alarms --workspace=web
  */
@@ -18,7 +18,7 @@ import {
   type AlarmSoundPlayer,
   type StorageLike,
 } from "../src/composables/useAlarms.ts";
-import type { Alarm, ScheduleLesson, WilmaData, WilmaStudent } from "../src/types.ts";
+import type { Alarm, AlarmWeekdayRule, ScheduleLesson, WilmaData, WilmaStudent } from "../src/types.ts";
 
 /**
  * Muistinvarainen `localStorage`-korvike: Node ei tarjoa globaalia
@@ -93,12 +93,19 @@ function wilmaFor(studentsLessons: Record<string, ScheduleLesson[]>): WilmaData 
   return { students, byStudent, messages: [], unreadCount: 0 };
 }
 
+/** Oletusarvoinen aamupalan alkuaika useimmissa testeissä — vain muutama testi vaihtaa tämän. */
+const BREAKFAST = "08:00";
+
+/** Kaikki viikonpäivät, sama ankkuri jokaiselle — vastaa "ma–pe" oletusta yhdellä lisätyllä viikonlopulla testejä varten. */
+function allWeekdays(anchor: AlarmWeekdayRule["anchor"] = "schoolStart"): AlarmWeekdayRule[] {
+  return [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, anchor }));
+}
+
 function alarm(overrides: Partial<Alarm> = {}): Alarm {
   return {
     id: "a1",
     label: "Herätys",
-    minutesBefore: 30,
-    studentNumber: null,
+    trigger: { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: allWeekdays() },
     enabled: true,
     soundId: "chime",
     volume: 0.8,
@@ -114,16 +121,18 @@ function at(year: number, month: number, day: number, hour: number, minute = 0, 
 
 const neverRung = () => false;
 
+// 2026-08-11 on tiistai (weekday 2), 2026-08-10 maanantai (weekday 1), 2026-08-15 lauantai (weekday 6).
+
 // Laukeaa oikeaan aikaan: 30 min ennen 08:00-tuntia on 07:30.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
-  const a = alarm({ minutesBefore: 30 });
-  const target = alarmTargetForDate(a, wilma, wilma.students, "2026-08-11");
+  const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: allWeekdays() } });
+  const target = alarmTargetForDate(a, wilma, wilma.students, "2026-08-11", BREAKFAST);
   assert.ok(target, "tavoiteaika pitää löytyä kun tunteja on");
   assert.equal(target.getHours(), 7);
   assert.equal(target.getMinutes(), 30);
 
-  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30), neverRung);
+  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30), BREAKFAST, neverRung);
   assert.equal(due.length, 1, "hälytyksen pitää laueta tavoitehetkellä");
   assert.equal(due[0]?.alarm.id, a.id);
   console.log("ok  hälytys laukeaa 30 min ennen ensimmäistä tuntia");
@@ -132,36 +141,36 @@ const neverRung = () => false;
 // Laukeamisikkuna on tarkalleen kapea — enintään yksi minuutti tavoiteajan jälkeen.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
-  const a = alarm({ minutesBefore: 30 });
-  assert.equal(alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30, 0), neverRung).length, 1);
+  const a = alarm();
+  assert.equal(alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30, 0), BREAKFAST, neverRung).length, 1);
   assert.equal(
-    alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30, 59), neverRung).length,
+    alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30, 59), BREAKFAST, neverRung).length,
     1,
     "59 sekuntia myöhässä on vielä ikkunan sisällä",
   );
   assert.equal(
-    alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 31, 1), neverRung).length,
+    alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 31, 1), BREAKFAST, neverRung).length,
     0,
     "yli minuutin myöhässä ei saa enää laueta",
   );
   console.log("ok  laukeamisikkuna on tasan yhden minuutin levyinen");
 }
 
-// Ei laukea tunnittomana päivänä (viikonloppu/loma).
+// Ei laukea tunnittomana päivänä (viikonloppu/loma), vaikka viikonpäivä olisi valittuna.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   const a = alarm();
-  assert.equal(alarmTargetForDate(a, wilma, wilma.students, "2026-08-15"), null);
-  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 15, 7, 30), neverRung);
-  assert.equal(due.length, 0, "tunniton päivä ei saa laueta");
+  assert.equal(alarmTargetForDate(a, wilma, wilma.students, "2026-08-15", BREAKFAST), null);
+  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 15, 7, 30), BREAKFAST, neverRung);
+  assert.equal(due.length, 0, "tunniton päivä ei saa laukaista");
   console.log("ok  tunniton päivä ei laukaise hälytystä");
 }
 
 // Ei laukea jälkijunassa — esim. sivun lataus keskellä päivää.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
-  const a = alarm({ minutesBefore: 30 });
-  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 13, 0), neverRung);
+  const a = alarm();
+  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 13, 0), BREAKFAST, neverRung);
   assert.equal(due.length, 0, "kauan sitten mennyt tavoiteaika ei saa laueta jälkikäteen");
   console.log("ok  hälytys ei laukea jälkijunassa kun aika on jo kauan sitten mennyt");
 }
@@ -169,8 +178,8 @@ const neverRung = () => false;
 // Ei laukea kahdesti — alreadyRung palauttaa true.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
-  const a = alarm({ minutesBefore: 30 });
-  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30), () => true);
+  const a = alarm();
+  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30), BREAKFAST, () => true);
   assert.equal(due.length, 0, "jo soinut hälytys ei saa laueta uudestaan");
   console.log("ok  jo soinut hälytys ei laukea toistamiseen");
 }
@@ -178,8 +187,8 @@ const neverRung = () => false;
 // Pois kytketty hälytys ei laukea, vaikka aika muuten täsmäisi.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
-  const a = alarm({ minutesBefore: 30, enabled: false });
-  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30), neverRung);
+  const a = alarm({ enabled: false });
+  const due = alarmsDueNow([a], wilma, wilma.students, at(2026, 8, 11, 7, 30), BREAKFAST, neverRung);
   assert.equal(due.length, 0, "pois päältä oleva hälytys ei saa laueta");
   console.log("ok  pois kytketty hälytys ei laukea");
 }
@@ -187,9 +196,9 @@ const neverRung = () => false;
 // Useampi hälytys samalle aamulle: kaksi eri hälytystä samalla tavoiteajalla laukeavat molemmat.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
-  const a1 = alarm({ id: "a1", label: "Herätys", minutesBefore: 30 });
-  const a2 = alarm({ id: "a2", label: "Lähtö", minutesBefore: 30 });
-  const due = alarmsDueNow([a1, a2], wilma, wilma.students, at(2026, 8, 11, 7, 30), neverRung);
+  const a1 = alarm({ id: "a1", label: "Herätys" });
+  const a2 = alarm({ id: "a2", label: "Lähtö" });
+  const due = alarmsDueNow([a1, a2], wilma, wilma.students, at(2026, 8, 11, 7, 30), BREAKFAST, neverRung);
   assert.equal(due.length, 2, "molempien samaan aikaan osuvien hälytysten pitää laueta yhdessä");
   console.log("ok  useampi hälytys samalle aamulle laukeaa yhdessä");
 }
@@ -201,35 +210,134 @@ const neverRung = () => false;
     "1": [lesson("2026-08-11", "09:00")],
     "2": [lesson("2026-08-11", "08:00")],
   });
-  const anyChild = alarmTargetForDate(alarm({ studentNumber: null, minutesBefore: 30 }), wilma, wilma.students, "2026-08-11");
+  const anyChild = alarmTargetForDate(
+    alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: allWeekdays() } }),
+    wilma,
+    wilma.students,
+    "2026-08-11",
+    BREAKFAST,
+  );
   assert.ok(anyChild);
   assert.equal(anyChild.getHours(), 7);
   assert.equal(anyChild.getMinutes(), 30, "mikä tahansa oppilas -hälytyksen pitää käyttää aikaisinta tuntia");
 
   const specific = alarmTargetForDate(
-    alarm({ studentNumber: "1", minutesBefore: 30 }),
+    alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } }),
     wilma,
     wilma.students,
     "2026-08-11",
+    BREAKFAST,
   );
   assert.ok(specific);
   assert.equal(specific.getHours(), 8, "tiettyyn oppilaaseen sidotun hälytyksen pitää käyttää vain hänen tuntejaan");
   console.log("ok  studentNumber null käyttää aikaisinta tuntia kaikista lapsista");
 }
 
+// Viikonpäiväsuodatus: hälytys joka on valittu vain maanantaiksi ei laukea tiistaina,
+// vaikka tunteja olisi ja aika muuten täsmäisi.
+{
+  const wilma = wilmaFor({
+    "1": [lesson("2026-08-10", "08:00"), lesson("2026-08-11", "08:00")],
+  });
+  const mondayOnly = alarm({
+    trigger: { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: [{ weekday: 1, anchor: "schoolStart" }] },
+  });
+  assert.ok(alarmTargetForDate(mondayOnly, wilma, wilma.students, "2026-08-10", BREAKFAST), "maanantai on valittu");
+  assert.equal(
+    alarmTargetForDate(mondayOnly, wilma, wilma.students, "2026-08-11", BREAKFAST),
+    null,
+    "tiistai ei ole valittu, vaikka tunteja on",
+  );
+  console.log("ok  hälytys ei laukea viikonpäivänä jota ei ole valittu");
+}
+
+// Ankkuri per viikonpäivä: sama hälytys seuraa maanantaina koulun alkua ja tiistaina aamupalaa.
+{
+  const wilma = wilmaFor({
+    "1": [lesson("2026-08-10", "08:30"), lesson("2026-08-11", "09:00")],
+  });
+  const mixedAnchor = alarm({
+    trigger: {
+      mode: "relative",
+      minutesBefore: 15,
+      studentNumber: null,
+      weekdays: [
+        { weekday: 1, anchor: "schoolStart" },
+        { weekday: 2, anchor: "breakfast" },
+      ],
+    },
+  });
+
+  const monday = alarmTargetForDate(mixedAnchor, wilma, wilma.students, "2026-08-10", "07:45");
+  assert.ok(monday);
+  assert.equal(monday.getHours(), 8);
+  assert.equal(monday.getMinutes(), 15, "maanantaina 15 min ennen koulun alkua (08:30) on 08:15");
+
+  const tuesday = alarmTargetForDate(mixedAnchor, wilma, wilma.students, "2026-08-11", "07:45");
+  assert.ok(tuesday);
+  assert.equal(tuesday.getHours(), 7);
+  assert.equal(tuesday.getMinutes(), 30, "tiistaina 15 min ennen aamupalaa (07:45) on 07:30, ei riipu tunnin alkuajasta");
+  console.log("ok  ankkuri vaihtuu päiväkohtaisesti saman hälytyksen sisällä");
+}
+
+// Aamupala-ankkuri ei laukea päivänä jolloin relevanteilla oppilailla ei ole
+// ollenkaan tunteja — sama "ei koulupäivä = ei hälytystä" -sääntö kuin
+// schoolStart-ankkurilla, koska aamupalakin on koulupäivän osa.
+{
+  const wilma = wilmaFor({ "1": [] }); // ei yhtään tuntia = loma
+  const breakfastAlarm = alarm({
+    trigger: { mode: "relative", minutesBefore: 10, studentNumber: "1", weekdays: allWeekdays("breakfast") },
+  });
+  assert.equal(alarmTargetForDate(breakfastAlarm, wilma, wilma.students, "2026-08-11", "08:00"), null);
+  console.log("ok  aamupala-ankkuri ei laukea päivänä jolloin ei ole tunteja");
+}
+
+// Kiinteä kellonaika: soi valittuina viikonpäivinä riippumatta tunneista (tai niiden puutteesta).
+{
+  const wilma = wilmaFor({ "1": [] }); // ei tunteja — fixed-tila ei silti välitä
+  const fixedAlarm = alarm({
+    trigger: { mode: "fixed", time: "07:30", weekdays: [1, 2, 3, 4, 5] },
+  });
+  const monday = alarmTargetForDate(fixedAlarm, wilma, wilma.students, "2026-08-10", BREAKFAST);
+  assert.ok(monday, "fixed-hälytys ei riipu tunneista");
+  assert.equal(monday.getHours(), 7);
+  assert.equal(monday.getMinutes(), 30);
+
+  const saturday = alarmTargetForDate(fixedAlarm, wilma, wilma.students, "2026-08-15", BREAKFAST);
+  assert.equal(saturday, null, "lauantai ei ole valittujen viikonpäivien joukossa");
+  console.log("ok  kiinteä kellonaika soi valittuina viikonpäivinä riippumatta tunneista");
+}
+
+// Kiinteä kellonaika ei laukea jälkijunassa — sama suoja kuin relative-tilalla.
+{
+  const wilma = wilmaFor({ "1": [] });
+  const fixedAlarm = alarm({ trigger: { mode: "fixed", time: "07:30", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+  assert.equal(
+    alarmsDueNow([fixedAlarm], wilma, wilma.students, at(2026, 8, 10, 13, 0), BREAKFAST, neverRung).length,
+    0,
+    "kauan sitten mennyt kiinteä kellonaika ei saa laueta jälkikäteen",
+  );
+  assert.equal(
+    alarmsDueNow([fixedAlarm], wilma, wilma.students, at(2026, 8, 10, 7, 30, 30), BREAKFAST, neverRung).length,
+    1,
+    "laukeamisikkunan sisällä kiinteä kellonaika laukeaa normaalisti",
+  );
+  console.log("ok  kiinteä kellonaika ei laukea jälkijunassa");
+}
+
 // nextAlarmOccurrence: esikatselu paneelia varten — tänään jos aika ei ole vielä mennyt,
 // muuten seuraava koulupäivä jolla on tunteja.
 {
   const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00"), lesson("2026-08-12", "09:00")] });
-  const a = alarm({ studentNumber: "1", minutesBefore: 30 });
+  const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
 
-  const occToday = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0));
+  const occToday = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST);
   assert.ok(occToday);
   assert.equal(occToday.dateKey, "2026-08-11");
   assert.equal(occToday.isToday, true);
   assert.equal(describeOccurrence(occToday, at(2026, 8, 11, 6, 0)), "tänään klo 7.30");
 
-  const occNext = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 8, 0));
+  const occNext = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 8, 0), BREAKFAST);
   assert.ok(occNext);
   assert.equal(occNext.dateKey, "2026-08-12");
   assert.equal(occNext.isToday, false);
@@ -240,8 +348,8 @@ const neverRung = () => false;
 // Ei tunteja lähipäivinä ollenkaan -> esikatselu palauttaa null eikä kaadu.
 {
   const wilma = wilmaFor({ "1": [] });
-  const a = alarm({ studentNumber: "1" });
-  assert.equal(nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0)), null);
+  const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
+  assert.equal(nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST), null);
   console.log("ok  ei tunteja lähipäivinä -> esikatselu on null");
 }
 
@@ -266,8 +374,9 @@ async function testEngineWorksBeforeSettingsHaveLoaded(): Promise<void> {
   const wilma = ref<WilmaData | null>(null);
   const alarmsRef = ref<Alarm[]>([]); // "asetuksia ei ole vielä haettu palvelimelta"
   const students = ref<WilmaStudent[]>([]);
+  const breakfastTime = ref(BREAKFAST);
 
-  const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage() });
+  const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, breakfastTime, storage: memoryStorage() });
   await nextTick();
   assert.equal(active.value === null, true, "ei saa kaatua eikä näyttää mitään ennen kuin hälytyksiä on ladattu");
 
@@ -276,7 +385,7 @@ async function testEngineWorksBeforeSettingsHaveLoaded(): Promise<void> {
   const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   wilma.value = wilmaData;
   students.value = wilmaData.students;
-  alarmsRef.value = [alarm({ id: "a1", minutesBefore: 30 })];
+  alarmsRef.value = [alarm({ id: "a1" })];
   await nextTick();
 
   const entry = active.value;
@@ -291,10 +400,11 @@ async function testAcknowledgedAlarmDoesNotReturnWithinTheSameWindow(): Promise<
   const now = ref(at(2026, 8, 11, 7, 30));
   const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   const wilma = ref<WilmaData | null>(wilmaData);
-  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30 })]);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1" })]);
   const students = ref<WilmaStudent[]>(wilmaData.students);
+  const breakfastTime = ref(BREAKFAST);
 
-  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage() });
+  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, breakfastTime, storage: memoryStorage() });
   await nextTick();
   const entry = active.value;
   assert.ok(entry, "hälytyksen pitää laueta ikkunan alussa");
@@ -316,10 +426,11 @@ async function testUnacknowledgedAlarmStaysVisibleAfterWindowCloses(): Promise<v
   const now = ref(at(2026, 8, 11, 7, 30));
   const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   const wilma = ref<WilmaData | null>(wilmaData);
-  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30 })]);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1" })]);
   const students = ref<WilmaStudent[]>(wilmaData.students);
+  const breakfastTime = ref(BREAKFAST);
 
-  const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage() });
+  const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, breakfastTime, storage: memoryStorage() });
   await nextTick();
   const firstEntry = active.value;
   assert.ok(firstEntry, "hälytyksen pitää laueta");
@@ -344,9 +455,10 @@ async function testReloadRestoresUnacknowledgedAlarmFromSharedStorage(): Promise
   {
     const now = ref(at(2026, 8, 11, 7, 30));
     const wilma = ref<WilmaData | null>(wilmaData);
-    const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, label: "Herätys" })]);
+    const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", label: "Herätys" })]);
     const students = ref<WilmaStudent[]>(wilmaData.students);
-    const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage });
+    const breakfastTime = ref(BREAKFAST);
+    const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, breakfastTime, storage });
     await nextTick();
     assert.ok(active.value, "ensimmäisen \"sivulatauksen\" pitää laueta normaalisti");
   }
@@ -357,9 +469,10 @@ async function testReloadRestoresUnacknowledgedAlarmFromSharedStorage(): Promise
   {
     const now = ref(at(2026, 8, 11, 7, 30, 10));
     const wilma = ref<WilmaData | null>(wilmaData);
-    const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, label: "Herätys" })]);
+    const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", label: "Herätys" })]);
     const students = ref<WilmaStudent[]>(wilmaData.students);
-    const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage });
+    const breakfastTime = ref(BREAKFAST);
+    const { active } = useAlarms({ wilma, now, alarms: alarmsRef, students, breakfastTime, storage });
     await nextTick();
     const restored = active.value;
     assert.ok(restored, "uudelleenlatauksen jälkeen kuittaamattoman hälytyksen pitää palautua näkyviin");
@@ -384,11 +497,20 @@ async function testAcknowledgeStopsSoundEvenWithNothingQueuedNext(): Promise<voi
   const now = ref(at(2026, 8, 11, 7, 30));
   const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   const wilma = ref<WilmaData | null>(wilmaData);
-  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, soundId: "pitka-tiedosto" })]);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", soundId: "pitka-tiedosto" })]);
   const students = ref<WilmaStudent[]>(wilmaData.students);
+  const breakfastTime = ref(BREAKFAST);
   const player = fakeSoundPlayer();
 
-  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage(), soundPlayer: player });
+  const { active, acknowledge } = useAlarms({
+    wilma,
+    now,
+    alarms: alarmsRef,
+    students,
+    breakfastTime,
+    storage: memoryStorage(),
+    soundPlayer: player,
+  });
   await nextTick();
   assert.ok(active.value, "hälytyksen pitää laueta");
   assert.deepEqual(player.calls, ["play:pitka-tiedosto"], "ääni käynnistyy laukeamisen yhteydessä");
@@ -409,14 +531,20 @@ async function testAcknowledgeStopsCurrentAndStartsNextQueuedAlarm(): Promise<vo
   const now = ref(at(2026, 8, 11, 7, 30));
   const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   const wilma = ref<WilmaData | null>(wilmaData);
-  const alarmsRef = ref<Alarm[]>([
-    alarm({ id: "a1", label: "Herätys", minutesBefore: 30, soundId: "s1" }),
-    alarm({ id: "a2", label: "Lähtö", minutesBefore: 30, soundId: "s2" }),
-  ]);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", label: "Herätys", soundId: "s1" }), alarm({ id: "a2", label: "Lähtö", soundId: "s2" })]);
   const students = ref<WilmaStudent[]>(wilmaData.students);
+  const breakfastTime = ref(BREAKFAST);
   const player = fakeSoundPlayer();
 
-  const { active, acknowledge } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage(), soundPlayer: player });
+  const { active, acknowledge } = useAlarms({
+    wilma,
+    now,
+    alarms: alarmsRef,
+    students,
+    breakfastTime,
+    storage: memoryStorage(),
+    soundPlayer: player,
+  });
   await nextTick();
   assert.equal(active.value?.alarm.id, "a1", "molemmat osuvat samaan hetkeen, mutta vain yksi on aktiivinen kerrallaan");
   assert.deepEqual(player.calls, ["play:s1"]);
@@ -438,11 +566,20 @@ async function testRetrySoundUnlocksAndReplaysActiveAlarm(): Promise<void> {
   const now = ref(at(2026, 8, 11, 7, 30));
   const wilmaData = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
   const wilma = ref<WilmaData | null>(wilmaData);
-  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", minutesBefore: 30, soundId: "s1" })]);
+  const alarmsRef = ref<Alarm[]>([alarm({ id: "a1", soundId: "s1" })]);
   const students = ref<WilmaStudent[]>(wilmaData.students);
+  const breakfastTime = ref(BREAKFAST);
   const player = fakeSoundPlayer();
 
-  const { retrySound } = useAlarms({ wilma, now, alarms: alarmsRef, students, storage: memoryStorage(), soundPlayer: player });
+  const { retrySound } = useAlarms({
+    wilma,
+    now,
+    alarms: alarmsRef,
+    students,
+    breakfastTime,
+    storage: memoryStorage(),
+    soundPlayer: player,
+  });
   await nextTick();
   assert.deepEqual(player.calls, ["play:s1"]);
 
