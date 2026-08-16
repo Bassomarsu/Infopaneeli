@@ -12,7 +12,8 @@
     "test:layout": "node test/panel-layout.ts",
     "test:alarms": "node test/alarms.ts",
     "test:edit-access": "node test/edit-access.ts",
-    "test:electricity-hour": "node test/electricity-hour-from-x.ts"
+    "test:electricity-hour": "node test/electricity-hour-from-x.ts",
+    "test:kiosk-exit-hotspot": "node test/kiosk-exit-hotspot.ts"
   },
   "dependencies": {
     "vue": "^3.5.13"

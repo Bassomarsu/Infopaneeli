@@ -1,6 +1,10 @@
 /**
  * Verifies the logging contract that keeps the log small: a source that stays
- * broken must produce exactly one log line, not one per polling cycle.
+ * broken must produce exactly one log line, not one per polling cycle. Also
+ * verifies the circuit breaker's cooldown-and-probe cycle: it must recover on
+ * its own instead of staying open until someone restarts the process, while
+ * still never hammering a login endpoint that might be rejecting a wrong
+ * password.
  *
  * Run with:  npm run test:providers --workspace=server
  */
@@ -126,6 +130,108 @@ async function testBreakerStopsAfterThreeFatalErrors(): Promise<void> {
   console.log("ok  circuit breaker stops after three fatal errors");
 }
 
+/**
+ * Once the cooldown elapses, exactly one probe attempt must be made — no more
+ * until it either succeeds or fails. A probe that fails must push the next
+ * one further out rather than retrying at the same fixed cadence forever,
+ * which is what would turn a permanently wrong password into a steady drip
+ * of login attempts instead of a rapidly widening gap between them.
+ */
+async function testBreakerProbesAfterCooldownAndBacksOffFurther(): Promise<void> {
+  const id = `test-cooldown-${process.pid}`;
+  let attempts = 0;
+  const provider = new Provider({
+    id,
+    intervalMs: 60_000,
+    fatalLimit: 3,
+    probeCooldownMs: 150,
+    maxProbeCooldownMs: 5_000,
+    fetch: async () => {
+      attempts += 1;
+      throw new FatalProviderError("AuthenticationError", "wrong password");
+    },
+  });
+
+  for (let i = 0; i < 3; i += 1) await provider.runOnce();
+  assert.equal(attempts, 3, "breaker should open after 3 fatal errors");
+
+  // Calling again right away must not spend a probe: cooldown has not
+  // elapsed.
+  await provider.runOnce();
+  assert.equal(attempts, 3, "no probe before the cooldown elapses");
+
+  // Cooldown (150 ms) elapses: exactly one probe attempt is made.
+  await sleep(220);
+  await provider.runOnce();
+  assert.equal(attempts, 4, "one probe attempt once the cooldown elapses");
+
+  // The probe failed, so the cooldown must have doubled to ~300 ms. Waiting
+  // only 220 ms more (less than that) must not spend another probe.
+  await sleep(220);
+  await provider.runOnce();
+  assert.equal(attempts, 4, "a failed probe must push the next attempt further out");
+
+  // Waiting past the doubled cooldown allows exactly one more probe.
+  await sleep(200);
+  await provider.runOnce();
+  assert.equal(attempts, 5, "the next probe fires once the extended cooldown elapses");
+
+  provider.stop();
+  console.log("ok  breaker probes after cooldown and backs off further on failure");
+}
+
+/**
+ * A probe that succeeds must close the breaker completely — not just serve
+ * fresh data once and stay half-open. Counters, cooldown state and status all
+ * need to return to a clean slate, exactly like an ordinary recovery.
+ */
+async function testSuccessfulProbeFullyClosesBreaker(): Promise<void> {
+  const id = `test-cooldown-recover-${process.pid}`;
+  let attempts = 0;
+  let shouldFail = true;
+  const provider = new Provider<{ value: number }>({
+    id,
+    intervalMs: 60_000,
+    fatalLimit: 3,
+    probeCooldownMs: 100,
+    fetch: async () => {
+      attempts += 1;
+      if (shouldFail) throw new FatalProviderError("AuthenticationError", "wrong password");
+      return { value: 1 };
+    },
+  });
+
+  for (let i = 0; i < 3; i += 1) await provider.runOnce();
+  assert.equal(attempts, 3, "breaker should open after 3 fatal errors");
+  const openedOnce = await awaitLines(id, "provider_breaker_open", 1);
+  assert.equal(openedOnce.length, 1, "opening the breaker must be logged exactly once");
+
+  shouldFail = false;
+  await sleep(150);
+  await provider.runOnce();
+  assert.equal(attempts, 4, "the cooldown probe must actually run the fetch");
+
+  const snapshot = provider.snapshot();
+  assert.equal(snapshot.status, "ok", "a successful probe must clear the failure status");
+  assert.equal(snapshot.error, null, "a successful probe must clear the stored error");
+
+  const recovered = await awaitLines(id, "provider_recovered", 1);
+  assert.equal(recovered.length, 1, "closing the breaker must be logged exactly once");
+  assert.equal(recovered[0]?.["hadBreakerOpen"], true);
+
+  // The breaker must be fully closed, not just skipped once: a fresh run of
+  // 3 fatal errors must be able to trip it again immediately.
+  shouldFail = true;
+  for (let i = 0; i < 3; i += 1) await provider.runOnce();
+  assert.equal(attempts, 7, "a freshly closed breaker must allow normal attempts again");
+
+  const reopened = await awaitLines(id, "provider_breaker_open", 2);
+  assert.equal(reopened.length, 2, "the breaker must be able to trip again after recovering");
+
+  provider.stop();
+  console.log("ok  a successful probe fully closes the breaker");
+}
+
 async function testRecoveryIsLogged(): Promise<void> {
   const id = `test-recover-${process.pid}`;
   let shouldFail = true;
@@ -211,6 +317,8 @@ async function testWarmStartIsNotARecovery(): Promise<void> {
 
 await testRepeatedFailureLogsOnce();
 await testBreakerStopsAfterThreeFatalErrors();
+await testBreakerProbesAfterCooldownAndBacksOffFurther();
+await testSuccessfulProbeFullyClosesBreaker();
 await testRecoveryIsLogged();
 await testStaleDataSurvivesFailure();
 await testWarmStartIsNotARecovery();

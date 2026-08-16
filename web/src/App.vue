@@ -4,6 +4,8 @@ import AlarmsPanel from "./components/AlarmsPanel.vue";
 import CalendarCard, { type CalendarData } from "./components/CalendarCard.vue";
 import EditAccessDialog from "./components/EditAccessDialog.vue";
 import ElectricityCard from "./components/ElectricityCard.vue";
+import KioskExitDialog from "./components/KioskExitDialog.vue";
+import KioskExitHotspot from "./components/KioskExitHotspot.vue";
 import LayoutEditor from "./components/LayoutEditor.vue";
 import MessagesCard from "./components/MessagesCard.vue";
 import NotesCard from "./components/NotesCard.vue";
@@ -48,6 +50,10 @@ const editAccess = useEditAccess();
 const settingsOpen = ref(false);
 const alarmsOpen = ref(false);
 const editAccessOpen = ref(false);
+// Ei sidottu canEditiin eikä isTrustedClientiin: kioskista poistuminen on
+// oma, FULL_PIN:llä suojattu porttinsa (ks. KioskExitDialog.vue), ei riipu
+// siitä onko tällä laitteella jo muokkausoikeutta.
+const kioskExitOpen = ref(false);
 
 const timeLabel = computed(() =>
   now.value.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" }),
@@ -230,7 +236,18 @@ const isNight = computed(() => {
     <header v-else class="topbar">
       <div class="topbar__time">
         <span class="topbar__clock tnum">{{ timeLabel }}</span>
-        <span class="topbar__date">{{ dateLabel }}</span>
+        <!-- topbar__date-wrap on position:relative vain siksi että
+             KioskExitHotspot (position:absolute) voi ankkuroitua PÄIVÄMÄÄRÄN
+             OMAAN reunaan eikä kiinteään pikselimäärään — dateLabel vaihtaa
+             pituutta päivästä toiseen (esim. "maanantai 16. elokuuta" vs.
+             "sunnuntai 1. tammikuuta"). inline-block ilman omaa täytettä/
+             reunusta ei muuta mitään visuaalisesti eikä rivin korkeutta;
+             hotspot itse on pois dokumentin virtauksesta eikä siis voi
+             työntää kelloa/päivämäärää sivuun. -->
+        <span class="topbar__date-wrap">
+          <span class="topbar__date">{{ dateLabel }}</span>
+          <KioskExitHotspot @trigger="kioskExitOpen = true" />
+        </span>
       </div>
       <div class="topbar__meta">
         <span v-if="dashboard?.place" class="topbar__place">{{ dashboard.place }}</span>
@@ -448,6 +465,9 @@ const isNight = computed(() => {
       @close="editAccessOpen = false"
       @authorized="refresh"
     />
+
+    <!-- KioskExitHotspot on yllä, topbar__date-wrapin sisällä — tässä vain vahvistusdialogi. -->
+    <KioskExitDialog :open="kioskExitOpen" @close="kioskExitOpen = false" />
   </div>
 </template>
 
@@ -492,6 +512,22 @@ const isNight = computed(() => {
   text-transform: capitalize;
 }
 
+/* Ankkuri KioskExitHotspotille (ks. topbar__time-templaatin kommentti) —
+   inline-block + position:relative, ei omaa täytettä/reunusta/marginaalia,
+   joten se ei muuta rivin korkeutta eikä kellon/päivämäärän asemointia. */
+.topbar__date-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+/* KioskExitHotspot on näkymätön ja ulottuu päivämäärästä oikealle. Leveällä
+   ruudulla se jää yläpalkin tyhjään väliin, mutta puhelimessa topbar on
+   ahdas (space-between + 1rem gap), jolloin alue voisi peittää tämän laidan
+   painikkeita — ja koska se on näkymätön, painike vain lakkaisi toimimasta
+   ilman mitään näkyvää syytä. Oma pinoamiskonteksti hotspotin yläpuolelle
+   takaa että painikkeet saavat kosketuksen aina; hotspot menettää vain sen
+   osan alueestaan joka oikeasti jää alle. Ks. .topbar__meta alempana. */
+
 .battery {
   display: inline-flex;
   align-items: center;
@@ -523,6 +559,10 @@ const isNight = computed(() => {
   display: flex;
   align-items: center;
   gap: 0.7rem;
+  /* Pinoamiskonteksti KioskExitHotspotin yläpuolelle — ks. perustelu
+     .topbar__date-wrapin kohdalla. */
+  position: relative;
+  z-index: 60;
 }
 
 .topbar__place {

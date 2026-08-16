@@ -50,7 +50,9 @@ välimuistia. Tämä on se, mikä pitää Wilman kuormituksen kurissa.
 
 Lokitetaan vain **tilan muutokset**, ei jokaista hakukierrosta: `OK → FAILED` ja
 `FAILED → OK`. Rikki oleva lähde tuottaa yhden rivin, ei riviä joka 20 minuutti.
-Yhtäjaksoinen vikatila kuittaantuu korkeintaan kerran vuorokaudessa.
+Yhtäjaksoinen vikatila kuittaantuu korkeintaan kerran vuorokaudessa — sama katto
+koskee myös katkaisijan jäähdytyksen aikana epäonnistuvia koeyrityksiä
+(ks. "Tilin lukituksen esto").
 
 Lokitaso `LOG_LEVEL`-ympäristömuuttujasta. `warn` (oletus) = virheet ja
 palautumiset. `debug` = kaikki haut, konsolituloste ja rikkoutuneesta
@@ -69,9 +71,51 @@ luettavan lokin ja tietokannan, jonka sisältö tarkoittaa mitä se sanoo.
 ### Tilin lukituksen esto
 
 Wilman kirjautumisvirheet ovat *fataaleja*: kolmen peräkkäisen jälkeen
-katkaisija menee kiinni eikä yrityksiä enää tehdä. Väärällä salasanalla
-silmukassa hakkaaminen olisi nopein tapa lukita koko perheen Wilma-tili.
-Tämä on testattu (`npm test`).
+katkaisija menee kiinni eikä uusia yrityksiä tehdä välittömästi. Väärällä
+salasanalla silmukassa hakkaaminen olisi nopein tapa lukita koko perheen
+Wilma-tili. Tämä on testattu (`npm test`).
+
+Katkaisija ei kuitenkaan jää kiinni pysyvästi käyttäjän uudelleen-
+käynnistykseen asti — seinänäyttöä ei valvo kukaan, joten lukossa pysyminen
+tarkoittaisi kuollutta korttia päiväkausiksi. Sen sijaan se **jäähtyy**: 30
+minuutin kuluttua tehdään yksi koeyritys. Jos sekin epäonnistuu, jäähdytys
+kaksinkertaistuu (60 min, 120 min, ...) aina 4 tunnin kattoon asti; onnistunut
+koeyritys nollaa katkaisijan täysin — laskurit, jäähdytyksen ja tilan.
+
+Pahimmassakin tapauksessa — salasana on pysyvästi väärä — tämä tuottaa
+korkeintaan noin **9 kirjautumisyritystä vuorokaudessa** (3 alkuperäistä plus
+~6 koeyritystä 4 tunnin jäähdytyksellä valveilla-olon 18 tunnin aikana),
+aina vähintään 30 minuutin välein. Se on kaukana mistä tahansa järkevästä
+lukituskynnyksestä, mutta riittävän tiheä palautumaan ohimenevästä katkosta
+saman päivän aikana.
+
+Jäähdytys ja Wilman hiljaiset tunnit (23–05, ks. alla) eivät kertaannu:
+koeyritys joka osuisi hiljaisiin tunteihin vain odottaa seuraavaa aktiivista
+kierrosta, kuten mikä tahansa muukin haku — jäähdytyksen laskuri ei ala
+uudelleen sen takia.
+
+### Testaa yhteys — manuaalinen ohitus
+
+Neljän tunnin jäähdytys on pitkä aika katsoa kuollutta korttia silloin kun syy
+on jo korjattu (salasana vaihdettu takaisin, verkko palannut). Asetusten
+**Wilma-yhteys → Testaa yhteys** ohittaa jäähdytyksen ja yrittää heti.
+Onnistuminen nollaa katkaisijan täysin; epäonnistuminen **ei** koske
+automaattiseen aikatauluun mitenkään, jottei napin painelu vahingossa venytä
+jäähdytystä jota käyttäjä ei siinä hetkessä edes seuraa.
+
+Painike vaatii muokkausoikeuden (`EDIT_PIN`) — ei `FULL_PIN`iä, koska se ei
+paljasta Wilma-dataa, vain sen onnistuiko haku. **Rajoitin on palvelimella**,
+ei käyttöliittymässä: selainpuolinen esto katoaisi sivun päivityksellä, jolloin
+rajoitusta ei käytännössä olisi. Rajoitin koskee Wilma-tiliä kokonaisuutena,
+ei yhtä laitetta tai IP-osoitetta kerrallaan.
+
+Rajat ovat **5 min per yritys** ja **12 yritystä vuorokaudessa**. Pelkkä
+viiden minuutin väli sallisi 288 yritystä vuorokaudessa, ja kosketusnäyttö on
+fyysisesti koko perheen ulottuvilla — vuorokausikatto on se, mikä estää
+napista tulemasta hakkausvektoria. 12 riittää silti tunnin yhtäjaksoiseen
+vianetsintään. Pahin yhteenlaskettu tapaus on siis **21 kirjautumisyritystä
+vuorokaudessa** (9 automaattista + 12 manuaalista), tiheimmilläänkin vain
+3 per 15 minuuttia.
 
 Muut virheet — 500, 429, satunnainen 404 — **eivät** pudota istuntoa. Ne
 jäävät providerin backoffin hoidettavaksi samalla istunnolla, jottei
@@ -301,20 +345,40 @@ epäonnistuu.
 
 ### Kouluhälytykset
 
-Yläpalkin kellokuvake avaa hälytysten hallinnan. Hälytys ajoitetaan **suhteessa
-koulun alkuun**, ei kiinteänä kellonaikana: "35 min ennen ensimmäistä tuntia".
-Laukaisuhetki lasketaan päivän ensimmäisestä oppitunnista, joten se seuraa
-lukujärjestystä itsestään eikä vaadi säätöä kun tunnit vaihtuvat.
+Yläpalkin kellokuvake avaa hälytysten hallinnan. Hälytys ajoitetaan joko
+**suhteessa aamun tapahtumaan** ("35 min ennen ensimmäistä tuntia") tai
+**kiinteään kellonaikaan**. Suhteellinen laukaisuhetki lasketaan päivän
+ensimmäisestä oppitunnista, joten se seuraa lukujärjestystä itsestään eikä
+vaadi säätöä kun tunnit vaihtuvat.
+
+Suhteellisen hälytyksen ankkuri on joko **koulun alku** tai **aamupala**, ja
+ankkuri valitaan **viikonpäiväkohtaisesti**: sama hälytys voi maanantaina
+seurata aamupalaa ja tiistaina koulun alkua. Aamupalan alkuaika on yksi
+yhteinen asetus (oletus 08:00, Asetukset → Aamupala) — ei hälytys- eikä
+lapsikohtainen, koska perhe syö yhdessä.
+
+Viikonpäivät valitaan jokaiselle hälytykselle erikseen, ja jos lapsia on
+useampi, hälytyksen voi sitoa yhteen lapseen tai jättää seuraamaan sitä lasta
+jonka koulu alkaa aikaisimmin.
 
 Hälytyksiä voi olla useita samalle aamulle — herätys, pukeutuminen, lähtö.
-Jokaisella on oma selite, minuutit ennen, ääni, äänenvoimakkuus ja toistojen
-määrä. Paneeli näyttää myös **milloin hälytys oikeasti soi** ("soi klo 7.55"),
-koska pelkkä "35 min ennen" on vaikea suhteuttaa.
+Jokaisella on oma selite, ääni, äänenvoimakkuus ja toistojen määrä. Paneeli
+näyttää myös **milloin hälytys oikeasti soi** ("soi klo 7.55"), koska pelkkä
+"35 min ennen" on vaikea suhteuttaa.
 
-Hälytys **ei soi tunnittomina päivinä** — viikonloppuina eikä lomilla. Se ei soi
-myöskään jälkikäteen: sivun lataus keskellä päivää ei laukaise aamun
+Suhteellinen hälytys **ei soi tunnittomina päivinä** — viikonloppuina eikä
+lomilla. Tämä koskee myös aamupala-ankkuria: aamupala on koulupäivän osa, joten
+lomalla sitä ei herätetä syömään. Kiinteä kellonaika on tästä tahallisesti
+riippumaton — se ei seuraa lukujärjestystä lainkaan, joten pelkkä
+viikonpäivävalinta ratkaisee.
+
+Hälytys ei soi jälkikäteen: sivun lataus keskellä päivää ei laukaise aamun
 hälytyksiä, ja sama hälytys soi kerran päivässä myös kioskiselaimen
 uudelleenkäynnistyksen yli.
+
+Jos hälytykseltä puuttuvat viikonpäivät kokonaan, se **ei jää näyttämään
+toimivalta** — sekä listassa että lomakkeessa lukee että hälytys ei koskaan
+laukea. Sama periaate kuin puuttuvalla äänitiedostolla ja poistetulla lapsella.
 
 **Ääni ja näkyvä ilmoitus ovat toisistaan riippumattomia.** Ilmoitus täyttää
 ruudun isolla kuittauspainikkeella ja näkyy kirkkaana myös yötilassa — aamu on

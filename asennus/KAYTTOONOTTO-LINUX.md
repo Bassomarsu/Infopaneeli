@@ -159,6 +159,33 @@ Purku: `sudo ./asenna-kioski.sh --poista` (pysäyttää ja poistaa palvelun ja
 automaattikirjautumisen, palauttaa virranhallinnan; ei kosketa käännettyä
 koodia eikä `.env`-tiedostoon).
 
+### Kioskista poistuminen
+
+Sama ominaisuus kuin Windows-ohjeessa (kioskitilasta poistuminen yläpalkin
+päivämäärän perässä olevasta näkymättömästä painikkeesta) — palvelin
+toteuttaa sen molemmilla alustoilla samalla tavalla, vain se MITÄ suljetaan
+on eri:
+
+- **Kosketuksella**: pidä sormea painettuna yläpalkin **päivämäärätekstin
+  perässä noin 3 sekuntia** (näkymätön alue, ei visuaalista vihjettä — ei
+  ruudun nurkassa, koska nurkkaan osutaan helposti vahingossa pöytää
+  pyyhittäessä tai näyttöä siirrettäessä). Pitkä painallus valittiin yhden
+  napautuksen sijaan siksi ettei ele laukea vahingossa. Kysyy täysien
+  oikeuksien koodin (`FULL_PIN`) — `EDIT_PIN` ei riitä, ja jos `FULL_PIN`
+  ei ole käytössä (tyhjä tai alle 6 merkkiä), painike ei tee mitään.
+  Oikean koodin jälkeen palvelin sulkee Chromium-prosessin
+  (`pkill -f infonaytto-chromium` — täsmää kiinteään profiilikansioon,
+  ks. kohdan 5 autostart-skripti) ja jättää openbox-työpöydän näkyviin.
+
+**Käynnistä kioski takaisin:**
+
+1. `sudo reboot` — varmin tapa: autologin ja openbox-autostart palauttavat
+   kaiken automaattisesti.
+2. Ilman uudelleenkäynnistystä (vaatii näppäimistön tai SSH-yhteyden):
+   `sudo systemctl restart lightdm` — sulkee koko graafisen istunnon
+   hetkeksi ja avaa sen uudelleen, mikä käynnistää Chromiumin taas
+   (sama komento kuin kohdan 7 vianetsinnässä).
+
 ### Miksi lightdm eikä pelkkä systemd-palvelu selaimelle
 
 Kioskiselain tarvitsee graafisen istunnon (X-palvelimen, näyttöoikeudet),
@@ -293,6 +320,10 @@ Samat periaatteet kuin Windows-ohjeessa:
   lasten Wilma-tietoja; `FULL_PIN` (väh. 6 merkkiä) antaa nekin. Vaihtoehtona
   laite voidaan lisätä `TRUSTED_HOSTS`-listalle, jolloin koodia ei tarvita.
   Tarkemmin: README, kohta **Tietoturva**.
+- **Kioskista poistuminen** (ks. kohta 5) vaatii nimenomaan `FULL_PIN`:n —
+  `EDIT_PIN` ei riitä, ja pyyntö hyväksytään vain näyttölaitteelta itseltään,
+  ei etänä. Jos `FULL_PIN`:iä ei ole otettu käyttöön, ominaisuus on
+  kokonaan pois käytöstä eikä pelkkä painallus päivämäärän kohdalla avaa mitään.
 - Salasanoja, evästeitä eikä viestien sisältöjä kirjoiteta lokiin.
 - `asenna-kioski.sh` tiukentaa `.env`-tiedoston oikeudet (`chmod 600`) joka
   ajolla eikä koskaan löysennä niitä, koska tiedostossa on Wilma-salasana

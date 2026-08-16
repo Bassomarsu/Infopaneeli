@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { NARROW_LAYOUT_BREAKPOINT_PX } from "../composables/usePanelLayout";
 import { useEditAccess, type PinLevel } from "../composables/useEditAccess.ts";
+import ConnectionTest from "./ConnectionTest.vue";
 import type { Settings, WilmaStudent } from "../types";
 
 const editAccess = useEditAccess();
@@ -230,6 +231,17 @@ async function save(): Promise<void> {
             }}
           </p>
           <button type="button" class="btn" @click="editAccess.forget()">Unohda koodi</button>
+        </fieldset>
+
+        <!-- Viimeisenä, koska tämä on ainoa ryhmä joka EI ole asetus:
+             painike vaikuttaa heti eikä odota Tallenna-painiketta, eikä
+             Peruuta kumoa sitä. Siksi myös oma selite alla — muuten
+             käyttäjä olettaisi paneelin muun logiikan pätevän tähänkin.
+             Fieldset ja legend tässä eikä ConnectionTestissä, jotta
+             paneelin omat .group/legend-tyylit pätevät sellaisenaan. -->
+        <fieldset class="group">
+          <legend>Wilma-yhteys</legend>
+          <ConnectionTest />
         </fieldset>
 
         <p v-if="error" class="panel__error">{{ error }}</p>

@@ -5,11 +5,23 @@ import { getSettings, SettingsValidationError, updateSettings } from "../core/se
 import { addNote, deleteNote, listNotes, listReadMessageIds, markMessageRead, setNoteDone } from "../core/store.ts";
 import { config } from "../core/config.ts";
 import { listCustomSounds, resolveCustomSound } from "../core/alarm-sounds.ts";
+import { exitKiosk } from "../core/kiosk.ts";
+import { logger } from "../core/logging.ts";
 import type { WilmaData } from "../providers/wilma.ts";
-import { fullPinEnabled, isTrustedRequest, requireEditAccess, verifyEditPin } from "./access.ts";
+import { fullPinEnabled, isLocalRequest, isTrustedRequest, requireEditAccess, verifyEditPin, verifyFullPinOnly } from "./access.ts";
 
 /** Providers whose payload contains the children's school data. */
 const SENSITIVE_PROVIDERS = new Set(["wilma"]);
+
+/**
+ * Providers the "Testaa yhteys" -painike saa herättää manuaalisesti. Erillinen
+ * sallittujen lista, ei suora registry.get(pyynnön id) — tunniste otetaan
+ * pyynnöstä, joten se validoidaan tätä vasten ennen kuin sillä tehdään
+ * mitään. Reitti on tarkoitettu nimenomaan Wilman katkaisijan avaamiseen
+ * (ks. core/provider.ts:n manualTest), ei yleiseksi tavaksi käynnistää minkä
+ * tahansa providerin hakua pyynnöstä.
+ */
+export const MANUALLY_TESTABLE_PROVIDERS = new Set(["wilma"]);
 
 /**
  * Stamps each message with whether it has been opened on this display. Kept
@@ -51,6 +63,47 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     const level = verifyEditPin(request, reply, body?.pin);
     if (level === null) return reply;
     return { ok: true, level };
+  });
+
+  // Poistuminen kioskitilasta: selain ei voi sulkea itse kioskiselaimen
+  // ikkunaa eikä purkaa --kiosk-tilaa (JS ei koskaan pääse siihen käsiksi),
+  // joten ainoa keino on pyytää PALVELINTA lopettamaan kioskiselaimen
+  // prosessi (ks. core/kiosk.ts). Työpöytä jää näkyviin sen jälkeen — laite
+  // ei siis "sammu", se vain lakkaa olemasta kioski.
+  //
+  // Tämä on tietoturvan kannalta poikkeuksellisen painava reitti — se antaa
+  // pääsyn koko käyttöjärjestelmään, siis myös .env-tiedoston Wilma-
+  // salasanaan — joten kolme ehtoa, kaikki pakollisia eikä mikään niistä
+  // korvaa toista:
+  //   1. isLocalRequest, EI isTrustedRequest: vain fyysinen näyttölaite,
+  //      ei TRUSTED_HOSTS-listan laite eikä puhelin jolla on FULL_PIN
+  //      tallessa. Näkymätön painike on fyysisesti näytöllä, joten pyynnön
+  //      pitää tulla silmukasta — puhelimen ei ole syytä pystyä sulkemaan
+  //      kioskia etänä vaikka sillä olisi muuten täydet oikeudet.
+  //   2. verifyFullPinOnly: nimenomaan FULL_PIN, EDIT_PIN ei riitä (ks.
+  //      access.ts:n kommentti). Käyttää samaa jaettua arvausrajoitinta
+  //      kuin kaikki muutkin PIN-yritykset.
+  //   3. Jos FULL_PIN ei ole käytössä (tyhjä tai alle 6 merkkiä),
+  //      verifyFullPinOnly hylkää AINA — koko ominaisuus on tällöin pois
+  //      käytöstä, ei vain suojaamaton.
+  app.post("/api/kiosk/exit", async (request, reply) => {
+    if (!isLocalRequest(request)) {
+      return reply.code(403).send({ error: "Kioskista poistuminen on sallittu vain näyttölaitteelta." });
+    }
+    const body = request.body as { pin?: unknown } | undefined;
+    if (!verifyFullPinOnly(request, reply, body?.pin)) return reply;
+
+    // warn, ei debug: kioskista poistuminen on tietoturvan kannalta
+    // merkityksellinen teko (avaa pääsyn koko työpöydälle) ja sen pitää
+    // näkyä lokista oletusasetuksillakin. Ei koskaan itse PIN-koodia.
+    logger.warn({ event: "kiosk_exit" }, "kioskiselain suljetaan hyväksytyn FULL_PIN-todennuksen jälkeen");
+
+    const result = await exitKiosk();
+    if (!result.ok) {
+      logger.warn({ event: "kiosk_exit_failed", error: result.error }, "kioskiselaimen sulkeminen epäonnistui");
+      return reply.code(500).send({ error: result.error ?? "Kioskiselaimen sulkeminen epäonnistui." });
+    }
+    return { ok: true };
   });
 
   app.get("/api/dashboard", async (request) => {
@@ -178,5 +231,49 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     if (!Number.isInteger(id)) return reply.code(400).send({ error: "Virheellinen tunniste" });
     const readAt = markMessageRead(id);
     return { ok: true, readAt };
+  });
+
+  // "Testaa yhteys" -painike asetuksissa: yritys herättää Wilma-provider heti
+  // sen sijaan että odotettaisiin katkaisijan omaa jäähdytystä (voi venyä
+  // neljään tuntiin, ks. core/provider.ts). requireEditAccess riittää — tämä
+  // ei paljasta mitään Wilma-dataa, vain onnistuiko haku vai ei, joten
+  // FULL_PINiä ei tarvita. Rajoitin (5 min per yritys + vuorokausikatto) on
+  // provider.manualTestissä, ei tässä — se koskee providerin tilaa
+  // kokonaisuutena riippumatta siitä kuka painaa, ei yhtä IP-osoitetta
+  // kerrallaan kuten access.ts:n PIN-rajoitin.
+  app.post("/api/providers/:id/test", async (request, reply) => {
+    if (!requireEditAccess(request, reply)) return reply;
+
+    const id = (request.params as { id: string }).id;
+    if (!MANUALLY_TESTABLE_PROVIDERS.has(id)) {
+      return reply.code(404).send({ error: "Tuntematon tai ei-testattava lähde" });
+    }
+    const provider = registry.get(id);
+    if (!provider) {
+      return reply.code(404).send({ error: "Tuntematon tai ei-testattava lähde" });
+    }
+
+    const result = await provider.manualTest();
+    switch (result.outcome) {
+      case "ok":
+        return { ok: true };
+      case "failed":
+        return reply.code(502).send({ ok: false, error: result.error });
+      case "busy":
+        return reply.code(409).send({ error: "Yhteystesti on jo käynnissä" });
+      case "rate_limited":
+        return reply
+          .code(429)
+          .header("retry-after", String(result.retryAfterSeconds))
+          .send({ error: "Odota hetki ennen seuraavaa yhteystestiä.", retryAfterSeconds: result.retryAfterSeconds });
+      case "daily_limit":
+        return reply
+          .code(429)
+          .header("retry-after", String(result.retryAfterSeconds))
+          .send({
+            error: "Tämän päivän yhteystestien enimmäismäärä on täynnä.",
+            retryAfterSeconds: result.retryAfterSeconds,
+          });
+    }
   });
 }

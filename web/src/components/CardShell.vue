@@ -38,12 +38,20 @@ const staleLabel = computed(() => {
         <span v-if="accent" class="card__accent" :style="{ background: accent }" />
         {{ title }}
       </h2>
-      <span v-if="isStale" class="badge badge--warn" :title="error?.message">
-        vanhentunut · {{ staleLabel }}
-      </span>
+      <span v-if="isStale" class="badge badge--warn">vanhentunut · {{ staleLabel }}</span>
       <span v-else-if="isFailed" class="badge badge--error">ei yhteyttä</span>
       <span v-else-if="note" class="card__note">{{ note }}</span>
     </header>
+
+    <!--
+      A touchscreen has no hover, so the reason a card is stale cannot live
+      only in a `title` tooltip — it has to be text on the card itself, same
+      as the electricity card's price-per-hour fix. Kept to one short line:
+      just enough to tell "verkko pätkii" (heals on its own) apart from
+      "kirjautuminen ei onnistu" (needs a person), read from a couple of
+      metres away.
+    -->
+    <p v-if="isStale && error?.message" class="card__reason">{{ error.message }}</p>
 
     <div class="card__body">
       <div v-if="isFailed" class="state">

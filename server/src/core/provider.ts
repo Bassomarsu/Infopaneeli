@@ -45,7 +45,24 @@ export interface ProviderOptions<T> {
   fatalLimit?: number;
   /** Hard ceiling for one fetch attempt. */
   timeoutMs?: number;
+  /** Cooldown before the circuit breaker's first probe attempt. */
+  probeCooldownMs?: number;
+  /** Ceiling the cooldown grows to after repeated failed probes. */
+  maxProbeCooldownMs?: number;
+  /** Minimum time between manual "test connection" attempts (see manualTest). */
+  manualTestIntervalMs?: number;
+  /** Max manual test attempts allowed within manualTestWindowMs. */
+  manualTestDailyLimit?: number;
+  /** Rolling window the manual test daily cap is measured over. Overridable only for tests. */
+  manualTestWindowMs?: number;
 }
+
+export type ManualTestOutcome =
+  | { outcome: "ok" }
+  | { outcome: "failed"; error: { type: string; message: string } }
+  | { outcome: "rate_limited"; retryAfterSeconds: number }
+  | { outcome: "daily_limit"; retryAfterSeconds: number }
+  | { outcome: "busy" };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,6 +111,11 @@ export class Provider<T = unknown> {
   private readonly maxBackoffMs: number;
   private readonly fatalLimit: number;
   private readonly timeoutMs: number;
+  private readonly probeCooldownBaseMs: number;
+  private readonly probeCooldownMaxMs: number;
+  private readonly manualTestIntervalMs: number;
+  private readonly manualTestDailyLimit: number;
+  private readonly manualTestWindowMs: number;
   private running = false;
 
   private data: T | null = null;
@@ -104,10 +126,19 @@ export class Provider<T = unknown> {
   private consecutiveFailures = 0;
   private consecutiveFatal = 0;
   private breakerOpen = false;
+  /** Current length of the breaker's cooldown; grows on each failed probe. */
+  private probeCooldownMs = 0;
+  /** Epoch ms of the earliest moment the next probe attempt may run. */
+  private nextProbeAt: number | null = null;
   private failingSince: number | null = null;
   private lastFailureLogAt = 0;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+
+  /** Epoch ms of the most recent manual test attempt (not attempts blocked by the limiter). */
+  private lastManualTestAt: number | null = null;
+  /** Epoch ms of every manual test attempt within the rolling window, oldest first. */
+  private readonly manualTestAttempts: number[] = [];
 
   constructor(options: ProviderOptions<T>) {
     this.options = options;
@@ -115,6 +146,33 @@ export class Provider<T = unknown> {
     this.maxBackoffMs = options.maxBackoffMs ?? 30 * 60 * 1000;
     this.fatalLimit = options.fatalLimit ?? 3;
     this.timeoutMs = options.timeoutMs ?? 90_000;
+    // 30 min, doubling to a 4 h ceiling. Worst case (a permanently wrong
+    // password, cached data present so quiet hours also apply) that is about
+    // 6 probes across the 18 active hours plus the 3 that opened the breaker —
+    // 9 login attempts a day, always at least half an hour apart. Far below
+    // any lockout threshold, while a genuinely transient outage gets a retry
+    // within the hour and is fully recovered the same day.
+    this.probeCooldownBaseMs = options.probeCooldownMs ?? 30 * 60 * 1000;
+    this.probeCooldownMaxMs = options.maxProbeCooldownMs ?? 4 * 60 * 60 * 1000;
+
+    // "Testaa yhteys" -painike (ks. manualTest alempana): 5 min per käyttäjän
+    // nimenomainen vaatimus. Se yksin sallisi teoriassa 288 yritystä
+    // vuorokaudessa jatkuvasti painettuna — 32-kertainen automaattisen
+    // katkaisijan pahimman tapauksen (9/vrk, ks. probeCooldownBaseMs yllä)
+    // verran. Kosketusnäyttö on fyysisesti kaikkien perheenjäsenten
+    // ulottuvilla, joten pelkkä 5 min ei riitä estämään koko päivän
+    // nojaamista nappiin. Vuorokausikatto 12 sallii silti realistisen
+    // vianetsintäistunnon (tunti yhtäjaksoista 5 min välein testaamista, tai
+    // useampi lyhyempi istunto päivän mittaan) ilman että se muuttuu
+    // mielivaltaiseksi hakkaukseksi. Yhdessä automaattisen pahimman
+    // tapauksen kanssa se on korkeintaan 21 kirjautumisyritystä
+    // vuorokaudessa, ja koska 12 manuaalista jakautuvat vähintään 5 min
+    // väliin, tiheimmilläänkin ne ovat vain 3 yritystä/15 min — selvästi
+    // harvempi kuin useimpien järjestelmien lyhyen ikkunan
+    // lukitusrajat, vaikka Wilman omaa kynnystä ei tunneta.
+    this.manualTestIntervalMs = options.manualTestIntervalMs ?? 5 * 60 * 1000;
+    this.manualTestDailyLimit = options.manualTestDailyLimit ?? 12;
+    this.manualTestWindowMs = options.manualTestWindowMs ?? DAY_MS;
 
     // Warm up from the last-good cache so the screen has something to show
     // immediately after a restart, before the first fetch completes.
@@ -165,9 +223,16 @@ export class Provider<T = unknown> {
     const now = new Date();
 
     if (this.breakerOpen) {
-      this.noteStillFailing();
-      this.schedule(this.options.intervalMs);
-      return;
+      // Cooldown not elapsed yet — stay closed, no attempt this cycle.
+      if (this.nextProbeAt === null || now.getTime() < this.nextProbeAt) {
+        this.noteStillFailing();
+        this.schedule(this.options.intervalMs);
+        return;
+      }
+      // Cooldown elapsed: fall through to the one probe attempt below, still
+      // subject to the same quiet-hours gate as a normal run so the two
+      // delays don't stack — a probe due overnight simply waits for the next
+      // active cycle instead of both waiting out the cooldown *and* the night.
     }
 
     // Quiet hours only apply once there is something to show. Otherwise
@@ -191,6 +256,78 @@ export class Provider<T = unknown> {
     }
   }
 
+  /**
+   * "Testaa yhteys" -painikkeen palvelinpää. Ohittaa katkaisijan jäähdytys-
+   * portin kokonaan (nextProbeAt-tarkistuksen) — se on koko pointti, kun
+   * automaattinen jäähdytys on venynyt tunteja eikä kukaan halua käynnistää
+   * palvelinta uudelleen vain nollatakseen sen. Rate-limit on TÄÄLLÄ, ei
+   * selaimessa: pelkkä selainpuolen esto katoaisi sivun päivityksellä.
+   *
+   * Onnistunut yritys nollaa katkaisijan täysin (onSuccess, sama koodipolku
+   * kuin automaattisella onnistuneella koeyrityksellä) ja aikatauluttaa
+   * normaalin kierron uudelleen. Epäonnistunut yritys EI koske automaattisen
+   * katkaisijan tilaan mitenkään — ei consecutiveFatal, ei probeCooldownMs,
+   * ei nextProbeAt. Tämä on tietoinen valinta: manuaalinen yritys on erillinen
+   * kanava, jonka epäonnistuminen ei saa pidentää tai muuten sotkea
+   * automaattista aikataulua, jota käyttäjä ei enää edes katso jos hän
+   * nojaa tähän nappiin. Automaattinen jäähdytys jatkuu täsmälleen samana
+   * kuin jos nappia ei olisi koskaan painettu.
+   */
+  async manualTest(now: () => number = Date.now): Promise<ManualTestOutcome> {
+    if (this.stopped || this.running) return { outcome: "busy" };
+
+    const t = now();
+    if (this.lastManualTestAt !== null) {
+      const sinceLastMs = t - this.lastManualTestAt;
+      if (sinceLastMs < this.manualTestIntervalMs) {
+        return { outcome: "rate_limited", retryAfterSeconds: Math.ceil((this.manualTestIntervalMs - sinceLastMs) / 1000) };
+      }
+    }
+
+    // Siivotaan ikkunan ulkopuolelle jääneet yritykset pois ennen kuin
+    // vuorokausikattoa tarkistetaan, jotta vanha yritys ei jää ikuisesti
+    // varaamaan paikkaa listalta.
+    const windowStart = t - this.manualTestWindowMs;
+    let oldest = this.manualTestAttempts.at(0);
+    while (oldest !== undefined && oldest < windowStart) {
+      this.manualTestAttempts.shift();
+      oldest = this.manualTestAttempts.at(0);
+    }
+    if (oldest !== undefined && this.manualTestAttempts.length >= this.manualTestDailyLimit) {
+      const retryAfterMs = oldest + this.manualTestWindowMs - t;
+      return { outcome: "daily_limit", retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000)) };
+    }
+
+    this.lastManualTestAt = t;
+    this.manualTestAttempts.push(t);
+
+    this.running = true;
+    try {
+      const data = await withTimeout(this.options.fetch(), this.timeoutMs, this.id);
+      this.onSuccess(data);
+      logger.warn(
+        { event: "provider_manual_test", provider: this.id, result: "ok" },
+        "manuaalinen yhteystesti onnistui — katkaisija nollattu",
+      );
+      // Vanha ajastin (esim. katkaisijan jäähdytyksen odotus) ei enää päde
+      // sen jälkeen kun yhteys on juuri todettu toimivaksi — korvataan
+      // normaalilla kierrolla heti.
+      this.schedule(this.options.intervalMs);
+      return { outcome: "ok" };
+    } catch (err) {
+      const fatal = err instanceof FatalProviderError;
+      const type = fatal ? err.type : err instanceof Error ? err.name : "UnknownError";
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        { event: "provider_manual_test", provider: this.id, result: "failed", errorType: type, err },
+        "manuaalinen yhteystesti epäonnistui — automaattinen jäähdytys pysyy ennallaan",
+      );
+      return { outcome: "failed", error: { type, message } };
+    } finally {
+      this.running = false;
+    }
+  }
+
   private backoffMs(): number {
     const factor = 2 ** Math.min(this.consecutiveFailures, 8);
     return Math.min(this.options.intervalMs * factor, this.maxBackoffMs);
@@ -202,6 +339,7 @@ export class Provider<T = unknown> {
     // restart, because a provider warmed from the cache starts out `stale`.
     const hadFailed = this.failingSince !== null;
     const downForMs = hadFailed ? Date.now() - (this.failingSince ?? 0) : 0;
+    const hadBreakerOpen = this.breakerOpen;
 
     this.data = data;
     this.fetchedAt = new Date().toISOString();
@@ -211,13 +349,23 @@ export class Provider<T = unknown> {
     this.consecutiveFatal = 0;
     this.failingSince = null;
     this.lastFailureLogAt = 0;
+    // A successful probe closes the breaker completely — counters, cooldown
+    // and all — rather than merely postponing the next attempt.
+    this.breakerOpen = false;
+    this.probeCooldownMs = 0;
+    this.nextProbeAt = null;
 
     writeCache(this.id, data, this.fetchedAt);
 
     // Only the FAILED -> OK edge is logged, never the steady state.
     if (hadFailed) {
       logger.warn(
-        { event: "provider_recovered", provider: this.id, downForMinutes: Math.round(downForMs / 60000) },
+        {
+          event: "provider_recovered",
+          provider: this.id,
+          downForMinutes: Math.round(downForMs / 60000),
+          hadBreakerOpen,
+        },
         "provider recovered",
       );
     }
@@ -230,26 +378,48 @@ export class Provider<T = unknown> {
     const message = err instanceof Error ? err.message : String(err);
 
     const wasHealthy = this.status === "ok" || this.status === "idle";
+    // A failure while the breaker was already open is the cooldown's probe
+    // attempt coming back negative, not a fresh run towards `fatalLimit`.
+    const wasProbing = this.breakerOpen;
+
     this.consecutiveFailures += 1;
     if (fatal) this.consecutiveFatal += 1;
     if (this.failingSince === null) this.failingSince = Date.now();
 
-    this.error = { type, message };
     // Keep serving the last good data if there is any — a stale schedule beats
     // an empty card.
     this.status = this.data === null ? "failed" : "stale";
 
-    if (fatal && this.consecutiveFatal >= this.fatalLimit && !this.breakerOpen) {
+    if (wasProbing) {
+      // Back off further instead of probing again at a fixed cadence, which
+      // would otherwise turn a permanently wrong password into one login
+      // attempt every cooldown period forever at the same rate.
+      this.probeCooldownMs = Math.min(this.probeCooldownMs * 2, this.probeCooldownMaxMs);
+      this.nextProbeAt = Date.now() + this.probeCooldownMs;
+      this.error = { type, message: this.withRetryHint(message) };
+      // Logged through the same once-a-day cap as any other ongoing failure —
+      // a probe that keeps failing must not write a line every cooldown.
+      this.noteStillFailing();
+      return;
+    }
+
+    this.error = { type, message };
+
+    if (fatal && this.consecutiveFatal >= this.fatalLimit) {
       this.breakerOpen = true;
+      this.probeCooldownMs = this.probeCooldownBaseMs;
+      this.nextProbeAt = Date.now() + this.probeCooldownMs;
+      this.error = { type, message: this.withRetryHint(message) };
       logger.error(
         {
           event: "provider_breaker_open",
           provider: this.id,
           errorType: type,
           attempts: this.consecutiveFatal,
+          probeCooldownMinutes: Math.round(this.probeCooldownMs / 60000),
           err,
         },
-        "provider circuit breaker opened — no further attempts until restart",
+        "provider circuit breaker opened — cooling down before next attempt",
       );
       this.lastFailureLogAt = Date.now();
       return;
@@ -268,6 +438,24 @@ export class Provider<T = unknown> {
     }
   }
 
+  /**
+   * Appends a short, human-readable retry estimate to a fatal error message
+   * so a card left showing the same text for hours can tell "will heal
+   * itself soon" apart from "needs a person to fix it". Approximate: while
+   * the breaker is cooling down no fetch runs, so the countdown shown is the
+   * one computed at the last attempt and can run past zero before the next
+   * one actually fires (e.g. because quiet hours delay it further).
+   */
+  private withRetryHint(message: string): string {
+    if (this.nextProbeAt === null) return message;
+    const minutes = Math.max(1, Math.round((this.nextProbeAt - Date.now()) / 60000));
+    const hint =
+      minutes < 60
+        ? `Yritetään uudelleen noin ${minutes} min kuluttua.`
+        : `Yritetään uudelleen noin ${Math.round(minutes / 60)} h kuluttua.`;
+    return `${message} ${hint}`;
+  }
+
   /** At most one line per day while a source stays broken. */
   private noteStillFailing(): void {
     const now = Date.now();
@@ -279,6 +467,10 @@ export class Provider<T = unknown> {
         provider: this.id,
         errorType: this.error?.type ?? "unknown",
         breakerOpen: this.breakerOpen,
+        nextProbeInMinutes:
+          this.breakerOpen && this.nextProbeAt !== null
+            ? Math.max(0, Math.round((this.nextProbeAt - now) / 60000))
+            : null,
         failingForHours: this.failingSince ? Math.round((now - this.failingSince) / 3600000) : 0,
         consecutiveFailures: this.consecutiveFailures,
       },

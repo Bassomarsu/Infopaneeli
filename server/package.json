@@ -8,6 +8,7 @@
     "start": "node --env-file-if-exists=../.env src/index.ts",
     "typecheck": "tsc --noEmit",
     "test:providers": "node test/provider-transitions.ts",
+    "test:providers-manual": "node test/provider-manual-test.ts",
     "test:calendar": "node test/calendar-events.ts",
     "test:wilma": "node test/wilma-fetch.ts",
     "test:prices": "node test/price-history.ts",
@@ -18,6 +19,10 @@
     "test:edit-access": "node test/edit-access.ts",
     "test:edit-access-disabled": "node test/edit-access-disabled.ts",
     "test:edit-access-full-too-short": "node test/edit-access-full-too-short.ts",
+    "test:kiosk": "node test/kiosk.ts",
+    "test:kiosk-exit": "node test/kiosk-exit.ts",
+    "test:kiosk-exit-disabled": "node test/kiosk-exit-disabled.ts",
+    "test:kiosk-exit-full-too-short": "node test/kiosk-exit-full-too-short.ts",
     "test:smoke": "node --env-file-if-exists=../.env test/wilma-smoke.ts"
   },
   "dependencies": {

@@ -288,3 +288,55 @@ export function verifyEditPin(request: FastifyRequest, reply: FastifyReply, prov
   void reply.code(401).send({ error: "Väärä tai puuttuva PIN" });
   return null;
 }
+
+/**
+ * POST /api/kiosk/exit käyttää tätä. Kioskista poistuminen (core/kiosk.ts)
+ * antaa pääsyn koko käyttöjärjestelmään — myös .env-tiedoston Wilma-
+ * salasanaan selväkielisenä — joten se vaatii nimenomaan FULL_PIN:n, ei
+ * EDIT_PIN:n. EDIT_PIN antaa vain muistilistan/asetusten/hälytysten
+ * muokkauksen, mikä on selvästi kevyempi valtuus kuin pääsy työpöydälle.
+ *
+ * Käyttää attemptPinia suoraan kuten requireEditAccess/verifyEditPin —
+ * arvaukset tätä reittiä vasten lasketaan SAMAAN jaettuun rajoittimeen
+ * (ks. attemptPin-kommentti), ei omaansa. Kelvollinen EDIT_PIN annettuna
+ * tähän lasketaan attemptPinissa onnistuneeksi todennukseksi (ei siis
+ * rangaista eikä lasketa arvaukseksi rajoittimelle), mutta ei silti avaa
+ * kioskista poistumista — reitti palauttaa sille oman, selittävän 403:n
+ * eron sijaan että se näyttäytyisi tavallisena vääränä koodina.
+ *
+ * Ei tarkista tässä isLocalRequestia — se on api.ts:n reitin vastuulla
+ * (vaatimus: vain näyttölaitteelta, ei TRUSTED_HOSTS-laitteelta eikä
+ * FULL_PIN:llä muualta tulevalta puhelimelta, siis isLocalRequest eikä
+ * isTrustedRequest). Tämä funktio vastaa vain siitä ONKO annettu koodi
+ * kelvollinen FULL_PIN, ei SIITÄ MISTÄ pyyntö tuli.
+ */
+export function verifyFullPinOnly(request: FastifyRequest, reply: FastifyReply, providedRaw: unknown): boolean {
+  if (!fullPinEnabled) {
+    void reply.code(403).send({ error: "FULL_PIN ei ole käytössä — kioskista poistuminen on pois käytöstä." });
+    return false;
+  }
+
+  const provided = typeof providedRaw === "string" ? providedRaw : undefined;
+  const result = attemptPin(request.ip, provided);
+
+  if (result.outcome === "full") return true;
+
+  if (result.outcome === "locked") {
+    void reply
+      .code(429)
+      .header("retry-after", String(result.retryAfterSeconds))
+      .send({ error: "Liian monta väärää PIN-yritystä.", retryAfterSeconds: result.retryAfterSeconds });
+    return false;
+  }
+
+  if (result.outcome === "edit") {
+    void reply
+      .code(403)
+      .send({ error: "Tämä koodi antaa vain muokkausoikeuden. Kioskista poistuminen vaatii täysien oikeuksien koodin (FULL_PIN)." });
+    return false;
+  }
+
+  // "wrong" tai "absent"
+  void reply.code(401).send({ error: "Väärä tai puuttuva PIN" });
+  return false;
+}

@@ -94,7 +94,38 @@ Purku: `.\asenna-kioski.ps1 -Poista`
    käynnisty uudelleen kesken päivän.
 3. **Kokeile**: käynnistä kone uudelleen ja katso että näyttö palaa itsestään.
 
-Kioskitilasta pääsee pois `Ctrl+Alt+Del` tai `Alt+F4`.
+### Kioskista poistuminen
+
+Selain ei voi purkaa omaa kioskitilaansa (JavaScript ei pääse siihen käsiksi),
+joten poistuminen tapahtuu aina jommallakummalla näistä:
+
+- **Kosketuksella, ilman näppäimistöä**: pidä sormea painettuna yläpalkin
+  **päivämäärätekstin perässä noin 3 sekuntia** (ei ruudun nurkassa — se
+  on tarkoituksella jätetty pois, koska nurkkaan osutaan helposti vahingossa
+  pöytää pyyhittäessä tai näyttöä siirrettäessä). Alue on näkymätön eikä
+  siinä ole mitään visuaalista vihjettä — tarkoituksella, jottei se erotu
+  vahingossa kenellekään. Pitkä painallus valittiin yhden napautuksen sijaan
+  siksi ettei se laukea vahingossa ruutua pyyhittäessä tai siihen
+  nojattaessa. Painallus avaa vahvistusdialogin, joka kysyy **täysien
+  oikeuksien koodin (`FULL_PIN`)** — `EDIT_PIN` ei riitä, koska kioskista
+  poistuminen antaa pääsyn koko työpöydälle ja sitä kautta myös `.env`-
+  tiedoston Wilma-salasanaan selväkielisenä, ei vain muistilistan/asetusten
+  muokkaukseen. Jos `FULL_PIN`:iä ei ole asetettu (tai se on alle 6 merkkiä,
+  ks. taulukko yllä), painike ei tee mitään — ominaisuus on tällöin
+  kokonaan pois käytöstä. Oikean koodin jälkeen palvelin sulkee Edgen
+  (`msedge.exe`-prosessin) ja työpöytä jää näkyviin.
+- **Näppäimistöllä** (jos kytkettynä): `Ctrl+Alt+Del` tai `Alt+F4`.
+
+**Käynnistä kioski takaisin** jommallakummalla tavalla:
+
+1. **Käynnistä laite uudelleen.** Ajastetut tehtävät (`Infonaytto-palvelin`,
+   `Infonaytto-naytto`) käynnistyvät automaattisesti kirjautumisen
+   yhteydessä — tämä on varmin tapa.
+2. **Ilman uudelleenkäynnistystä**: avaa Tehtävien ajastin
+   (`Win + R` → `taskschd.msc`), etsi tehtävä **`Infonaytto-naytto`** ja
+   valitse **Suorita**. Tämä avaa selaimen uudelleen — taustapalvelin ei
+   sammunut, vain selain suljettiin, joten sen ei tarvitse odottaa
+   uudelleenkäynnistystä.
 
 ## 5. Laiteriski — lue tämä
 
@@ -126,6 +157,11 @@ Windows-kohtaisia.
   lasten Wilma-tietoja; `FULL_PIN` (väh. 6 merkkiä) antaa nekin. Vaihtoehtona
   laite voidaan lisätä `TRUSTED_HOSTS`-listalle, jolloin koodia ei tarvita.
   Tarkemmin: README, kohta **Tietoturva**.
+- **Kioskista poistuminen** (ks. kohta 4) vaatii nimenomaan `FULL_PIN`:n —
+  `EDIT_PIN` ei riitä, ja pyyntö hyväksytään vain näyttölaitteelta itseltään,
+  ei etänä TRUSTED_HOSTS-laitteelta tai FULL_PIN:llä varustetulta puhelimelta.
+  Jos `FULL_PIN`:iä ei ole otettu käyttöön, ominaisuus on kokonaan pois
+  käytöstä eikä pelkkä painallus päivämäärän kohdalla avaa mitään.
 - Näyttö on yhteisessä tilassa: viestien sisällön voi piilottaa asetuksista,
   jolloin näkyy vain lähettäjä ja otsikko.
 - **Tilin lukituksen esto**: kolme peräkkäistä epäonnistunutta Wilma-kirjautumista
