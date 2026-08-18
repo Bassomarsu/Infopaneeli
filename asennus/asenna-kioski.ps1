@@ -1,5 +1,9 @@
-<#
+﻿<#
 .SYNOPSIS
+    KEHITYSKOPIOLLE (git clone + npm install, PATHin node.exe). Julkaisupaketin
+    (valmis zip, niputettu Node) vastine on asenna.ps1 — käytä sitä jos asennat
+    valmiista julkaisupaketista etkä git-kopiosta.
+
     Sets up Infonäyttö to start automatically and run as a wall display.
 
 .DESCRIPTION

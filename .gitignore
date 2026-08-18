@@ -12,3 +12,7 @@ data/
 .DS_Store
 Thumbs.db
 *.log
+
+# Julkaisupaketit ja niiden koontivälimuisti (skriptit/tee-julkaisu.mjs)
+julkaisu/
+julkaisu-valimuisti/

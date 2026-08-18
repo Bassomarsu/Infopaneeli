@@ -8,12 +8,44 @@ kioskitilassa.
 
 ## Käyttöönotto
 
+Näyttölaitteelle: käytä **julkaisupakettia** (ks. alla). Se sisältää oman
+Node-ajonaikansa, joten kohdekoneelle ei asenneta Nodea eikä npm:ää.
+
+Kehityskoneella:
+
 ```bash
 npm install
 cp .env.example .env      # täytä Wilma-tunnukset ja kalenterin ICS-osoite
 npm run build             # kääntää Vue-käyttöliittymän
 npm start                 # käynnistää palvelimen, oletuksena http://localhost:4173
 ```
+
+### Julkaisupaketti
+
+```bash
+npm run release                        # molemmat alustat
+npm run release -- --platform win-x64  # vain toinen
+```
+
+Tuottaa `julkaisu/`-kansioon `infonaytto-<versio>-win-x64.zip` (~53 MB) ja
+`infonaytto-<versio>-linux-x64.tar.gz` (~58 MB) sekä `SHA256SUMS.txt`:n, jolla
+laitteelle siirretyn arkiston eheyden voi todeta (`sha256sum -c` tai
+`Get-FileHash`). Paketin sisällä `VERSIO.txt` kertoo mistä commitista se on
+koottu ja mikä Node siihen on niputettu.
+
+Koonti **keskeytyy** eikä tuota pakettia jos tyyppitarkistus tai testit
+kaatuvat, jos ladatun Node-jakelun SHA256 ei täsmää `SHASUMS256.txt`:hen, jos
+tuotantoriippuvuuksista löytyy natiivimoduuleja (silloin paketti ei olisi
+alustariippumaton), tai jos valmiista arkistosta puuttuu pakettirakenteeseen
+kuuluva tiedosto tai löytyy sinne kuulumaton. Rikkinäistä ei paketoida seinälle.
+
+Asennus kohdekoneella: pura arkisto ja aja `asennus/asenna.ps1` (Windows) tai
+`asennus/asenna.sh` (Linux). Asennin kysyy kaikki `.env`-asetukset, kirjoittaa
+tiedoston rajatuin oikeuksin, tarjoaa automaattikäynnistyksen ja Windowsissa
+työpöytäpikakuvakkeen joka avaa näytön suoraan kioskitilaan. Lopuksi se
+käynnistää palvelimen ja odottaa `/api/health`-vastausta — jos se ei tule,
+asennin sanoo sen suoraan eikä väitä onnistuneensa. Päivitysasennus säilyttää
+`data/`-kansion (tietokanta, muistilista, hälytysäänet, lokit).
 
 Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 (Vite, proxyttaa `/api` palvelimelle).
@@ -28,6 +60,7 @@ Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 | `npm run build` | Kääntää frontendin `web/dist`-kansioon |
 | `npm run typecheck` | Tyyppitarkistus molemmille työtiloille |
 | `npm test` | Kaikki yksikkötestit: providerit, Wilma, hinnat, viestit, kalenteri, asettelu (ei verkkoa) |
+| `npm run release` | Kokoaa asennuspaketit (Windows + Linux) omine Node-ajonaikoineen `julkaisu/`-kansioon |
 | `npm run test:smoke` | Savutesti **oikeaa Wilmaa vasten** — aja kirjastopäivityksen jälkeen |
 
 ## Arkkitehtuuri

@@ -1,5 +1,9 @@
-<#
+﻿<#
 .SYNOPSIS
+    KEHITYSKOPIOLLE (asenna-kioski.ps1:n käynnistin, PATHin node.exe, suhteellinen
+    ..\.env). Julkaisupaketin vastine on kaynnista.ps1 — käytä sitä jos asensit
+    asenna.ps1:llä valmiista julkaisupaketista.
+
     Odottaa infonäytön palvelinta ja avaa sitten kioskiselaimen.
 
 .DESCRIPTION

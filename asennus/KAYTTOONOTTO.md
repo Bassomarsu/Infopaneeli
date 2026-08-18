@@ -1,6 +1,102 @@
 # Käyttöönotto Surface Pro 4:llä
 
-## 1. Esivalmistelut
+Kaksi tapaa asentaa, riippuen siitä mitä sinulla on kädessä:
+
+- **Julkaisupaketista** (suositeltu) — valmis zip-paketti, jossa Node on jo
+  mukana. Ei vaadi Node.js-asennusta eikä `npm`-komentoja koneelle lainkaan.
+  Ks. [Tapa 1](#tapa-1-julkaisupaketista-suositeltu).
+- **Kehityskopiosta** — `git clone` + `npm install`, koneelle asennettu Node.
+  Tarkoitettu kehitykseen, ei tavalliseen käyttöönottoon. Ks.
+  [Tapa 2](#tapa-2-kehityskopiosta).
+
+Molemmissa tavoissa yhteiset osat (laiteriski, tietoturva, ylläpito) ovat
+dokumentin lopussa.
+
+## Tapa 1: Julkaisupaketista (suositeltu)
+
+1. Pura julkaisupaketti (zip) haluamaasi väliaikaiseen kansioon — asennushakemiston
+   voi valita erikseen seuraavassa vaiheessa, joten purkupaikalla ei ole väliä.
+2. Aja **järjestelmänvalvojana**, puretun paketin `asennus`-kansiosta:
+
+   ```powershell
+   cd <purkukansio>\asennus
+   powershell -ExecutionPolicy Bypass -File .\asenna.ps1
+   ```
+
+3. Skripti kysyy kaiken tarvittavan järjestyksessä:
+
+   | Kysytään | Oletus |
+   |---|---|
+   | Asennushakemisto | puretun paketin oma sijainti (ei kopioida) |
+   | Portti | 4173 |
+   | Lokitaso (warn/error/debug) | warn |
+   | Sään leveys- ja pituusaste, paikkakunta | Karstula |
+   | Wilman osoite, käyttäjätunnus, salasana | tyhjä = Wilma pois käytöstä |
+   | Kalenterin ICS-osoite | tyhjä = kalenteri pois käytöstä |
+   | `EDIT_PIN` | tyhjä = ei käytössä |
+   | `FULL_PIN` (vähintään 6 merkkiä) | tyhjä = ei käytössä |
+   | `TRUSTED_HOSTS` | tyhjä = ei luotettuja laitteita |
+   | Otetaanko automaattikäynnistys käyttöön | kyllä |
+
+   Jokainen arvo validoidaan heti kysyttäessä (portti on vapaa, osoitteet ovat
+   kelvollisia URL-muotoja, `FULL_PIN` on riittävän pitkä tai tyhjä) — virheen
+   sattuessa skripti kertoo mikä on vialla ja kysyy uudelleen, eikä jatka
+   virheellisellä arvolla. Wilman salasana ja PIN-koodit eivät koskaan näy
+   ruudulla eivätkä päädy lokiin.
+
+   Jos annat eri asennushakemiston kuin mistä paketti on purettu, skripti
+   kopioi koko paketin sinne (`robocopy`). Jos kohteessa on jo aiempi asennus
+   (päivitys), **`data`-kansio säilyy aina koskemattomana** — tietokanta,
+   muistilista, hälytysäänet ja lokit eivät katoa. Olemassa oleva `.env`
+   korvataan vain erillisen vahvistuksen jälkeen.
+
+4. Skripti luo **työpöydän pikakuvakkeen** ("Infonäyttö (kioski)"), joka
+   käynnistää sekä palvelimen (jos se ei jo ole käynnissä) että kioskiselaimen
+   yhdellä kaksoisnapsautuksella — eikä jätä mitään ikkunaa roikkumaan ruudulle.
+   Jos otit automaattikäynnistyksen käyttöön, sama tapahtuu myös
+   kirjautumisen yhteydessä (ajastetut tehtävät `Infonaytto-palvelin` ja
+   `Infonaytto-naytto`).
+
+5. Lopuksi skripti **käynnistää palvelimen ja odottaa että se vastaa**
+   ennen kuin asennus julistetaan onnistuneeksi. Jos palvelin ei vastaa,
+   skripti sanoo sen selvästi eikä väitä asennusta valmiiksi — tarkista
+   silloin `<asennushakemisto>\data\logs\`.
+
+6. Jos annoit Wilman tunnukset, skripti tarjoaa **Wilma-yhteyden testausta**
+   heti asennuksen lopuksi (tasan yksi yritys, ei silmukkaa — ks. alempana
+   "Tilin lukituksen esto"). Väärä salasana kannattaa löytää nyt, ei aamulla
+   seinältä.
+
+7. Skripti tulostaa lopuksi asennushakemiston, portin, osoitteen jolla
+   näyttöön pääsee puhelimella, komennon palvelimen käsin käynnistämiseen, ja
+   komennon asennuksen purkuun.
+
+### Vielä käsin
+
+Sama kummassakin asennustavassa — ks. [Vielä käsin tehtävät asiat](#vielä-käsin-tehtävät-asiat)
+alempana.
+
+### Purku ja päivitys
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\asenna.ps1 -Poista
+```
+
+Poistaa ajastetut tehtävät ja työpöydän pikakuvakkeen. **Ei koskaan** `.env`-
+tiedostoa eikä `data`-kansiota — poista ne itse (tai koko asennushakemisto)
+jos et enää tarvitse niitä.
+
+Version päivitys on **tuettu tapaus**: pura uusi paketti, aja sen oma
+`asenna.ps1` ja anna sama asennushakemisto kuin ennen. `data`-kansio säilyy
+aina; edellinen palvelinprosessi pysäytetään automaattisesti ennen tiedostojen
+päivitystä.
+
+## Tapa 2: Kehityskopiosta
+
+Tarkoitettu kehitykseen (`git clone` + `npm install`), ei tavalliseen
+käyttöönottoon — käytä Tapaa 1 jos sinulla on valmis julkaisupaketti.
+
+### 1. Esivalmistelut
 
 Asenna **Node.js 24 tai uudempi** ([nodejs.org](https://nodejs.org)). Tarkista:
 
@@ -8,7 +104,7 @@ Asenna **Node.js 24 tai uudempi** ([nodejs.org](https://nodejs.org)). Tarkista:
 node --version    # v24.x tai uudempi
 ```
 
-## 2. Projektin asennus
+### 2. Projektin asennus
 
 ```powershell
 cd G:\Atorcom\VS_code_projektit\Infonäyttö
@@ -25,7 +121,7 @@ se ensin:
 Set-ExecutionPolicy -ExecutionPolicy Unrestricted
 ```
 
-### Mitä `.env`-tiedostoon
+#### Mitä `.env`-tiedostoon
 
 | Muuttuja | Mistä saa |
 |---|---|
@@ -40,7 +136,7 @@ Set-ExecutionPolicy -ExecutionPolicy Unrestricted
 `.env` ei mene gitiin. Wilma-salasana on selväkielisenä levyllä — se on tietoinen
 kompromissi, ks. **Tietoturva** alla.
 
-## 3. Kokeile ensin käsin
+### 3. Kokeile ensin käsin
 
 ```powershell
 npm start
@@ -55,7 +151,7 @@ Vianetsintään yksityiskohtaisempi loki:
 $env:LOG_LEVEL = "debug"; npm start
 ```
 
-## 4. Automaattikäynnistys ja kioskitila
+### 4. Automaattikäynnistys ja kioskitila
 
 Aja **järjestelmänvalvojana**:
 
@@ -77,7 +173,9 @@ riittäisi siihen.
 
 Purku: `.\asenna-kioski.ps1 -Poista`
 
-### Vielä käsin
+### Vielä käsin tehtävät asiat
+
+Sama kummassakin asennustavassa:
 
 1. **Automaattikirjautuminen**: `netplwiz` → poista rasti *"Käyttäjän on annettava
    käyttäjänimi ja salasana"*. Ilman tätä ajastetut tehtävät eivät käynnisty
@@ -127,7 +225,7 @@ joten poistuminen tapahtuu aina jommallakummalla näistä:
    sammunut, vain selain suljettiin, joten sen ei tarvitse odottaa
    uudelleenkäynnistystä.
 
-## 5. Laiteriski — lue tämä
+## Laiteriski — lue tämä
 
 Surface Pro 4 on vuoden 2015 laite, eikä sitä ole suunniteltu jatkuvaan
 seinäkäyttöön. Kolme tunnettua ongelmaa osuu juuri tähän käyttötapaan:
@@ -148,7 +246,7 @@ laitteeseen, sama koodi ajetaan Raspberry Pi:llä sellaisenaan ja Surface (tai
 mikä tahansa näyttö) jää pelkäksi selaimeksi. Vain tämän kansion skriptit ovat
 Windows-kohtaisia.
 
-## 6. Tietoturva
+## Tietoturva
 
 - Wilma-datan lukureitit vastaavat vain **localhostista**. Kotiverkon puhelin
   näkee sään, sähkön, kalenterin ja muistilistan — ei lasten koulutietoja.
@@ -157,7 +255,7 @@ Windows-kohtaisia.
   lasten Wilma-tietoja; `FULL_PIN` (väh. 6 merkkiä) antaa nekin. Vaihtoehtona
   laite voidaan lisätä `TRUSTED_HOSTS`-listalle, jolloin koodia ei tarvita.
   Tarkemmin: README, kohta **Tietoturva**.
-- **Kioskista poistuminen** (ks. kohta 4) vaatii nimenomaan `FULL_PIN`:n —
+- **Kioskista poistuminen** (ks. yllä) vaatii nimenomaan `FULL_PIN`:n —
   `EDIT_PIN` ei riitä, ja pyyntö hyväksytään vain näyttölaitteelta itseltään,
   ei etänä TRUSTED_HOSTS-laitteelta tai FULL_PIN:llä varustetulta puhelimelta.
   Jos `FULL_PIN`:iä ei ole otettu käyttöön, ominaisuus on kokonaan pois
@@ -167,10 +265,19 @@ Windows-kohtaisia.
 - **Tilin lukituksen esto**: kolme peräkkäistä epäonnistunutta Wilma-kirjautumista
   pysäyttää yritykset kokonaan. Jos vaihdat Wilma-salasanan, päivitä se `.env`-
   tiedostoon ja käynnistä palvelin uudelleen — muuten Wilma-kortti jää
-  virhetilaan (mikä on tarkoitus, ei vika).
+  virhetilaan (mikä on tarkoitus, ei vika). Asennusskripti (`asenna.ps1`) tarjoaa
+  yhteyden testausta asennuksen lopuksi juuri tästä syystä — se käyttää samaa
+  "Testaa yhteys" -rajapintaa kuin asetusnäkymä eikä koskaan silmukoi
+  yrityksiä, jottei se itse voi laukaista tätä lukitusta.
 - Salasanoja, evästeitä eikä viestien sisältöjä kirjoiteta lokiin.
+- **`.env`-tiedoston oikeudet** rajataan asentavaan käyttäjään (molemmat
+  asennusskriptit tekevät tämän `.env`:lle — julkaisupaketin `asenna.ps1`
+  `icacls`-komennoin, poistaen periytyvät oikeudet). Tiedosto sisältää Wilma-
+  tilin salasanan selväkielisenä (ks. README:n Tietoturva-kohta) — tämä ei
+  poista riskiä, mutta estää muita samalla koneella olevia käyttäjätilejä
+  lukemasta sitä.
 
-## 7. Ylläpito
+## Ylläpito
 
 Wilma-integraatio nojaa epäviralliseen kirjastoon, joka lukee Wilman
 HTML-sivuja. Koulun Wilma-päivitys voi rikkoa sen ilman varoitusta. Siksi
@@ -182,7 +289,8 @@ Kun kortti lakkaa toimimasta:
    haettiin onnistuneesti mutta siitä ei saatu irti mitään, eli rakenne muuttui.
 2. Aja `LOG_LEVEL=debug` ja katso `data\snapshots\` — siellä on raaka HTML.
 3. Tarkista onko kirjastosta uudempi versio, lue sen muutosloki, nosta versio ja
-   aja `npm test`.
+   aja `npm test`. (Julkaisupaketin käyttäjä: tämä vaatii kehityskopion —
+   päivitys tulee uuden julkaisupaketin mukana.)
 
 Näyttö jatkaa sillä välin viimeisimmän onnistuneen datan näyttämistä
 vanhentuneena, joten aamun lukujärjestys ei katoa heti.

@@ -6,6 +6,11 @@
 #   - Chromium kioskitilassa automaattikirjautuvassa lightdm+openbox-istunnossa
 #   - virranhallinta pois käytöstä (lepotila, horrostila, näytön DPMS)
 #
+# Tämä skripti on KEHITYSKOPIOLLE (git clone + npm ci + npm run build) -- jos
+# olet ottamassa käyttöön puretusta JULKAISUPAKETISTA, jossa Node on jo
+# mukana eikä npm:ää tarvita, käytä sen sijaan asenna.sh:ta (kysyy myös
+# Wilma-tunnukset ym. asetukset interaktiivisesti ja todentaa asennuksen).
+#
 # Aja pääkäyttäjänä projektin "asennus"-kansiosta:
 #
 #   sudo ./asenna-kioski.sh

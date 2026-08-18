@@ -26,7 +26,7 @@ päivityssykli säilyy, vain ydin tulee toisesta lähteestä.
 
 Asenna Debian stable tavalliseen tapaan (esim. netinst-ISO). Valitse
 asennuksessa **työpöytäympäristöksi "ei mitään" tai vain "standard system
-utilities"** — kioski asentaa itse vain sen minkä tarvitsee (kohta 4), ei
+utilities"** — kioski asentaa itse vain sen minkä tarvitsee (kohta 5), ei
 täyttä työpöytää.
 
 ```bash
@@ -99,6 +99,43 @@ Vaihtoehtoisesti `nvm`, jos haluat pystyttää useamman version rinnakkain.
 
 ## 4. Projektin asennus
 
+Kaksi tapaa, valitse toinen — älä sekoita molempia samalla koneella (kumpikin
+kirjoittaa samat tiedostot: `infonaytto.service`,
+`/etc/lightdm/lightdm.conf.d/50-infonaytto-autologin.conf`,
+`~/.config/openbox/autostart`).
+
+### 4A. Julkaisupaketti (suositus tavalliseen käyttöön)
+
+Ei vaadi Nodea, npm:ää eikä git-yhteyttä kohdekoneelle — paketti sisältää
+oman Node-ajonsa (`node/bin/node`) ja käännetyn käyttöliittymän valmiina.
+
+```bash
+# Pura julkaisupaketti esim. kotikansioon, sitten:
+cd infonaytto-julkaisu/asennus     # kansion nimi riippuu paketista
+sudo ./asenna.sh
+```
+
+Skripti kysyy interaktiivisesti kaiken tarvittavan (asennushakemisto,
+portti, sään koordinaatit, Wilma-tunnukset ja -salasana, kalenterin
+ICS-osoite, PIN-koodit, luotetut laitteet), kirjoittaa `.env`-tiedoston
+oikeuksin 600, tarjoaa automaattikäynnistyksen (systemd-palvelu +
+lightdm/openbox-kioski, sama malli kuin `asenna-kioski.sh`:ssä alla) ja
+**todentaa asennuksen** käynnistämällä palvelimen ja kyselemällä
+`/api/health`-osoitetta ennen kuin ilmoittaa onnistumisesta. Lopuksi se
+tarjoaa yhden Wilma-yhteystestin.
+
+Uudelleenajo (`sudo ./asenna.sh` uudestaan samaan kohteeseen) on normaali
+tapa päivittää asetuksia tai paketti — se säilyttää aina `data/`-kansion
+(tietokanta, muistilista, hälytysäänet, lokit) ja käyttää olemassa olevan
+`.env`:n arvoja oletuksina, joten Enterillä läpi pääsee tuhoamatta mitään.
+
+Purku: `sudo ./asenna.sh --poista` (ks. skriptin oma ohje: `--help`).
+
+### 4B. Kehityskopio (git clone + npm)
+
+Tälle on oma skriptinsä, `asenna-kioski.sh` (kohta 5) — vaatii Node.js 24:n
+kohdekoneelle (kohta 3) ja npm:n riippuvuuksien asentamiseen.
+
 ```bash
 git clone <projektin-osoite> ~/infonaytto   # tai kopioi tiedostot muutoin
 cd ~/infonaytto
@@ -111,7 +148,7 @@ npm run build
 `.env`-sisältö on sama riippumatta käyttöjärjestelmästä, ks.
 [Windows-ohjeen taulukko](KAYTTOONOTTO.md#mitä-env-tiedostoon).
 
-### Kokeile ensin käsin
+#### Kokeile ensin käsin
 
 ```bash
 npm start
@@ -121,7 +158,10 @@ Avaa selaimessa `http://localhost:4173` (voi olla toiselta koneelta samassa
 verkossa, palvelin ei ole vielä rajattu localhostiin tässä vaiheessa). Jos
 jokin kortti näyttää virhettä, katso `data/logs/`.
 
-## 5. Kioski käyttöön
+## 5. Kioski käyttöön (kehityskopiolle, kohta 4B)
+
+Jos asensit julkaisupaketilla (kohta 4A), `asenna.sh` kysyi tämän jo eikä
+tätä kohtaa tarvitse tehdä erikseen.
 
 ```bash
 sudo apt install lightdm openbox chromium unclutter
@@ -327,7 +367,8 @@ Samat periaatteet kuin Windows-ohjeessa:
 - Salasanoja, evästeitä eikä viestien sisältöjä kirjoiteta lokiin.
 - `asenna-kioski.sh` tiukentaa `.env`-tiedoston oikeudet (`chmod 600`) joka
   ajolla eikä koskaan löysennä niitä, koska tiedostossa on Wilma-salasana
-  selväkielisenä.
+  selväkielisenä. `asenna.sh` (julkaisupaketti) luo `.env`:n suoraan oikeuksin
+  600 eikä koskaan kirjoita sitä ensin väljemmillä oikeuksilla.
 - Taustapalvelu on ajossa tavallisena käyttäjänä, ei roottina, ja
   `ProtectSystem=strict` rajaa sen kirjoitusoikeuden pelkkään
   `data`-kansioon.
