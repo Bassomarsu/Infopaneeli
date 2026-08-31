@@ -399,11 +399,25 @@ function fixLinuxExecutableBits(archivePath, topFolderName, platform, extraTarge
 //    (kahdentaisi server/- ja web/-sisällön pakettiin)
 //  - node_modules/.bin sisältää komentotiedostoja joita ei koskaan ajeta:
 //    palvelin käynnistetään suoraan `node .../index.ts`
+//  - riippuvuuksien test/, .github/, benchmarks/ ja examples/ eivät kuulu
+//    ajettavaan pakettiin, mutta poissulku ei ole tässä pelkkää siivousta:
+//    ILMAN SITÄ KOONTI KAATUU. Windowsin bsdtar 3.8.8 (libarchive 3.8.8)
+//    segfaulttaa tiedostoon `@fastify/send/test/fixtures/snow ☃/index.html`
+//    — hakemistonimessä on U+2603. Kaatuminen on hiljainen: exit-koodi on
+//    0xC0000005 eikä virheilmoituksessa lue mitään tiedostosta, ja arkisto
+//    jää katkelmaksi. Rajaus `*/node_modules/*/…` pitää poissulun
+//    riippuvuuksissa: oma server/-puu sisältää vain package.jsonin ja src/:n,
+//    eikä siihen saa kohdistua mitään. Huom: libarchiven poissulkukuviossa
+//    `*` osuu myös kauttaviivaan, joten yksi taso kattaa myös @scope-paketit.
 const ARCHIVE_EXCLUDES = [
   "*/package-lock.json",
   "*/node_modules/.package-lock.json",
   "*/node_modules/.bin",
   "*/node_modules/@infonaytto",
+  "*/node_modules/*/test",
+  "*/node_modules/*/.github",
+  "*/node_modules/*/benchmarks",
+  "*/node_modules/*/examples",
 ];
 
 function createArchive(stagingParent, topFolderName, outFile) {
