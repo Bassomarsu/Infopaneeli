@@ -1,6 +1,8 @@
 import fs from "node:fs";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { config } from "./config.ts";
+import { logger } from "./logging.ts";
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 
@@ -28,15 +30,119 @@ db.exec(`
     done       INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   );
-
-  -- Wilma ei kerro onko viesti luettu (ks. server/src/providers/wilma.ts:isUnread).
-  -- Tämä taulu on siis infonäytön oma kirjanpito siitä mitkä viestit on avattu
-  -- TÄLLÄ näytöllä, ei Wilman oma tila. message_id viittaa Wilman viestitunnisteeseen.
-  CREATE TABLE IF NOT EXISTS message_reads (
-    message_id INTEGER PRIMARY KEY,
-    read_at    TEXT NOT NULL
-  );
 `);
+
+/**
+ * Kumpikaan lähde ei kerro luotettavasti onko viesti luettu: Wilma ei kerro
+ * lainkaan (ks. providers/wilma.ts:isUnread) ja Päikyn oma `unread` voi olla
+ * "ei tiedossa" (ks. providers/paikky.ts:parseUnread). Tämä taulu on siis
+ * infonäytön oma kirjanpito siitä mitkä viestit on avattu TÄLLÄ näytöllä, ei
+ * lähteen oma tila.
+ *
+ * `message_id` on TEKSTIÄ eikä kokonaisluku, koska Päikyn tunniste
+ * (`uniqueId`) on merkkijono. Wilman numeerinen tunniste mahtuu tekstiin,
+ * muttei toisin päin. Avain on (source, message_id): sama numero voi tarkoittaa
+ * eri viestiä eri lähteessä, joten pelkkä tunniste ei riitä avaimeksi.
+ */
+const CREATE_MESSAGE_READS = `
+  CREATE TABLE message_reads (
+    source     TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    read_at    TEXT NOT NULL,
+    PRIMARY KEY (source, message_id)
+  )
+`;
+
+/**
+ * Yleistää vanhan yhden lähteen taulun (`message_id INTEGER PRIMARY KEY`)
+ * lähdekohtaiseksi. Perheen luettu-tila on tuotannossa oikeassa
+ * tietokannassa, joten vanhat rivit SIIRRETÄÄN eikä pudoteta: ne ovat
+ * määritelmän mukaan Wilman, koska muuta lähdettä ei tähän tauluun ole
+ * koskaan kirjoitettu.
+ *
+ * Idempotentti, koska tämä ajetaan joka käynnistyksessä: kohde tunnistetaan
+ * taulun sarakkeista eikä erillisestä versionumerosta, joten jo migroitua
+ * taulua ei kosketa. Siirto on yhdessä transaktiossa — puolittain migroitu
+ * taulu tarkoittaisi juuri sitä kadonnutta luettu-tilaa jota tämä välttää.
+ *
+ * Ottaa tietokannan parametrina eikä käytä moduulin omaa `db`:tä, jotta
+ * migraation voi testata oikealla vanhan muotoisella taululla ilman että
+ * testi koskee näytön tietokantaan (ks. test/message-reads.ts). `dbPath` on
+ * sama tiedosto auki `target`issa — vain varmuuskopiota varten, ks. alla.
+ */
+export function migrateMessageReads(target: DatabaseSync, dbPath?: string): void {
+  const columns = (target.prepare("PRAGMA table_info(message_reads)").all() as Array<{ name: string }>).map(
+    (row) => row.name,
+  );
+
+  // Tyhjä sarakejoukko = taulua ei ole vielä lainkaan, eli uusi asennus.
+  if (columns.length === 0) {
+    target.exec(CREATE_MESSAGE_READS);
+    return;
+  }
+  if (columns.includes("source")) return;
+
+  // Vain kun migraatio oikeasti tehdään, ei joka käynnistyksellä.
+  if (dbPath !== undefined) backupBeforeMigration(dbPath);
+
+  try {
+    target.exec(`
+      BEGIN;
+      -- Jäännöstaulu edellisestä keskeytyneestä yrityksestä kaataisi ALTERin,
+      -- ja koska tämä ajetaan joka käynnistyksessä, palvelin ei käynnistyisi
+      -- enää koskaan. Alkuperäiset rivit ovat tässä tilanteessa yhä
+      -- message_readsissa (nimeäminen ei ehtinyt onnistua), ja edellisen rivin
+      -- varmuuskopio on olemassa, joten pudotus ei ole se mikä hävittää tietoa.
+      DROP TABLE IF EXISTS message_reads_pre_source;
+      ALTER TABLE message_reads RENAME TO message_reads_pre_source;
+      ${CREATE_MESSAGE_READS};
+      INSERT INTO message_reads (source, message_id, read_at)
+        SELECT 'wilma', CAST(message_id AS TEXT), read_at FROM message_reads_pre_source;
+      DROP TABLE message_reads_pre_source;
+      COMMIT;
+    `);
+  } catch (err) {
+    // `exec` ei peruuta transaktiota itse, joten ilman tätä transaktio jäisi
+    // auki ja JOKAINEN seuraava BEGIN kaatuisi — yksi vika muuttuisi
+    // pysyväksi. ROLLBACK saa itsekin kaatua (jos BEGIN ei ehtinyt onnistua,
+    // transaktiota ei ole peruutettavaksi); alkuperäinen virhe on se joka
+    // kertoo mitä tapahtui, joten se ei saa jäädä sen alle.
+    try {
+      target.exec("ROLLBACK");
+    } catch {
+      // tarkoituksella tyhjä, ks. yllä
+    }
+    throw err;
+  }
+}
+
+/**
+ * Kopio kannasta ENNEN skeemamuutosta, samaan kansioon.
+ *
+ * Syy ei ole migraation epäonnistuminen (se on transaktiossa) vaan PALUU
+ * VANHAAN JULKAISUUN: vanha `store.ts` ajaa moduulitasolla
+ * `ON CONFLICT(message_id)`, joka uutta taulua vasten kaatuu virheeseen
+ * "does not match any PRIMARY KEY or UNIQUE constraint", eikä
+ * `CREATE TABLE IF NOT EXISTS` korjaa sitä. `data/` säilyy julkaisupaketin
+ * päivityksessä, joten rollback tarkoittaisi palvelinta joka ei käynnisty
+ * lainkaan — virheilmoituksena SQLite-lause jota kukaan ei osaa yhdistää
+ * tähän. Tämä kopio on se tiedosto jonka päälle rollback voi palata.
+ *
+ * Tavallinen tiedostokopio riittää: tämä ajetaan käynnistyksessä ennen kuin
+ * yksikään kirjoitus on käynnissä, eikä kanta ole WAL-tilassa.
+ */
+function backupBeforeMigration(dbPath: string): void {
+  const backupPath = path.join(path.dirname(dbPath), "infonaytto-ennen-viestilahteita.db");
+  fs.copyFileSync(dbPath, backupPath);
+  // warn eikä debug: oletusloki on `warn`, ja juuri tämän rivin pitää olla
+  // löydettävissä siinä tilanteessa jossa kopiota tarvitaan.
+  logger.warn(
+    { event: "message_reads_migration_backup", backupPath },
+    "viestien luettu-tila migroidaan lähdekohtaiseksi — kannasta otettiin kopio ennen muutosta",
+  );
+}
+
+migrateMessageReads(db, config.dbPath);
 
 const selectSetting = db.prepare("SELECT value FROM settings WHERE key = ?");
 const upsertSetting = db.prepare(
@@ -116,33 +222,81 @@ export function deleteNote(id: number): void {
   db.prepare("DELETE FROM notes WHERE id = ?").run(id);
 }
 
-const selectMessageRead = db.prepare("SELECT 1 FROM message_reads WHERE message_id = ?");
-const selectAllMessageReads = db.prepare("SELECT message_id FROM message_reads");
+const selectMessageRead = db.prepare("SELECT 1 FROM message_reads WHERE source = ? AND message_id = ?");
+const selectMessageReadsBySource = db.prepare("SELECT message_id FROM message_reads WHERE source = ?");
 const upsertMessageRead = db.prepare(
-  `INSERT INTO message_reads (message_id, read_at) VALUES (?, ?)
-   ON CONFLICT(message_id) DO UPDATE SET read_at = excluded.read_at`,
+  `INSERT INTO message_reads (source, message_id, read_at) VALUES (?, ?, ?)
+   ON CONFLICT(source, message_id) DO UPDATE SET read_at = excluded.read_at`,
 );
 
 /**
- * Whether a Wilma message has been opened on this display. This is entirely
- * local bookkeeping — see the comment on `message_reads` above for why Wilma's
- * own read state cannot be used.
+ * Tunniste tekstiksi ennen sidontaa. **Tämä ei ole turha vaikka tyyppi on jo
+ * `string` — älä poista sitä siistimisenä.**
+ *
+ * `node:sqlite` sitoo JS-numeron liukulukuna, ja TEXT-sarake tallentaa sen
+ * silloin muodossa `"86922.0"`. Sellaista riviä ei löydä kumpikaan haku: ei
+ * numerolla 86922 eikä merkkijonolla "86922". Yksi ajonaikana läpi päässyt
+ * numero (esim. JSON-runko `{"ids":[86921]}`, jonka `string[]`-tyyppi ei estä
+ * mitenkään) kirjoittaisi siis rivin jota `listReadMessageIds` ei näe koskaan:
+ * viesti näyttäisi ikuisesti lukemattomalta, taulu täyttyisi roskariveistä,
+ * eikä mikään kertoisi syytä. Reitti torjuu ei-merkkijonot jo omalta osaltaan
+ * (ks. routes/api.ts:n isValidMessageId) — tämä on toinen kerros, koska
+ * hiljainen tietokantavika on kalliimpi kuin yksi String()-kutsu.
  */
-export function isMessageRead(messageId: number): boolean {
-  return selectMessageRead.get(messageId) !== undefined;
+function asTextId(messageId: string): string {
+  return String(messageId);
 }
 
-/** Every message id known to have been opened here, for bulk-checking a whole inbox at once. */
-export function listReadMessageIds(): Set<number> {
-  const rows = selectAllMessageReads.all() as Array<{ message_id: number }>;
+/**
+ * Whether a message has been opened on this display. This is entirely local
+ * bookkeeping — see the comment on `message_reads` above for why neither
+ * source's own read state can be used.
+ */
+export function isMessageRead(source: string, messageId: string): boolean {
+  return selectMessageRead.get(source, asTextId(messageId)) !== undefined;
+}
+
+/**
+ * Yhden lähteen kaikki täällä avatut viestit, koko postilaatikon
+ * kertatarkistusta varten. Lähdekohtainen: Wilman ja Päikyn tunnisteet ovat eri
+ * avaruudesta, joten yhteinen joukko antaisi vääriä osumia numeroilla jotka
+ * sattuvat esiintymään molemmissa.
+ */
+export function listReadMessageIds(source: string): Set<string> {
+  const rows = selectMessageReadsBySource.all(source) as Array<{ message_id: string }>;
   return new Set(rows.map((r) => r.message_id));
 }
 
 /** Idempotent: opening an already-read message just refreshes read_at. */
-export function markMessageRead(messageId: number): string {
+export function markMessageRead(source: string, messageId: string): string {
   const readAt = new Date().toISOString();
-  upsertMessageRead.run(messageId, readAt);
+  upsertMessageRead.run(source, asTextId(messageId), readAt);
   return readAt;
+}
+
+/**
+ * "Merkitse kaikki luetuiksi": yksi teko, joten yksi aikaleima ja yksi
+ * transaktio — puolittain kirjoittunut erä jättäisi listan näyttämään osan
+ * viesteistä yhä lukemattomina ilman että mikään kertoo miksi. Palauttaa
+ * montako ERI viestiä merkittiin; sama tunniste kahdesti on yksi viesti.
+ */
+export function markMessagesRead(source: string, messageIds: string[]): number {
+  // Tekstiksi ENNEN kaksoiskappaleiden poistoa (ks. asTextId): muuten 86921 ja
+  // "86921" olisivat joukossa kaksi eri alkiota mutta tauluun sama rivi, ja
+  // palautettu lukumäärä valehtelisi.
+  const unique = [...new Set(messageIds.map(asTextId))];
+  if (unique.length === 0) return 0;
+
+  const readAt = new Date().toISOString();
+  db.exec("BEGIN");
+  try {
+    for (const messageId of unique) upsertMessageRead.run(source, messageId, readAt);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  return unique.length;
 }
 
 export { db };

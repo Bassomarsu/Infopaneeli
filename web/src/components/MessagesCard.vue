@@ -1,48 +1,187 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import CardShell from "./CardShell.vue";
 import MessageDialog from "./MessageDialog.vue";
-import type { ProviderSnapshot, WilmaData, WilmaMessage } from "../types";
+import PaikkyMessages from "./PaikkyMessages.vue";
+import { useEditAccess } from "../composables/useEditAccess";
+import type { PaikkyData, PaikkyMessage, ProviderSnapshot, ProviderStatus, WilmaData, WilmaMessage } from "../types";
 
 const props = defineProps<{
   snapshot?: ProviderSnapshot<WilmaData>;
+  /** Puuttuu kokonaan jos Päikkyä ei ole konfiguroitu — silloin kortti on entisellään. */
+  paikkySnapshot?: ProviderSnapshot<PaikkyData>;
   hidePreviews: boolean;
 }>();
 
-type Tab = "unread" | "read";
-const tab = ref<Tab>("unread");
+const editAccess = useEditAccess();
+
+type Source = "wilma" | "paikky";
+type Mode = "unread" | "read";
+
+/**
+ * Valinta on kaksiulotteinen: LÄHDE (Wilma / Päikky) ja LUKUTILA (lukematta /
+ * luetut). Yhdeksi välilehtiriviksi ne eivät mahdu — neljä välilehteä
+ * ("Wilma lukematta", "Wilma luetut", …) ei ole luettavissa parin metrin
+ * päästä — joten ne ovat kaksi eri asiaa myös näytöllä:
+ *
+ * - Lähdevälilehdet ylimpänä, kumpikin oma lukemattomien lukumääränsä mukana.
+ *   Ne kertovat mitä korttiin on tullut; siksi lukumäärä on nimenomaan täällä.
+ * - Niiden alla ohut ohjausrivi: lukutilan valinta ja "merkitse kaikki
+ *   luetuiksi". Se ei ole välilehtirivi vaan valitun lähteen työkalut.
+ *
+ * Ilman Päikkyä lähderiviä EI piirretä lainkaan: yhdellä lähteellä se olisi
+ * yksi nappi joka ei valitse mitään, ja kortti jäisi entiselleen — yksi rivi,
+ * ja lukemattomien lukumäärä siirtyy silloin "Lukematta"-valintaan, koska se
+ * on ainoa paikka jossa se on yksiselitteinen. Lukumäärä näkyy siis aina
+ * täsmälleen kerran, sillä rivillä joka kertoo mitä lasketaan.
+ */
+const source = ref<Source>("wilma");
+const mode = ref<Mode>("unread");
+
+const paikkyConfigured = computed(() => props.paikkySnapshot !== undefined);
+
+// Jos Päikky poistetaan käytöstä kesken kaiken, kortti ei saa jäädä auki
+// lähteeseen jota ei enää ole.
+watch(paikkyConfigured, (configured) => {
+  if (!configured && source.value === "paikky") source.value = "wilma";
+});
+
+/**
+ * `localRead` tulee Päikyn viesteihin palvelimelta samalla tavalla kuin
+ * Wilman viesteihin, mutta se on tyypissä valinnainen: se on tämän näytön
+ * kirjanpitoa eikä Päikyn kenttä, eikä sitä ole vanhemman palvelimen
+ * vastauksessa. Puuttuva kenttä ei ole "luettu".
+ */
+type PaikkyMessageWithRead = PaikkyMessage & { localRead?: boolean };
 
 /**
  * Local read state, keyed by message id. Seeded from what the server already
  * persisted (`message.localRead`, from server/src/core/store.ts's
- * `message_reads` table) and then updated the moment a message is opened, so
- * the tabs react instantly instead of waiting for the next dashboard poll
- * (which only runs every few minutes).
+ * `message_reads` table) and then updated the moment a message is opened or
+ * merkitään luetuksi, so the tabs react instantly instead of waiting for the
+ * next dashboard poll (which only runs every few minutes).
+ *
+ * Avain on merkkijono ja lähde on osa sitä: Wilman tunniste on numero ja
+ * Päikyn merkkijono, joten pelkkä id sekoittaisi Wilman viestin 5 ja Päikyn
+ * viestin "5" toisiinsa.
  */
-const localReads = ref(new Set<number>());
+const localReads = ref(new Set<string>());
+
+function readKey(source: Source, id: string | number): string {
+  return `${source}:${id}`;
+}
 
 watch(
   () => props.snapshot?.data?.messages,
   (messages) => {
     for (const message of messages ?? []) {
-      if (message.localRead) localReads.value.add(message.id);
+      if (message.localRead) localReads.value.add(readKey("wilma", message.id));
     }
   },
   { immediate: true },
 );
 
-function isRead(message: WilmaMessage): boolean {
-  return localReads.value.has(message.id);
+watch(
+  () => props.paikkySnapshot?.data?.messages as PaikkyMessageWithRead[] | undefined,
+  (messages) => {
+    for (const message of messages ?? []) {
+      if (message.localRead) localReads.value.add(readKey("paikky", message.id));
+    }
+  },
+  { immediate: true },
+);
+
+function isWilmaRead(message: WilmaMessage): boolean {
+  return localReads.value.has(readKey("wilma", message.id));
+}
+
+/**
+ * Päikyn lukutila ratkeaa samalla säännöllä kuin Wilman: tämän näytön oma
+ * kirjanpito ensin. Päikyn oma `unread === false` kelpaa myös perusteeksi —
+ * se on Päikyn väite että viesti on luettu. `unread === null` EI ole: se
+ * tarkoittaa "Päikky ei kerro", jolloin viesti pysyy lukemattomana kunnes se
+ * merkitään täällä. Tuntematonta ei siis esitetä luettuna.
+ */
+function isPaikkyRead(message: PaikkyMessage): boolean {
+  if (localReads.value.has(readKey("paikky", message.id))) return true;
+  return message.unread === false;
 }
 
 const allMessages = computed(() => props.snapshot?.data?.messages ?? []);
-const unreadMessages = computed(() => allMessages.value.filter((m) => !isRead(m)));
-const readMessages = computed(() => allMessages.value.filter((m) => isRead(m)));
-const bothEmpty = computed(() => allMessages.value.length === 0);
+const wilmaUnread = computed(() => allMessages.value.filter((m) => !isWilmaRead(m)));
+const wilmaRead = computed(() => allMessages.value.filter((m) => isWilmaRead(m)));
+
+const paikkyMessages = computed(() => props.paikkySnapshot?.data?.messages ?? []);
+const paikkyUnread = computed(() => paikkyMessages.value.filter((m) => !isPaikkyRead(m)));
+const paikkyRead = computed(() => paikkyMessages.value.filter((m) => isPaikkyRead(m)));
+
+const unreadCount = computed(() => wilmaUnread.value.length + paikkyUnread.value.length);
+
+/** Lähde on tyhjä vasta kun se on oikeasti luettu — ei silloin kun se on piilotettu tai poikki. */
+function showable(snapshot?: ProviderSnapshot<unknown>): boolean {
+  return snapshot?.status === "ok" || snapshot?.status === "stale";
+}
+
+/**
+ * Molemmat lähteet luettu ja tyhjinä: ei välilehtiä, vain rauhallinen
+ * tyhjätila. Piilotettu tai epäonnistunut lähde EI ole tyhjä postilaatikko —
+ * "Ei viestejä" olisi silloin suoraan väärä väite, ja puhelimessa (Wilma ja
+ * Päikky molemmat `hidden`) se olisi juuri se tilanne. Ne kerrotaan
+ * välilehden sisällä.
+ */
+const nothingAtAll = computed(() => {
+  if (!showable(props.snapshot)) return false;
+  if (paikkyConfigured.value && !showable(props.paikkySnapshot)) return false;
+  // Epäonnistunut viestihaku ei ole tyhjä postilaatikko: se kerrotaan Päikyn
+  // välilehdellä, joten välilehdet on säilytettävä.
+  if (props.paikkySnapshot?.data?.messagesError) return false;
+  return allMessages.value.length === 0 && paikkyMessages.value.length === 0;
+});
 
 // Capped like the old single-list view, so the card never grows past what the
-// wall display has room for.
-const visibleMessages = computed(() => (tab.value === "unread" ? unreadMessages.value : readMessages.value).slice(0, 6));
+// wall display has room for. Katto koskee vain piirtämistä: "merkitse kaikki
+// luetuiksi" merkitsee koko lukemattomien listan, ei kuutta ensimmäistä.
+const MAX_VISIBLE = 6;
+const visibleMessages = computed(() =>
+  (mode.value === "unread" ? wilmaUnread.value : wilmaRead.value).slice(0, MAX_VISIBLE),
+);
+const visiblePaikkyMessages = computed(() =>
+  (mode.value === "unread" ? paikkyUnread.value : paikkyRead.value).slice(0, MAX_VISIBLE),
+);
+
+const cardTitle = computed(() => (paikkyConfigured.value ? "Viestit" : "Wilma-viestit"));
+
+const activeSnapshot = computed(() => (source.value === "paikky" ? props.paikkySnapshot : props.snapshot));
+
+/**
+ * Ilman Päikkyä kuori saa Wilman tilan sellaisenaan — kortti käyttäytyy kuten
+ * ennen. Välilehtien kanssa vain `stale` päästetään kuoreen asti (merkki
+ * koskee silloin näkyvissä olevaa sisältöä); `hidden`, `failed` ja `idle`
+ * korvaisivat CardShellissä koko rungon ja veisivät välilehdet mukanaan,
+ * jolloin toimivaan lähteeseen ei enää pääsisi takaisin. Ks. sama ratkaisu
+ * ScheduleCard.vue:ssa.
+ */
+const shellStatus = computed<ProviderStatus | undefined>(() => {
+  if (!paikkyConfigured.value) return props.snapshot?.status;
+  return activeSnapshot.value?.status === "stale" ? "stale" : "ok";
+});
+
+/** Sama sanamuoto kuin CardShellissä, koska tämä korvaa sen juuri tälle välilehdelle. */
+const wilmaState = computed<{ title: string | null; text: string } | null>(() => {
+  if (!paikkyConfigured.value) return null;
+  const status = props.snapshot?.status;
+  if (!props.snapshot || status === "idle") return { title: null, text: "Haetaan…" };
+  if (status === "failed") {
+    return { title: "Tietoja ei saatu", text: props.snapshot.error?.message ?? "Lähde ei vastaa" };
+  }
+  if (status === "hidden") {
+    return {
+      title: "Vain infonäytöllä",
+      text: "Koulutiedot näkyvät vain keittiön näytöllä, eivät kotiverkon muilla laitteilla.",
+    };
+  }
+  return null;
+});
 
 function studentName(message: WilmaMessage): string | null {
   const data = props.snapshot?.data;
@@ -69,6 +208,101 @@ function preview(message: WilmaMessage): string {
   return text.length > 150 ? `${text.slice(0, 150)}…` : text;
 }
 
+/**
+ * Epäonnistunut lukumerkintä kerrotaan tässä. Se on koko toiminnon ainoa
+ * näkyvä jälki silloin kun palvelin ei ottanut merkintää vastaan: ilman tätä
+ * lista palautuisi ennalleen ilman mitään selitystä, mikä näyttäisi siltä
+ * että painike ei tee mitään.
+ */
+const actionError = ref<string | null>(null);
+let errorTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showActionError(text: string): void {
+  actionError.value = text;
+  if (errorTimer !== null) clearTimeout(errorTimer);
+  // Seinänäytöllä virhettä ei kuittaa kukaan, joten se ei jää syömään riviä
+  // ikuisesti — mutta se näkyy tarpeeksi kauan että ohi kulkeva ehtii lukea sen.
+  errorTimer = setTimeout(() => {
+    actionError.value = null;
+    errorTimer = null;
+  }, 12000);
+}
+
+function clearActionError(): void {
+  if (errorTimer !== null) {
+    clearTimeout(errorTimer);
+    errorTimer = null;
+  }
+  actionError.value = null;
+}
+
+onBeforeUnmount(clearActionError);
+
+const markBusy = ref(false);
+
+/**
+ * Valitun lähteen lukemattomien tunnisteet, AINA merkkijonoina — myös Päikyn,
+ * jonka id on jo merkkijono. `String()` ei ole tässä varmuuden vuoksi: Wilman
+ * id on numero, ja numerona lähetetty tunniste päätyy palvelimen TEXT-
+ * sarakkeeseen muodossa "86922.0", jota mikään myöhempi haku ei enää löydä.
+ * Lukutila hajoaisi pysyvästi ja kaikki viestit näyttäisivät lukemattomilta.
+ * Palvelin hylkää ei-merkkijonot 400:lla, mutta se on verkko, ei tämä
+ * invariantti.
+ */
+const markableIds = computed<string[]>(() =>
+  source.value === "wilma" ? wilmaUnread.value.map((m) => String(m.id)) : paikkyUnread.value.map((m) => String(m.id)),
+);
+
+/** Vain lukemattomien näkymässä ja vain kun merkittävää on. */
+const canMarkAll = computed(() => mode.value === "unread" && markableIds.value.length > 0);
+
+/**
+ * Lukumäärä on painikkeessa, koska merkintä osuu KAIKKIIN valitun lähteen
+ * lukemattomiin — myös niihin joita kuuden rivin listalla ei näy — eikä
+ * Wilman viestiä saa enää takaisin lukemattomaksi. Luku kertoo teon
+ * laajuuden ohimennen painavalle ilman erillistä vahvistusdialogia, joka
+ * kosketusnäytöllä seinällä olisi kömpelö.
+ */
+const markAllLabel = computed(() =>
+  markBusy.value ? "Merkitään…" : `Merkitse kaikki luetuiksi (${markableIds.value.length})`,
+);
+
+/**
+ * Merkitsee valitun lähteen — vain sen — lukemattomat luetuiksi. Merkintä
+ * tehdään paikalliseen tilaan heti, koska seuraavaa pollausta odotellaan
+ * minuutteja, ja perutaan kokonaan jos palvelin ei ottanut sitä vastaan.
+ * Peruminen on tarkka: listalle päätyvät vain ne viestit joita ei ollut
+ * merkitty, joten ennestään luettuja ei nollata vahingossa.
+ */
+async function markAllRead(): Promise<void> {
+  if (markBusy.value) return;
+  const target = source.value;
+  const ids = markableIds.value;
+  if (ids.length === 0) return;
+
+  const keys = ids.map((id) => readKey(target, id));
+  markBusy.value = true;
+  clearActionError();
+  for (const key of keys) localReads.value.add(key);
+
+  try {
+    // editFetch eikä paljas fetch: reitti vaatii luotetun laitteen, ja
+    // FULL_PIN-laitteella luottamus kulkee juuri x-edit-pin-otsikossa jonka
+    // editFetch liittää mukaan (ks. useEditAccess.ts).
+    const response = await editAccess.editFetch(`/api/messages/${target}/read-all`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    if (!response.ok) throw new Error();
+  } catch {
+    for (const key of keys) localReads.value.delete(key);
+    showActionError("Viestejä ei saatu merkittyä luetuiksi");
+  } finally {
+    markBusy.value = false;
+  }
+}
+
 // Holding just the id — not the message object — is what lets the open dialog
 // pick up sender/content as soon as a later dashboard poll fills them in.
 // `withDetails` in the provider fetches those in the background, and every
@@ -88,18 +322,24 @@ watch(openMessage, (message) => {
 
 async function openDialog(message: WilmaMessage): Promise<void> {
   openMessageId.value = message.id;
-  if (isRead(message)) return;
+  if (isWilmaRead(message)) return;
 
   // Optimistic: the wall display must update the instant the message is
   // opened, not on the next dashboard poll (see the localReads comment above).
-  localReads.value.add(message.id);
+  const key = readKey("wilma", message.id);
+  localReads.value.add(key);
   try {
-    const response = await fetch(`/api/wilma/messages/${message.id}/read`, { method: "POST" });
+    // String(): sama syy kuin markableIdsissä — tunniste kulkee merkkijonona
+    // polkuunkin asti, eikä numeron muotoilu jää sattuman varaan.
+    const response = await editAccess.editFetch(`/api/messages/wilma/${String(message.id)}/read`, { method: "POST" });
     if (!response.ok) throw new Error();
   } catch {
     // The server never recorded it, so roll the optimistic update back —
-    // otherwise the card would keep claiming "read" after a reload.
-    localReads.value.delete(message.id);
+    // otherwise the card would keep claiming "read" after a reload. Sanotaan
+    // se myös ääneen: viesti hyppäisi muuten takaisin lukemattomiin ilman
+    // mitään syytä.
+    localReads.value.delete(key);
+    showActionError("Lukumerkintää ei saatu tallennettua");
   }
 }
 
@@ -110,44 +350,100 @@ function closeDialog(): void {
 
 <template>
   <CardShell
-    title="Wilma-viestit"
-    accent="var(--accent-school)"
-    :status="snapshot?.status"
-    :fetched-at="snapshot?.fetchedAt"
-    :error="snapshot?.error"
-    :note="unreadMessages.length > 0 ? `${unreadMessages.length} lukematonta` : undefined"
+    :title="cardTitle"
+    :accent="source === 'paikky' ? 'var(--accent-calendar)' : 'var(--accent-school)'"
+    :status="shellStatus"
+    :fetched-at="activeSnapshot?.fetchedAt"
+    :error="activeSnapshot?.error"
+    :note="unreadCount > 0 ? `${unreadCount} lukematonta` : undefined"
   >
-    <div v-if="bothEmpty" class="state">
+    <div v-if="nothingAtAll" class="state">
       <span>Ei viestejä</span>
     </div>
 
-    <div v-else class="messages-panel">
-      <div class="tabs" role="tablist">
+    <div v-else class="messages-panel" :class="{ 'messages-panel--care': source === 'paikky' }">
+      <!-- Lähderivi: kumpi postilaatikko, ja montako lukematonta siinä on.
+           Piirretään vain kun lähteitä on kaksi. -->
+      <div v-if="paikkyConfigured" class="sources" role="tablist" aria-label="Viestien lähde">
         <button
           type="button"
           role="tab"
-          class="tabs__btn"
-          :class="{ 'tabs__btn--active': tab === 'unread' }"
-          :aria-selected="tab === 'unread'"
-          @click="tab = 'unread'"
+          class="sources__btn sources__btn--school"
+          :class="{ 'sources__btn--active': source === 'wilma' }"
+          :aria-selected="source === 'wilma'"
+          @click="source = 'wilma'"
         >
-          Lukematta
-          <span v-if="unreadMessages.length > 0" class="tabs__count">{{ unreadMessages.length }}</span>
+          Wilma
+          <span v-if="wilmaUnread.length > 0" class="count">{{ wilmaUnread.length }}</span>
         </button>
         <button
           type="button"
           role="tab"
-          class="tabs__btn"
-          :class="{ 'tabs__btn--active': tab === 'read' }"
-          :aria-selected="tab === 'read'"
-          @click="tab = 'read'"
+          class="sources__btn sources__btn--care"
+          :class="{ 'sources__btn--active': source === 'paikky' }"
+          :aria-selected="source === 'paikky'"
+          @click="source = 'paikky'"
         >
-          Luetut
+          Päikky
+          <span v-if="paikkyUnread.length > 0" class="count count--care">{{ paikkyUnread.length }}</span>
         </button>
       </div>
 
-      <div v-if="visibleMessages.length === 0" class="state">
-        <span>{{ tab === "unread" ? "Ei lukemattomia viestejä" : "Ei luettuja viestejä" }}</span>
+      <!-- Ohjausrivi, ei toinen välilehtirivi: valitun lähteen lukutila ja sen
+           joukkomerkintä. Ilman Päikkyä tämä on kortin ainoa rivi, ja saa
+           silloin lähdevälilehtien mitat (modes--primary). -->
+      <div class="controls">
+        <div class="modes" :class="{ 'modes--primary': !paikkyConfigured }" role="tablist" aria-label="Lukutila">
+          <button
+            type="button"
+            role="tab"
+            class="modes__btn"
+            :class="{ 'modes__btn--active': mode === 'unread' }"
+            :aria-selected="mode === 'unread'"
+            @click="mode = 'unread'"
+          >
+            Lukematta
+            <!-- Yhdellä lähteellä lukumäärä on tässä, koska lähderiviä ei ole. -->
+            <span v-if="!paikkyConfigured && wilmaUnread.length > 0" class="count">{{ wilmaUnread.length }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="modes__btn"
+            :class="{ 'modes__btn--active': mode === 'read' }"
+            :aria-selected="mode === 'read'"
+            @click="mode = 'read'"
+          >
+            Luetut
+          </button>
+        </div>
+
+        <!-- `|| markBusy`: paikallinen merkintä tyhjentää lukemattomat heti,
+             joten ilman tätä painike katoaisi ennen kuin pyyntö on edes
+             palannut — ja epäonnistuessa vilkahtaisi takaisin. -->
+        <button v-if="canMarkAll || markBusy" type="button" class="mark-all" :disabled="markBusy" @click="markAllRead">
+          {{ markAllLabel }}
+        </button>
+      </div>
+
+      <p v-if="actionError" class="notice">{{ actionError }}</p>
+
+      <PaikkyMessages
+        v-if="source === 'paikky'"
+        :snapshot="paikkySnapshot"
+        :messages="visiblePaikkyMessages"
+        :mode="mode"
+        :total="paikkyMessages.length"
+        :hide-previews="hidePreviews"
+      />
+
+      <div v-else-if="wilmaState" class="state">
+        <span v-if="wilmaState.title" class="state__title">{{ wilmaState.title }}</span>
+        <span>{{ wilmaState.text }}</span>
+      </div>
+
+      <div v-else-if="visibleMessages.length === 0" class="state">
+        <span>{{ mode === "unread" ? "Ei lukemattomia viestejä" : "Ei luettuja viestejä" }}</span>
       </div>
 
       <ul v-else class="messages">
@@ -159,8 +455,8 @@ function closeDialog(): void {
               <span class="message__sender">{{ message.senderName ?? "" }}</span>
               <span class="message__time tnum">{{ sentLabel(message.sentAt) }}</span>
             </div>
-            <div class="message__subject" :class="{ 'message__subject--unread': !isRead(message) }">
-              <span v-if="!isRead(message)" class="message__dot" aria-hidden="true" />
+            <div class="message__subject" :class="{ 'message__subject--unread': !isWilmaRead(message) }">
+              <span v-if="!isWilmaRead(message)" class="message__dot" aria-hidden="true" />
               {{ message.subject }}
               <span v-if="studentName(message)" class="message__student">{{ studentName(message) }}</span>
             </div>
@@ -175,50 +471,149 @@ function closeDialog(): void {
 </template>
 
 <style scoped>
+/* Valitun lähteen tunnusväri yhdessä paikassa: ohjausrivi ja joukkomerkintä
+   ottavat sen tästä, jolloin ne kertovat mitä lähdettä ne koskevat. */
 .messages-panel {
+  --source-accent: var(--accent-school);
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1;
-  gap: 0.4rem;
+  gap: 0.35rem;
 }
 
-.tabs {
+.messages-panel--care {
+  --source-accent: var(--accent-calendar);
+}
+
+.sources {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.5rem;
   flex-shrink: 0;
 }
 
-.tabs__btn {
+.sources__btn {
   flex: 1;
   min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   background: none;
   border: 1px solid var(--border);
   border-radius: 10px;
+  color: var(--text-faint);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sources__btn--active {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+/* Lähteen oma väri, ei valitun — sama merkki kuin kortin otsikkopallossa,
+   jotta lähde tunnistuu vilkaisulla eikä lukemalla. */
+.sources__btn--school.sources__btn--active {
+  border-color: var(--accent-school);
+}
+
+.sources__btn--care.sources__btn--active {
+  border-color: var(--accent-calendar);
+}
+
+/* Ohjausrivi on tarkoituksella kevyempi kuin lähderivi: se on työkalu, ei
+   navigaatio. Rivi rullaa omalle rivilleen vasta jos kortti on niin kapea
+   ettei painike mahdu — leikkautunut "Merkitse kaikki lue…" olisi pahempi. */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.modes {
+  display: flex;
+  gap: 0.3rem;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.modes__btn {
+  flex: 1;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--text-faint);
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
 }
 
-.tabs__btn--active {
+.modes__btn--active {
   background: var(--surface-strong);
-  border-color: var(--accent-school);
+  border-color: var(--source-accent);
   color: var(--text);
 }
 
-.tabs__count {
-  min-width: 1.1rem;
-  padding: 0.05rem 0.35rem;
+/* Ilman Päikkyä tämä rivi on kortin välilehtirivi, ja pitää entiset mittansa. */
+.modes--primary .modes__btn {
+  min-height: 44px;
+  border-color: var(--border);
+}
+
+.modes--primary .modes__btn--active {
+  border-color: var(--source-accent);
+}
+
+.count {
+  min-width: 1.3rem;
+  padding: 0.1rem 0.4rem;
   border-radius: 999px;
   background: var(--accent-school);
   color: #0b0d12;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 700;
+  line-height: 1.2;
+}
+
+.count--care {
+  background: var(--accent-calendar);
+}
+
+.mark-all {
+  min-height: 38px;
+  padding: 0 0.9rem;
+  background: none;
+  border: 1px solid var(--source-accent);
+  border-radius: 999px;
+  color: var(--source-accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mark-all:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Sama sävy kuin CardShellin card__reason -selitteessä ja Päikyn omassa
+   huomautuksessa: vika kerrotaan, mutta se ei ole hälytys. */
+.notice {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  color: #f3c26b;
+  flex-shrink: 0;
 }
 
 .messages {

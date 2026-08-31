@@ -130,6 +130,100 @@ export interface WilmaData {
   unreadCount: number;
 }
 
+/**
+ * Päikyn tyypit peilaavat palvelimen tuottamaa muotoa (server/src/providers/paikky.ts).
+ *
+ * Kellonajat ovat jo valmiiksi Europe/Helsinki -paikallista aikaa muodossa
+ * "HH:MM" — palvelin on tehnyt muunnoksen, koska Päikyn kalenteri antaa
+ * UTC-ISO-aikoja ja saldo paikallisia merkkijonoja (ks. docs/paikky-rajapinta.md).
+ * Selaimessa EI siis tehdä aikavyöhykemuunnoksia näille kentille.
+ */
+export interface PaikkyChild {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export interface PaikkyTimeRange {
+  type: string;
+  from: string;
+  /** Null = alkuaika tiedossa mutta loppuaika ei (esim. kesken oleva päivä). */
+  to: string | null;
+}
+
+export interface PaikkyDay {
+  /** "YYYY-MM-DD" */
+  date: string;
+  /**
+   * "unknown" = palvelin ei tunnistanut Päikyn antamaa tyyppiä. Se on oma
+   * arvonsa eikä vaivu "unplannableksi", koska tuntematon päivä ei saa
+   * renderöityä rauhoittavana "ei hoitoa" -rivinä — ks. PaikkyCareDays.vue.
+   */
+  type: "past" | "current" | "locked" | "plannable" | "unplannable" | "unknown";
+  /** Tyhjä = ei hoitoa kyseisenä päivänä. */
+  planned: PaikkyTimeRange[];
+  /** Esim. "SCHEDULED_DAY_OFF". Tuntematon arvo näytetään sellaisenaan, ei piiloteta. */
+  markingType: string | null;
+  needsAttention: boolean;
+  /**
+   * Milloin varaus lukittuu. ISO-8601 UTC-aikaleima — HUOM: eri muoto kuin
+   * from/to-kentät, jotka ovat paikallisia "HH:MM"-merkkijonoja.
+   */
+  lockingAt: string | null;
+}
+
+/**
+ * Toteuma ja suunnitelma ovat tässä eri kentissä, eivätkä ne saa sekoittua
+ * käyttöliittymässä: `planned` on VARAUS, `status`/`presentFrom` on se mitä
+ * oikeasti tapahtui. Sairaana kotona oleva lapsi tuottaa varauksen ilman
+ * statusta, joten varatun ajan näyttäminen läsnäolona olisi suoraan väärä
+ * tieto seinällä.
+ *
+ * Uloskirjausaikaa ei ole: se olisi vaatinut oman balance-kutsunsa ja
+ * valmistuisi vasta illalla, joten `LEFT_FOR_TODAY` näytetään ilman kelloa.
+ */
+export interface PaikkyToday {
+  date: string;
+  /** "PRESENT" | "NOT_PRESENT" | "LEFT_FOR_TODAY" | poissaolotyyppi. Null = ei tiedossa. */
+  status: string | null;
+  /** Toteutunut sisäänkirjaus, "HH:MM". Ainoa "paikalla nyt" -lähde. */
+  presentFrom: string | null;
+  /** Varaus, ei toteuma. */
+  planned: PaikkyTimeRange[];
+}
+
+export interface PaikkyChildData {
+  child: PaikkyChild;
+  days: PaikkyDay[];
+  /** Null jos kuluvasta päivästä ei ole tietoa (viikonloppu, sulku, hakuvirhe). */
+  today: PaikkyToday | null;
+}
+
+export interface PaikkyMessage {
+  id: string;
+  /** "message" | "bulletin" | "answered-form" | "unanswered-form" — ei suljettu joukko. */
+  type: string;
+  title: string;
+  sender: string | null;
+  sentAt: string | null;
+  /** Null = lukutila ei ole tiedossa. Eri asia kuin "luettu" — ks. WilmaMessage.unread. */
+  unread: boolean | null;
+  preview: string | null;
+  /** Tämän näytön oma kirjanpito, sama kuin Wilmalla. Vain paikallisessa pyynnössä. */
+  localRead?: boolean;
+}
+
+export interface PaikkyData {
+  children: PaikkyChildData[];
+  messages: PaikkyMessage[];
+  /**
+   * Viestihaun virhe silloin kun hoitoajat onnistuivat. null = ei virhettä.
+   * Näytetään VAIN viestivälilehdellä: hoitoajat ovat tässä tilanteessa
+   * kunnossa, eikä toimivan datan päälle kuulu virheilmoitusta.
+   */
+  messagesError: string | null;
+}
+
 export interface Note {
   id: number;
   text: string;
@@ -251,6 +345,8 @@ export interface Alarm {
 
 export interface Settings {
   visibleStudents: string[] | null;
+  /** Päikyn näytettävät lapset. null = kaikki. Arvot ovat PaikkyChild.id. */
+  visiblePaikkyChildren: string[] | null;
   scheduleLayout: "single" | "split";
   rolloverTime: string;
   hideMessagePreviews: boolean;
@@ -276,6 +372,8 @@ export interface Dashboard {
   providers: {
     electricity?: ProviderSnapshot<ElectricityData>;
     wilma?: ProviderSnapshot<WilmaData>;
+    /** Puuttuu kokonaan jos Päikkyä ei ole konfiguroitu — kortit piilottavat välilehdet silloin. */
+    paikky?: ProviderSnapshot<PaikkyData>;
     [key: string]: ProviderSnapshot<unknown> | undefined;
   };
 }

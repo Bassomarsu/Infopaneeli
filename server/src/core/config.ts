@@ -76,6 +76,16 @@ export const config = {
     password: str("WILMA_PASSWORD"),
   },
 
+  /**
+   * Päikky (varhaiskasvatus). Sama alusta pyörii kymmenissä kunnissa, kukin
+   * omalla aliverkkotunnuksellaan — siksi osoite on asetus eikä vakio.
+   */
+  paikky: {
+    baseUrl: str("PAIKKY_BASE_URL", "https://karstula.paikky.fi").replace(/\/+$/, ""),
+    username: str("PAIKKY_USERNAME"),
+    password: str("PAIKKY_PASSWORD"),
+  },
+
   calendarIcsUrl: str("CALENDAR_ICS_URL"),
 
   /** Muistilistan, asetusten ja hälytysten muokkaus — ei lasten Wilma-tietoja. Ks. routes/access.ts. */
@@ -101,4 +111,8 @@ export const config = {
 
 export function isWilmaConfigured(): boolean {
   return Boolean(config.wilma.baseUrl && config.wilma.username && config.wilma.password);
+}
+
+export function isPaikkyConfigured(): boolean {
+  return Boolean(config.paikky.baseUrl && config.paikky.username && config.paikky.password);
 }

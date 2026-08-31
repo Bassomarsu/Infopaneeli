@@ -2,7 +2,7 @@ import fs from "node:fs";
 import Fastify from "fastify";
 import type { FastifyBaseLogger } from "fastify";
 import fastifyStatic from "@fastify/static";
-import { config } from "./core/config.ts";
+import { config, isPaikkyConfigured } from "./core/config.ts";
 import { logger } from "./core/logging.ts";
 import { registry } from "./core/provider.ts";
 import { trustedHosts } from "./core/trusted-hosts.ts";
@@ -11,6 +11,7 @@ import { createElectricityProvider } from "./providers/electricity.ts";
 import { createWeatherProvider } from "./providers/weather.ts";
 import { createCalendarProvider } from "./providers/calendar.ts";
 import { createWilmaProvider } from "./providers/wilma.ts";
+import { createPaikkyProvider } from "./providers/paikky.ts";
 
 const app = Fastify({
   // Widened to the base type on purpose: passing the concrete pino logger type
@@ -23,9 +24,16 @@ const app = Fastify({
 // already drops them — the kiosk polling every minute costs nothing. Raising
 // LOG_LEVEL to debug turns them back on, which is exactly when you want them.
 
-// Each provider staggers its own first run so startup does not fire four
+// Each provider staggers its own first run so startup does not fire five
 // outbound requests at once.
 registry.register(createWilmaProvider());
+// Päikky vain jos tunnukset on annettu. Rekisteröitynä ilman niitä se
+// epäonnistuisi joka kierros ja jäisi dashboardiin pysyvästi rikkinäiseksi
+// "Hoitoajat"-välilehdeksi jokaiselle, joka asentaa paketin ilman Päikkyä —
+// käyttöliittymä päättelee välilehtien tarpeen juuri tämän avaimen olemassa-
+// olosta. Wilma on eri asia: se on tämän näytön olemassaolon syy, ja
+// puuttuvista tunnuksista pitää kertoa kortissa eikä piilottaa korttia.
+if (isPaikkyConfigured()) registry.register(createPaikkyProvider());
 registry.register(createElectricityProvider());
 registry.register(createWeatherProvider());
 registry.register(createCalendarProvider());

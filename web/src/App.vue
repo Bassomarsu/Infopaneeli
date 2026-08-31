@@ -18,7 +18,14 @@ import { useDashboard } from "./composables/useDashboard";
 import { useEditAccess } from "./composables/useEditAccess.ts";
 import { panelGridKey, usePanelLayout } from "./composables/usePanelLayout";
 import { useScheduleDay } from "./composables/useScheduleDay";
-import type { ElectricityData, PanelLayout, ProviderSnapshot, Settings, WilmaData } from "./types";
+import type {
+  ElectricityData,
+  PaikkyData,
+  PanelLayout,
+  ProviderSnapshot,
+  Settings,
+  WilmaData,
+} from "./types";
 
 const { now } = useClock();
 // Puretaan refit tässä, jotta template viittaa niihin suoraan ilman `.value`:a
@@ -70,12 +77,25 @@ const electricity = computed(() => provider<ElectricityData>("electricity"));
 const weather = computed(() => provider<WeatherData>("weather"));
 const calendar = computed(() => provider<CalendarData>("calendar"));
 const wilma = computed(() => provider<WilmaData>("wilma"));
+// Undefined = Päikkyä ei ole konfiguroitu. Kortit tulkitsevat sen niin, ettei
+// välilehtiä näytetä lainkaan, joten tata EI saa korvata tyhjällä oletuksella.
+const paikky = computed(() => provider<PaikkyData>("paikky"));
 
 const settings = computed<Settings | null>(() => dashboard.value?.settings ?? null);
 const wilmaData = computed(() => wilma.value?.data ?? null);
 
 const rolloverTime = computed(() => settings.value?.rolloverTime ?? "12:00");
 const visibleStudents = computed(() => settings.value?.visibleStudents ?? null);
+const visiblePaikkyChildren = computed(() => settings.value?.visiblePaikkyChildren ?? null);
+
+// Asetuspaneelin lapsivalintaa varten: koko lapsilista litistettynä, ei
+// suodatettuna. Piilotettuunkin lapseen on päästävä käsiksi, jotta valinnan
+// voi perua. `paikky` on undefined vain jos Päikkyä ei ole konfiguroitu —
+// puhelimella se on olemassa mutta datattomana (status "hidden").
+const paikkyChildren = computed(
+  () => paikky.value?.data?.children.map((entry) => entry.child) ?? [],
+);
+const paikkyConfigured = computed(() => paikky.value !== undefined);
 
 // Kaikki tunnetut lapset, ei vain kortilla näytettävät — hälytys voi koskea
 // lasta joka on piilotettu lukujärjestyskortilta, joten AlarmsPanel ei saa
@@ -365,9 +385,11 @@ const isNight = computed(() => {
       >
         <ScheduleCard
           :snapshot="wilma"
+          :paikky-snapshot="paikky"
           :schedule="schedule"
           :layout="settings?.scheduleLayout ?? 'split'"
           :rollover-time="rolloverTime"
+          :visible-paikky-children="visiblePaikkyChildren"
         />
       </LayoutEditor>
 
@@ -390,7 +412,11 @@ const isNight = computed(() => {
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('messages', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('messages', colSpan, rowSpan)"
       >
-        <MessagesCard :snapshot="wilma" :hide-previews="settings?.hideMessagePreviews ?? false" />
+        <MessagesCard
+          :snapshot="wilma"
+          :paikky-snapshot="paikky"
+          :hide-previews="settings?.hideMessagePreviews ?? false"
+        />
       </LayoutEditor>
 
       <LayoutEditor
@@ -427,10 +453,18 @@ const isNight = computed(() => {
       </LayoutEditor>
     </main>
 
+    <!--
+      `allStudents` eikä kortin suodatettua `students`-listaa: asetuspaneeli on
+      juuri se paikka jossa piilotettu lapsi otetaan takaisin käyttöön, joten se
+      ei voi lukea listaa josta piilotetut on jo karsittu — muuten valintaa ei
+      saisi enää peruttua. Sama syy kuin AlarmsPanelilla alempana.
+    -->
     <SettingsPanel
       v-if="settings"
       :settings="settings"
-      :students="students"
+      :students="allStudents"
+      :paikky-children="paikkyChildren"
+      :paikky-configured="paikkyConfigured"
       :can-preview-schedule="canPreviewSchedule"
       :current-level="currentPinLevel"
       :open="settingsOpen"

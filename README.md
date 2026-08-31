@@ -132,6 +132,14 @@ uudelleen sen takia.
 Neljän tunnin jäähdytys on pitkä aika katsoa kuollutta korttia silloin kun syy
 on jo korjattu (salasana vaihdettu takaisin, verkko palannut). Asetusten
 **Wilma-yhteys → Testaa yhteys** ohittaa jäähdytyksen ja yrittää heti.
+
+> **Salasanan korjaaminen `.env`-tiedostoon vaatii palvelimen uudelleen-
+> käynnistyksen.** Tiedosto luetaan vain prosessin käynnistyessä
+> (`--env-file`, ks. `server/package.json`), joten ajossa oleva palvelin
+> käyttää yhä käynnistyshetken arvoa. "Testaa yhteys" yrittäisi silloin
+> uudestaan samalla vanhalla salasanalla ja kuluttaisi yhden yrityksen
+> turhaan. Järjestys on siis: korjaa `.env` → käynnistä palvelin uudelleen →
+> vasta tarvittaessa Testaa yhteys.
 Onnistuminen nollaa katkaisijan täysin; epäonnistuminen **ei** koske
 automaattiseen aikatauluun mitenkään, jottei napin painelu vahingossa venytä
 jäähdytystä jota käyttäjä ei siinä hetkessä edes seuraa.
@@ -206,6 +214,83 @@ luetuksi eikä lukemattomaksi, laskuri kertoo vain varmasti lukemattomat, eikä
 turhia uudelleenhakuja tehdä. Jos kirjasto joskus alkaa täyttää kentän, se
 ilmoittaa itsestään samalla lokirivillä.
 
+Sama kirjanpito kattaa nyt myös Päikyn. `message_reads`-taulun avain on
+`(source, message_id)`, ja **tunniste on tekstiä**: Wilman tunniste on numero,
+Päikyn merkkijono. Kirjoituspolku pakottaa muunnoksen (`asTextId`), koska
+`node:sqlite` sitoo JS-numeron TEXT-sarakkeeseen muodossa `"86922.0"` — yksikin
+numerona läpi mennyt tunniste kirjoittaisi rivin, jota mikään haku ei löydä, ja
+kaikki viestit näyttäisivät ikuisesti lukemattomilta ilman virhettä missään.
+Tämä on testattu erikseen (`server/test/message-reads.ts`).
+
+**Migraatio ottaa varmuuskopion.** Ensimmäisellä käynnistyksellä vanha
+yhden lähteen taulu muunnetaan uuteen muotoon, ja sitä ennen kanta kopioidaan
+tiedostoon `data/infonaytto-ennen-viestilahteita.db`. Kopio on olemassa yhtä
+tarkoitusta varten: **vanhaan julkaisuun palataan palauttamalla se**. Vanha
+koodi ei osaa lukea uutta taulua, ja koska `data/` säilyy julkaisupaketin
+päivityksessä, ilman kopiota rollback tarkoittaisi palvelinta joka ei käynnisty
+lainkaan. Migraatio on idempotentti eikä kopioi mitään, jos muunnosta ei
+tarvita.
+
+"Merkitse kaikki luetuiksi" merkitsee valitun lähteen **kaikki** lukemattomat,
+ei vain listalla näkyviä — siksi painike kertoo lukumäärän. Teko on
+peruuttamaton: kumoamisreittiä ei ole.
+
+### Päikky — varhaiskasvatuksen hoitoajat
+
+Päikyssä ei ole virallista rajapintaa, mutta huoltajasovellus on React-SPA
+JSON-REST-taustan päällä, ja se on käytettävissä huoltajan omilla tunnuksilla.
+Toisin kuin Wilmassa, tässä ei ole valmista kirjastoa — asiakas on kirjoitettu
+itse, mutta se on silti *vähemmän* työtä kuin Wilma, koska mitään ei tarvitse
+jäsentää HTML:stä.
+
+Täysi kuvaus päätepisteistä, todennettuine vastausrakenteineen, on
+tiedostossa **`docs/paikky-rajapinta.md`**. Se on mitattu oikeilla kutsuilla,
+ei arvattu. Tärkeimmät varaukset:
+
+- **Ajat tulevat UTC:nä** (`05:00:00Z` = 08:00 Suomen kesäaikaa) ja muunnetaan
+  palvelimella. Muunnos on `core/time.ts`:n `isoToLocalClock`, ei providerin
+  sisällä — käyttöjärjestelmän vyöhykettä lukevat oikotiet (`getHours()`,
+  `toLocaleTimeString()` ilman `timeZone`-optiota) näyttäisivät oikealta
+  kehityskoneella ja olisivat kolme tuntia väärässä Linux-asennuksella,
+  jonka oletusvyöhyke on UTC.
+- **Kuukausikutsu palauttaa kalenteriruudukon kokonaisina viikkoina**, ei
+  kuukautta. Seuraava kuukausi haetaan vain jos tarvittava päivä puuttuu
+  vastauksesta — ei sen perusteella että ollaan kuun lopussa. Helmikuu 2027
+  on ainoa kuukausi viiteen vuoteen, jonka ruudukko ei ylivuoda lainkaan.
+- **`plannable` ilman merkintöjä ≠ vapaapäivä.** Se tarkoittaa varaamatonta
+  päivää, ja se on ainoa Päikyn tieto joka on toimintakehotus: varaus
+  lukittuu `lockingTime`-hetkellä, ja ohittaminen maksaa hoitopaikan.
+  Vapaapäivä on eri asia — silloin päivältä puuttuu lapsen avain kokonaan.
+- **Uloskirjausaikaa ei haeta.** `balance?day=` olisi ainoa lähde sille, mutta
+  sen `actual`-taulukko täyttyy vasta uloskirjauksesta — eli tieto valmistuu
+  illalla, kun näyttöä ei enää katsota. Haettu lapsi näkyy pelkkänä "haettu".
+
+Tilin lukituksen esto on tiukempi kuin Wilmassa (`fatalLimit: 2`, jäähdytys
+2 h → 12 h, manuaalitestejä 3/vrk), koska Päikyssä **yksi hakukierros on yksi
+kirjautuminen** ja sama tunnus on huoltajan omassa puhelimessa. Wilman luvut
+on mitoitettu eri tilanteeseen eikä niitä peritä.
+
+Näytettävät lapset valitaan asetuksista erikseen Päikylle
+(`visiblePaikkyChildren`), samalla säännöllä kuin Wilmalla: **`null` tai tyhjä
+lista tarkoittaa kaikkia**, jottei viimeisenkin valinnan poistaminen jätä
+korttia tyhjäksi. Sama sääntö on kolmessa paikassa — `useScheduleDay`,
+`ScheduleCard`in otsikko ja `PaikkyCareDays`in suodatin — ja jos ne eriävät,
+kortin otsikko nimeää lapsen jonka rivejä ei näy.
+
+**Ilman `PAIKKY_*`-tunnuksia Päikkyä ei ole olemassa.** Provider rekisteröidään
+vain jos tunnukset on annettu, joten `/api/dashboard` ei sisällä `paikky`-avainta
+lainkaan eivätkä kortit kasvata itselleen välilehtiä. Tämä on tarkoituksellista
+ja eri linja kuin Wilmalla: Wilma on tämän näytön olemassaolon syy, ja sen
+puuttuvista tunnuksista kerrotaan kortissa. Päikky on lisäosa, ja kenenkään
+muun asennuksessa ei pidä näkyä tyhjää "Hoitoajat"-välilehteä.
+
+Viestipäätepiste (`/api/v2/communications`) on toteutuksen heikoiten
+todennettu osa: postilaatikko oli tyhjä rajapintaa selvitettäessä, joten
+kenttänimet on luettu selainkoodista. Siksi jäsentäjä pudottaa yksittäisen
+kelvottoman viestin sen sijaan että kaataisi haun, ja **viestien virhe ei
+kaada hoitoaikoja** — se raportoidaan omana kenttänään (`messagesError`),
+jotta vika näkyy mutta ei vie mukanaan sitä dataa, jota varten kortti on.
+
 ### Kuukausikeskiarvot tulevat eri lähteestä kuin vuorokausihinnat
 
 `porssisahko.net` palauttaa vain noin 48 tuntia, joten kuukausikeskiarvoihin
@@ -239,11 +324,19 @@ saa tarvita verkkoa.
 - Tunnukset vain `.env`-tiedostossa, joka on `.gitignore`ssa. `.env.example` on
   malli ja **menee gittiin** — siihen ei kirjoiteta oikeita arvoja. Nimet ovat
   hämäävän lähellä toisiaan, joten tämä on helppo sekoittaa.
-- Wilma-datan lukureitit vastaavat vain **localhostista** — kotiverkon puhelin
-  näkee sään ja muistilistan, ei lasten koulutietoja. Puhelimessa kortilla lukee
-  "Vain infonäytöllä" eikä se jää pyörimään ikuiseen "Haetaan…"-tilaan.
-  Todennettu oikealla datalla: lähiverkon vastauksesta ei löydy lapsen nimeä,
-  oppilasnumeroa, oppiainetta eikä opettajan nimeä.
+- Wilma- ja **Päikky-datan** lukureitit vastaavat vain **localhostista** —
+  kotiverkon puhelin näkee sään ja muistilistan, ei lasten koulu- eikä
+  varhaiskasvatustietoja. Puhelimessa kortilla lukee "Vain infonäytöllä" eikä
+  se jää pyörimään ikuiseen "Haetaan…"-tilaan. Todennettu oikealla datalla:
+  lähiverkon vastauksesta ei löydy lapsen nimeä, oppilasnumeroa, oppiainetta
+  eikä opettajan nimeä.
+- **Päikyn läsnäolotieto on erikseen harkittava.** Kortti näyttää "paikalla
+  klo 8:00 alkaen", kun lapsi on kirjattu sisään. Se on alaikäisen
+  sijaintitieto, ja seinänäyttö on yhteisessä tilassa, jossa käy vieraita —
+  toisin kuin Wilma-viesti, jonka näkee vasta napauttamalla, tämä rivi on
+  esillä ilman mitään elettä. Verkkopuolen suoja (edellinen kohta) ei kosketa
+  tätä lainkaan: se säätelee kuka verkossa, ei kuka huoneessa. Varausajat
+  ("varattu 8:00–16:10") ovat tavallista aikataulua; toteutunut läsnäolo ei.
 - Salasanoja, evästeitä eikä viestien sisältöjä ei kirjoiteta lokiin.
 - **Kaksi PIN-koodia (`EDIT_PIN` ja `FULL_PIN`).** Puhelimessa yläpalkin
   lukkokuvake avaa syöttökentän; koodi jää selaimen muistiin, ja sen voi
@@ -317,6 +410,8 @@ saa tarvita verkkoa.
 |---|---|---|
 | Lukujärjestys | Wilma (`@wilm-ai/wilma-client`, naulattu 1.4.2) | 20 min, ei öisin |
 | Wilma-viestit | sama | sama |
+| Hoitoajat | Päikky (oma asiakas, ks. `docs/paikky-rajapinta.md`) | 30 min, ei öisin |
+| Päikky-viestit | sama | sama |
 | Sää | Open-Meteo | 20 min |
 | Pörssisähkö | porssisahko.net | 20 min |
 | Kuukausikeskiarvot | Elering (Nord Pool FI) | kerran vrk |

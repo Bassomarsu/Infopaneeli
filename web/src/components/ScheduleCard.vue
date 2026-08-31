@@ -1,21 +1,60 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import CardShell from "./CardShell.vue";
+import PaikkyCareDays from "./PaikkyCareDays.vue";
 import type { ScheduleDay, UseScheduleDay } from "../composables/useScheduleDay";
-import type { HomeworkItem, ProviderSnapshot, WilmaData } from "../types";
+import type { HomeworkItem, PaikkyData, ProviderSnapshot, ProviderStatus, WilmaData } from "../types";
 
 const props = defineProps<{
   snapshot?: ProviderSnapshot<WilmaData>;
+  /**
+   * Puuttuu kokonaan jos Päikkyä ei ole konfiguroitu — silloin kortissa ei ole
+   * välilehtiä lainkaan ja se näyttää täsmälleen entiseltä.
+   */
+  paikkySnapshot?: ProviderSnapshot<PaikkyData>;
   /** Koko useScheduleDay-composable, jotta selaus voidaan hoitaa kortin sisällä. */
   schedule: UseScheduleDay;
   layout: "single" | "split";
   rolloverTime: string;
+  /** Näytettävät lapset (PaikkyChild.id). null = kaikki. */
+  visiblePaikkyChildren?: string[] | null;
 }>();
+
+type Tab = "schedule" | "care";
+const tab = ref<Tab>("schedule");
+
+/**
+ * Välilehdet ilmestyvät vasta kun Päikky on oikeasti konfiguroitu. Yhden
+ * lapsen koulukodissa kortin ei pidä kasvattaa itselleen tyhjää välilehteä,
+ * joten pelkkä provider-snapshotin olemassaolo ratkaisee — ei sen tila, sillä
+ * `hidden`/`failed`/`idle` ovat kaikki konfiguroituja Päikkyjä.
+ */
+const showTabs = computed(() => props.paikkySnapshot !== undefined);
+
+// Jos Päikky poistetaan käytöstä kesken kaiken, kortti ei saa jäädä
+// näyttämään välilehteä jota ei enää ole.
+watch(showTabs, (visible) => {
+  if (!visible) tab.value = "schedule";
+});
 
 const day = computed<ScheduleDay | null>(() => props.schedule.day.value);
 const browsing = computed(() => props.schedule.browsing.value);
 const canGoBack = computed(() => props.schedule.canGoBack.value);
 const canGoForward = computed(() => props.schedule.canGoForward.value);
+
+/**
+ * Suodatettu jo tässä, koska tätä käytetään vain otsikkoon: "Hoitoajat —
+ * Etunimi" saa nimetä vain sen lapsen jonka rivit ovat oikeasti näkyvissä.
+ * Sama sääntö kuin Wilman visibleStudentsilla (useScheduleDay.ts): null tai
+ * tyhjä lista = kaikki, jottei kaikkien poisvalinta jätä korttia nimeämään
+ * yhtä lasta sattumanvaraisesti.
+ */
+const careChildren = computed(() => {
+  const all = props.paikkySnapshot?.data?.children ?? [];
+  const allowed = props.visiblePaikkyChildren ?? null;
+  if (allowed === null || allowed.length === 0) return all;
+  return all.filter((entry) => allowed.includes(entry.child.id));
+});
 
 /**
  * With `single` the children share the same column and are listed one after
@@ -35,12 +74,51 @@ const showStudentNames = computed(() => (day.value?.lessonsByStudent.length ?? 0
  * Yhden lapsen näkymässä nimi kuuluu otsikkoon: muuten ruudulla on
  * lukujärjestys ilman mitään merkkiä siitä, kenen se on. Useamman lapsen
  * näkymässä nimet ovat jo sarakkeiden yllä, joten otsikkoon ne vain
- * toistuisivat.
+ * toistuisivat. Sama sääntö koskee hoitoaikoja — otsikko seuraa avointa
+ * välilehteä, jotta kortin yläreuna kertoo aina mitä alla on.
  */
 const cardTitle = computed(() => {
+  if (tab.value === "care") {
+    const only = careChildren.value.length === 1 ? careChildren.value[0] : undefined;
+    return only ? `Hoitoajat — ${only.child.firstName}` : "Hoitoajat";
+  }
   const groups = day.value?.lessonsByStudent ?? [];
   const only = groups.length === 1 ? groups[0] : undefined;
   return only ? `Lukujärjestys — ${only.name}` : "Lukujärjestys";
+});
+
+const activeSnapshot = computed(() => (tab.value === "care" ? props.paikkySnapshot : props.snapshot));
+
+/**
+ * Ilman Päikkyä kuori saa Wilman tilan sellaisenaan, eli kortti käyttäytyy
+ * täsmälleen kuten ennen.
+ *
+ * Välilehtien kanssa vain `stale` päästetään kuoreen asti: merkki ja himmennys
+ * koskevat silloin juuri sitä sisältöä joka on näkyvissä. `hidden`, `failed` ja
+ * `idle` sen sijaan korvaisivat CardShellissä koko rungon — ja veisivät
+ * välilehdet mukanaan, jolloin toimivaan lähteeseen ei enää pääsisi takaisin.
+ * Ne kerrotaan välilehden sisällä (wilmaState / PaikkyCareDays).
+ */
+const shellStatus = computed<ProviderStatus | undefined>(() => {
+  if (!showTabs.value) return props.snapshot?.status;
+  return activeSnapshot.value?.status === "stale" ? "stale" : "ok";
+});
+
+/** Sama sanamuoto kuin CardShellissä, koska tämä korvaa sen juuri tälle välilehdelle. */
+const wilmaState = computed<{ title: string | null; text: string } | null>(() => {
+  if (!showTabs.value) return null;
+  const status = props.snapshot?.status;
+  if (!props.snapshot || status === "idle") return { title: null, text: "Haetaan…" };
+  if (status === "failed") {
+    return { title: "Tietoja ei saatu", text: props.snapshot.error?.message ?? "Lähde ei vastaa" };
+  }
+  if (status === "hidden") {
+    return {
+      title: "Vain infonäytöllä",
+      text: "Koulutiedot näkyvät vain keittiön näytöllä, eivät kotiverkon muilla laitteilla.",
+    };
+  }
+  return null;
 });
 
 function homeworkFor(student: string, subjectCode: string): HomeworkItem | undefined {
@@ -96,95 +174,183 @@ function onSwipeCancel(event: PointerEvent): void {
 <template>
   <CardShell
     :title="cardTitle"
-    accent="var(--accent-school)"
-    :status="snapshot?.status"
-    :fetched-at="snapshot?.fetchedAt"
-    :error="snapshot?.error"
+    :accent="tab === 'care' ? 'var(--accent-calendar)' : 'var(--accent-school)'"
+    :status="shellStatus"
+    :fetched-at="activeSnapshot?.fetchedAt"
+    :error="activeSnapshot?.error"
   >
-    <div v-if="day" class="schedule">
-      <header class="schedule__head">
-        <div class="schedule__title">
-          <span class="schedule__day">{{ day.label }}</span>
-          <span v-if="day.rolledOver" class="schedule__hint">vaihtui klo {{ rolloverTime }}</span>
-        </div>
-        <div class="schedule__nav">
-          <button
-            v-if="browsing"
-            type="button"
-            class="schedule__today-btn"
-            @click="schedule.returnToToday()"
-          >
-            Tänään
-          </button>
-          <button
-            type="button"
-            class="schedule__nav-btn"
-            aria-label="Edellinen päivä"
-            :disabled="!canGoBack"
-            @click="schedule.goToPreviousDay()"
-          >
-            ‹
-          </button>
-          <button
-            type="button"
-            class="schedule__nav-btn"
-            aria-label="Seuraava päivä"
-            :disabled="!canGoForward"
-            @click="schedule.goToNextDay()"
-          >
-            ›
-          </button>
-        </div>
-      </header>
+    <div class="panel">
+      <!-- Sama välilehtikuvio kuin MessagesCard.vue:ssa. -->
+      <div v-if="showTabs" class="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="tabs__btn"
+          :class="{ 'tabs__btn--active': tab === 'schedule' }"
+          :aria-selected="tab === 'schedule'"
+          @click="tab = 'schedule'"
+        >
+          Lukujärjestys
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="tabs__btn tabs__btn--care"
+          :class="{ 'tabs__btn--active': tab === 'care' }"
+          :aria-selected="tab === 'care'"
+          @click="tab = 'care'"
+        >
+          Hoitoajat
+        </button>
+      </div>
 
-      <div
-        class="schedule__body"
-        @pointerdown="onSwipeStart"
-        @pointermove="onSwipeMove"
-        @pointerup="onSwipeEnd"
-        @pointercancel="onSwipeCancel"
-      >
-        <div v-if="day.totalLessons === 0" class="state">
-          <span class="state__title">Ei tunteja</span>
-          <span>Lukujärjestyksessä ei ole merkintöjä.</span>
-        </div>
+      <!-- Oma rollover-tulkinta, ei jaettua päivätilaa: hoitoaikavälilehti ei
+           saa periä lukujärjestyksen hyppyä seuraavaan päivään jolla on
+           tunteja. Ks. PaikkyCareDays.vue:n leadDay. -->
+      <PaikkyCareDays
+        v-if="tab === 'care'"
+        :snapshot="paikkySnapshot"
+        :layout="layout"
+        :rollover-time="rolloverTime"
+        :visible-children="visiblePaikkyChildren"
+      />
 
-        <div v-else class="schedule__cols" :style="{ '--cols': columns }">
-          <div v-for="group in day.lessonsByStudent" :key="group.studentNumber" class="schedule__col">
-            <h3 v-if="showStudentNames" class="schedule__name">{{ group.name }}</h3>
+      <div v-else-if="wilmaState" class="state">
+        <span v-if="wilmaState.title" class="state__title">{{ wilmaState.title }}</span>
+        <span>{{ wilmaState.text }}</span>
+      </div>
 
-            <p v-if="group.lessons.length === 0" class="schedule__empty">Ei tunteja</p>
+      <div v-else-if="day" class="schedule">
+        <header class="schedule__head">
+          <div class="schedule__title">
+            <span class="schedule__day">{{ day.label }}</span>
+            <span v-if="day.rolledOver" class="schedule__hint">vaihtui klo {{ rolloverTime }}</span>
+          </div>
+          <div class="schedule__nav">
+            <button
+              v-if="browsing"
+              type="button"
+              class="schedule__today-btn"
+              @click="schedule.returnToToday()"
+            >
+              Tänään
+            </button>
+            <button
+              type="button"
+              class="schedule__nav-btn"
+              aria-label="Edellinen päivä"
+              :disabled="!canGoBack"
+              @click="schedule.goToPreviousDay()"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              class="schedule__nav-btn"
+              aria-label="Seuraava päivä"
+              :disabled="!canGoForward"
+              @click="schedule.goToNextDay()"
+            >
+              ›
+            </button>
+          </div>
+        </header>
 
-            <ol v-else class="lessons">
-              <li v-for="lesson in group.lessons" :key="`${lesson.start}-${lesson.groupId}`" class="lesson">
-                <span class="lesson__time tnum">
-                  {{ lesson.start }}<span class="lesson__end">–{{ lesson.end }}</span>
-                </span>
-                <span class="lesson__main">
-                  <span class="lesson__subject">{{ lesson.subject || lesson.subjectCode }}</span>
-                  <span v-if="lesson.teacher" class="lesson__teacher">{{ lesson.teacher }}</span>
-                  <span
-                    v-if="homeworkFor(group.studentNumber, lesson.subjectCode)"
-                    class="lesson__homework"
-                  >
-                    {{ homeworkFor(group.studentNumber, lesson.subjectCode)?.homework }}
+        <div
+          class="schedule__body"
+          @pointerdown="onSwipeStart"
+          @pointermove="onSwipeMove"
+          @pointerup="onSwipeEnd"
+          @pointercancel="onSwipeCancel"
+        >
+          <div v-if="day.totalLessons === 0" class="state">
+            <span class="state__title">Ei tunteja</span>
+            <span>Lukujärjestyksessä ei ole merkintöjä.</span>
+          </div>
+
+          <div v-else class="schedule__cols" :style="{ '--cols': columns }">
+            <div v-for="group in day.lessonsByStudent" :key="group.studentNumber" class="schedule__col">
+              <h3 v-if="showStudentNames" class="schedule__name">{{ group.name }}</h3>
+
+              <p v-if="group.lessons.length === 0" class="schedule__empty">Ei tunteja</p>
+
+              <ol v-else class="lessons">
+                <li v-for="lesson in group.lessons" :key="`${lesson.start}-${lesson.groupId}`" class="lesson">
+                  <span class="lesson__time tnum">
+                    {{ lesson.start }}<span class="lesson__end">–{{ lesson.end }}</span>
                   </span>
-                </span>
-              </li>
-            </ol>
+                  <span class="lesson__main">
+                    <span class="lesson__subject">{{ lesson.subject || lesson.subjectCode }}</span>
+                    <span v-if="lesson.teacher" class="lesson__teacher">{{ lesson.teacher }}</span>
+                    <span
+                      v-if="homeworkFor(group.studentNumber, lesson.subjectCode)"
+                      class="lesson__homework"
+                    >
+                      {{ homeworkFor(group.studentNumber, lesson.subjectCode)?.homework }}
+                    </span>
+                  </span>
+                </li>
+              </ol>
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <div v-else class="state">
-      <span class="state__title">Ei lukujärjestystietoja</span>
-      <span>Wilma-tunnukset puuttuvat tai oppilaita ei löytynyt.</span>
+      <div v-else class="state">
+        <span class="state__title">Ei lukujärjestystietoja</span>
+        <span>Wilma-tunnukset puuttuvat tai oppilaita ei löytynyt.</span>
+      </div>
     </div>
   </CardShell>
 </template>
 
 <style scoped>
+/* Kääre välilehdille ja niiden sisällölle. Ilman välilehtiä tämä on pelkkä
+   läpinäkyvä kerros eikä muuta kortin ulkonäköä millään tavalla. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: 0.4rem;
+}
+
+/* Samat mitat ja sama merkkaus kuin MessagesCard.vue:ssa, jotta kortit
+   käyttäytyvät keskenään samalla tavalla. */
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.tabs__btn {
+  flex: 1;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-faint);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tabs__btn--active {
+  background: var(--surface-strong);
+  border-color: var(--accent-school);
+  color: var(--text);
+}
+
+/* Päikyn oma väri myös välilehdessä — sama merkki kuin kortin otsikkopallossa,
+   jotta lähde tunnistuu vilkaisulla eikä lukemalla. */
+.tabs__btn--care.tabs__btn--active {
+  border-color: var(--accent-calendar);
+}
+
 .schedule {
   display: flex;
   flex-direction: column;

@@ -126,6 +126,8 @@ export interface Alarm {
 export interface Settings {
   /** Student numbers to show; null means every child found in Wilma. */
   visibleStudents: string[] | null;
+  /** Päikyn näytettävät lapset. null = kaikki. Arvot ovat PaikkyChild.id. */
+  visiblePaikkyChildren: string[] | null;
   /** `single` shows one child at a time, `split` shows them side by side. */
   scheduleLayout: "single" | "split";
   /** Local time of day when the schedule switches to the next school day. */
@@ -147,6 +149,7 @@ export interface Settings {
 
 export const defaultSettings: Settings = {
   visibleStudents: null,
+  visiblePaikkyChildren: null,
   scheduleLayout: "split",
   rolloverTime: "12:00",
   hideMessagePreviews: false,
@@ -180,14 +183,17 @@ export function updateSettings(patch: unknown): Settings {
   const next: Settings = { ...getSettings() };
 
   if ("visibleStudents" in input) {
-    const value = input["visibleStudents"];
-    if (value === null) {
-      next.visibleStudents = null;
-    } else if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
-      next.visibleStudents = value as string[];
-    } else {
-      throw new SettingsValidationError("visibleStudents: lista opiskelijanumeroita tai null");
-    }
+    next.visibleStudents = parseVisibleIds(
+      input["visibleStudents"],
+      "visibleStudents: lista opiskelijanumeroita tai null",
+    );
+  }
+
+  if ("visiblePaikkyChildren" in input) {
+    next.visiblePaikkyChildren = parseVisibleIds(
+      input["visiblePaikkyChildren"],
+      "visiblePaikkyChildren: lista lapsitunnisteita tai null",
+    );
   }
 
   if ("scheduleLayout" in input) {
@@ -225,6 +231,20 @@ export function updateSettings(patch: unknown): Settings {
 
   setSetting(KEY, next);
   return next;
+}
+
+/**
+ * `visibleStudents` (Wilma) ja `visiblePaikkyChildren` (Päikky) ovat sama
+ * asetus kahdelle lähteelle: null = näytä kaikki, muuten lista tunnisteita.
+ * Suodatus tehdään selaimessa — palvelin ei tiedä keitä lapsia lähde tänään
+ * palauttaa, eikä poistuneen lapsen tunniste listassa siksi ole virhe — joten
+ * tässä varmistetaan vain muoto ennen tallennusta. Virheteksti tulee kutsujalta,
+ * jotta se nimeää oikean kentän.
+ */
+function parseVisibleIds(value: unknown, message: string): string[] | null {
+  if (value === null) return null;
+  if (Array.isArray(value) && value.every((v) => typeof v === "string")) return value as string[];
+  throw new SettingsValidationError(message);
 }
 
 function positiveInt(value: unknown, label: string, max: number): number {

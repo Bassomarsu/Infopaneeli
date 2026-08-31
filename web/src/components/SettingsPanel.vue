@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import { NARROW_LAYOUT_BREAKPOINT_PX } from "../composables/usePanelLayout";
 import { useEditAccess, type PinLevel } from "../composables/useEditAccess.ts";
 import ConnectionTest from "./ConnectionTest.vue";
-import type { Settings, WilmaStudent } from "../types";
+import type { PaikkyChild, Settings, WilmaStudent } from "../types";
 
 const editAccess = useEditAccess();
 
@@ -11,13 +11,28 @@ const props = defineProps<{
   settings: Settings;
   students: WilmaStudent[];
   /**
-   * Palvelin piilottaa Wilma-datan laitteilta joilla ei ole täyttä
-   * luottamusta — EDIT_PIN ei riitä tähän, vain FULL_PIN/näyttölaite/
+   * Päikyn lapset samassa muodossa kuin `students` — provider-datasta
+   * litistettynä, jotta paneelin ei tarvitse tuntea PaikkyChildDatan muuta
+   * sisältöä. Tyhjä samoista syistä kuin `students`, ks. canPreviewSchedule.
+   */
+  paikkyChildren: PaikkyChild[];
+  /**
+   * Onko Päikky ylipäätään konfiguroitu. Sama päättely kuin korteissa
+   * (`paikkySnapshot !== undefined`): ilman Päikkyä asetuksiin ei kasvateta
+   * tyhjää ryhmää, aivan kuten ScheduleCard/MessagesCard eivät kasvata
+   * tyhjää välilehteä. Erillinen lipuksi, koska tyhjä `paikkyChildren` on
+   * eri asia — se on myös puhelimen ja hakuvirheen tila.
+   */
+  paikkyConfigured: boolean;
+  /**
+   * Palvelin piilottaa Wilma- ja Päikky-datan laitteilta joilla ei ole
+   * täyttä luottamusta — EDIT_PIN ei riitä tähän, vain FULL_PIN/näyttölaite/
    * TRUSTED_HOSTS (ks. server/src/routes/api.ts, SENSITIVE_PROVIDERS).
-   * `students` on siis tyhjä EDIT_PIN:llä muokkaavalla puhelimella. Tämä
-   * lippu erottaa sen "Wilma-yhteyttä ei ole vielä konfiguroitu" -tilasta,
-   * jotta hintteksti ei väitä väärää syytä (ks. sama erottelu
-   * AlarmsPanel.vuessa).
+   * `students` ja `paikkyChildren` ovat siis tyhjiä EDIT_PIN:llä
+   * muokkaavalla puhelimella. Tämä lippu erottaa sen "yhteyttä ei ole vielä
+   * konfiguroitu" -tilasta, jotta hintteksti ei väitä väärää syytä (ks. sama
+   * erottelu AlarmsPanel.vuessa). Samalla se estää lasten nimien
+   * renderöinnin siellä missä palvelin on ne nimenomaan piilottanut.
    */
   canPreviewSchedule: boolean;
   /** Mitä tallennettu koodi tällä laitteella juuri nyt avaa — null jos ei mitään. Ks. App.vuen currentPinLevel. */
@@ -79,6 +94,24 @@ function isVisible(studentNumber: string): boolean {
   return list === null || list.includes(studentNumber);
 }
 
+// Päikyn lapsivalinta noudattaa täsmälleen Wilman sääntöjä yllä: null on
+// "kaikki", eikä siitä siirrytä listaan ennen kuin käyttäjä oikeasti poistaa
+// jonkun valinnan. `?? null` kattaa vanhemman palvelimen, joka ei vielä
+// palauta kenttää lainkaan — muuten ensimmäinen napautus kaatuisi.
+function togglePaikkyChild(childId: string): void {
+  const current = draft.value.visiblePaikkyChildren ?? null;
+  const list = current === null ? props.paikkyChildren.map((c) => c.id) : [...current];
+  const index = list.indexOf(childId);
+  if (index >= 0) list.splice(index, 1);
+  else list.push(childId);
+  draft.value.visiblePaikkyChildren = list;
+}
+
+function isPaikkyChildVisible(childId: string): boolean {
+  const list = draft.value.visiblePaikkyChildren ?? null;
+  return list === null || list.includes(childId);
+}
+
 /**
  * Yhteinen tallennus "Tallenna"-napille ja asettelun muokkaukseen
  * siirtymiselle — kumpikaan ei saa hukata kesken jääneitä muutoksia
@@ -134,8 +167,10 @@ async function save(): Promise<void> {
       </header>
 
       <div class="panel__body">
+        <!-- Kaksi lapsivalintaa peräkkäin, kummallakin oma lähteensä: otsikot
+             nimeävät lähteen, jotta ryhmiä ei lueta saman listan jatkoksi. -->
         <fieldset class="group">
-          <legend>Näytettävät lapset</legend>
+          <legend>Näytettävät lapset — Wilma</legend>
           <p v-if="!canPreviewSchedule" class="group__hint">Oppilasvalinta näkyy vain näyttölaitteella.</p>
           <p v-else-if="students.length === 0" class="group__hint">
             Ei oppilaita — Wilma-yhteys ei ole vielä käytössä.
@@ -147,6 +182,22 @@ async function save(): Promise<void> {
               @change="toggleStudent(student.studentNumber)"
             />
             <span>{{ student.name }}</span>
+          </label>
+        </fieldset>
+
+        <fieldset v-if="paikkyConfigured" class="group">
+          <legend>Näytettävät lapset — Päikky</legend>
+          <p v-if="!canPreviewSchedule" class="group__hint">Lapsivalinta näkyy vain näyttölaitteella.</p>
+          <p v-else-if="paikkyChildren.length === 0" class="group__hint">
+            Ei lapsia — Päikyn tietoja ei ole vielä saatu.
+          </p>
+          <label v-for="child in paikkyChildren" :key="child.id" class="check">
+            <input
+              type="checkbox"
+              :checked="isPaikkyChildVisible(child.id)"
+              @change="togglePaikkyChild(child.id)"
+            />
+            <span>{{ child.firstName }} {{ child.lastName }}</span>
           </label>
         </fieldset>
 

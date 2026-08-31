@@ -82,6 +82,26 @@ export function toFinnishDate(dateKey: string): string {
   return `${d}.${m}.${y}`;
 }
 
+/**
+ * A UTC ISO timestamp as the local wall clock, "HH:MM". Null when the input
+ * is not a parseable timestamp.
+ *
+ * This lives here rather than in the one provider that needs it because the
+ * tempting shortcuts — `getHours()`, `toLocaleTimeString()` without an
+ * explicit `timeZone` — read the *operating system's* zone. On a development
+ * machine set to Helsinki they are indistinguishable from correct; on a
+ * Raspberry Pi OS install, whose default is UTC and which no setup script in
+ * this project changes, every time would be three hours off and no test would
+ * notice. `localParts` pins Europe/Helsinki explicitly, so this is the only
+ * conversion anyone should be reaching for.
+ */
+export function isoToLocalClock(iso: string): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const { hour, minute } = localParts(date);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 /** Parses "HH:MM" into minutes since midnight; null when malformed. */
 export function parseClockTime(value: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());

@@ -396,6 +396,30 @@ function testBreakfastTimeDefaultsAndValidates(): void {
   console.log("ok  breakfastTime oletusarvo on 08:00 ja validoidaan kellonaikana");
 }
 
+// --- Näytettävät lapset (Settings.visibleStudents / visiblePaikkyChildren) ---
+
+/**
+ * Kaksi lähdettä, sama sääntö: null = näytä kaikki, muuten lista tunnisteita.
+ * Suodatus tehdään selaimessa, joten palvelimen ainoa tehtävä on olla
+ * päästämättä läpi muotoa jota selain ei osaa lukea — ja pitää kentät erillään
+ * toisistaan, koska Wilman opiskelijanumero ja Päikyn lapsen id eivät ole sama
+ * avaruus.
+ */
+function testVisiblePaikkyChildrenDefaultsAndValidates(): void {
+  assert.equal(getSettings().visiblePaikkyChildren, null, "oletus on null eli kaikki lapset");
+
+  const next = updateSettings({ visiblePaikkyChildren: ["104", "107"] });
+  assert.deepEqual(next.visiblePaikkyChildren, ["104", "107"]);
+  assert.equal(next.visibleStudents, null, "Päikyn lapsivalinta ei saa koskea Wilman valintaan");
+  assert.deepEqual(updateSettings({ visiblePaikkyChildren: [] }).visiblePaikkyChildren, [], "tyhjä lista on kelvollinen");
+  assert.equal(updateSettings({ visiblePaikkyChildren: null }).visiblePaikkyChildren, null, "null palauttaa kaikki");
+
+  assert.throws(() => updateSettings({ visiblePaikkyChildren: [104] }), SettingsValidationError, "numerot torjutaan");
+  assert.throws(() => updateSettings({ visiblePaikkyChildren: "104" }), SettingsValidationError, "merkkijono ei ole lista");
+  assert.throws(() => updateSettings({ visibleStudents: [1] }), SettingsValidationError, "visibleStudents validoi yhä samoin");
+  console.log("ok  visiblePaikkyChildren oletus on null ja validoidaan kuten visibleStudents");
+}
+
 testValidListIsAccepted();
 testEmptyListIsAccepted();
 testNonArrayIsRejected();
@@ -423,6 +447,7 @@ testGetSettingsMigratesLegacyAlarmFromStore();
 testUpdateSettingsRoundTripsThroughAlarmsKey();
 testUpdateSettingsRejectsInvalidAlarms();
 testBreakfastTimeDefaultsAndValidates();
+testVisiblePaikkyChildrenDefaultsAndValidates();
 
 console.log("\nall alarm settings tests passed");
 process.exit(0);

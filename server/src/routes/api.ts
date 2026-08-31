@@ -2,16 +2,29 @@ import fs from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { registry, type ProviderSnapshot } from "../core/provider.ts";
 import { getSettings, SettingsValidationError, updateSettings } from "../core/settings.ts";
-import { addNote, deleteNote, listNotes, listReadMessageIds, markMessageRead, setNoteDone } from "../core/store.ts";
+import {
+  addNote,
+  deleteNote,
+  listNotes,
+  listReadMessageIds,
+  markMessageRead,
+  markMessagesRead,
+  setNoteDone,
+} from "../core/store.ts";
 import { config } from "../core/config.ts";
 import { listCustomSounds, resolveCustomSound } from "../core/alarm-sounds.ts";
 import { exitKiosk } from "../core/kiosk.ts";
 import { logger } from "../core/logging.ts";
+import type { PaikkyData } from "../providers/paikky.ts";
 import type { WilmaData } from "../providers/wilma.ts";
 import { fullPinEnabled, isLocalRequest, isTrustedRequest, requireEditAccess, verifyEditPin, verifyFullPinOnly } from "./access.ts";
 
-/** Providers whose payload contains the children's school data. */
-const SENSITIVE_PROVIDERS = new Set(["wilma"]);
+/**
+ * Providers whose payload contains the children's school data. Päikky kuuluu
+ * tänne siinä missä Wilmakin: lapsen läsnäolo- ja hoitoaikatieto kertoo
+ * suoraan milloin kotona ei ole ketään.
+ */
+const SENSITIVE_PROVIDERS = new Set(["wilma", "paikky"]);
 
 /**
  * Providers the "Testaa yhteys" -painike saa herättää manuaalisesti. Erillinen
@@ -19,22 +32,71 @@ const SENSITIVE_PROVIDERS = new Set(["wilma"]);
  * pyynnöstä, joten se validoidaan tätä vasten ennen kuin sillä tehdään
  * mitään. Reitti on tarkoitettu nimenomaan Wilman katkaisijan avaamiseen
  * (ks. core/provider.ts:n manualTest), ei yleiseksi tavaksi käynnistää minkä
- * tahansa providerin hakua pyynnöstä.
+ * tahansa providerin hakua pyynnöstä. Päikyllä on sama ongelma kuin Wilmalla,
+ * mutta pahempana: jäähdytys venyy Wilmalla neljään ja Päikyllä kahteentoista
+ * tuntiin, ja tili lukkiutuu jos sitä kierretään hakkaamalla kirjautumista.
+ * Siksi Päikyn manuaalitestien vuorokausikatto on 3, ei Wilman 12
+ * (ks. providers/paikky.ts).
  */
-export const MANUALLY_TESTABLE_PROVIDERS = new Set(["wilma"]);
+export const MANUALLY_TESTABLE_PROVIDERS = new Set(["wilma", "paikky"]);
+
+/**
+ * Lähteet joiden viesteillä on paikallinen luettu-kirjanpito (ks. core/store.ts:n
+ * message_reads). Erillinen sallittujen lista, ei pyynnön `:source`-parametria
+ * sellaisenaan — sama syy kuin MANUALLY_TESTABLE_PROVIDERSissa yllä: parametri
+ * päätyy tallennettavan rivin avaimeksi, ja mikä tahansa merkkijono menisi
+ * tauluun mutta ei vastaisi mitään lähdettä.
+ */
+const READ_STATE_SOURCES = new Set(["wilma", "paikky"]);
+
+/**
+ * Yläraja "merkitse kaikki luetuiksi" -pyynnön listalle. Palvelin ei tiedä mitä
+ * käyttäjä näkee lukemattomana, joten tunnisteet tulevat asiakkaalta — ja juuri
+ * siksi erän koko rajataan tässä. Kumpikin lähde hakee kerralla parikymmentä
+ * viestiä (Wilma: providers/wilma.ts, Päikky: MESSAGE_LIMIT), joten 200 on
+ * reilusti yli todellisen tarpeen mutta estää mielivaltaisen suuren kirjoituserän.
+ */
+const MAX_READ_ALL_IDS = 200;
+
+/**
+ * Pisin hyväksytty viestitunniste. Wilman tunniste on numero, mutta Päikyn
+ * `uniqueId` on merkkijono, jonka pituudesta ei ole mitään takuuta (ks.
+ * docs/paikky-rajapinta.md) — ja tunniste päätyy sellaisenaan tietokantariviksi.
+ */
+const MAX_MESSAGE_ID_LENGTH = 200;
+
+/**
+ * `typeof === "string"` ei ole tässä muodollisuus: `ids`-lista tulee JSON-
+ * rungosta, jossa `{"ids":[86921]}` on täysin kelvollinen eikä TypeScriptin
+ * `string[]` estä sitä ajonaikana millään tavalla. Numero päätyisi sellaisenaan
+ * tietokantaan liukulukuna ja rivi kirjoittuisi muodossa "86921.0", jota mikään
+ * haku ei enää löydä (ks. core/store.ts:n asTextId). Siksi ei-merkkijono
+ * torjutaan tässä, eikä muunneta hiljaa.
+ */
+function isValidMessageId(id: unknown): id is string {
+  return typeof id === "string" && id.length > 0 && id.length <= MAX_MESSAGE_ID_LENGTH;
+}
 
 /**
  * Stamps each message with whether it has been opened on this display. Kept
  * out of the cached provider payload on purpose: read state must show up the
- * instant it changes, not wait for the next Wilma poll, and it must not be
- * written into `provider_cache` next to data that actually came from Wilma.
+ * instant it changes, not wait for the next poll, and it must not be written
+ * into `provider_cache` next to data that actually came from the source.
+ *
+ * `localRead` on TÄMÄN näytön kirjanpito eikä lähteen väite. Päikyn oma
+ * `unread` jää viestiin koskemattomana sen rinnalle — se voi olla null, "ei
+ * tiedossa" (ks. providers/paikky.ts:parseUnread) — ja käyttöliittymä päättää
+ * kumpaa käyttää. Kenttiä ei siis yhdistetä täällä.
+ *
+ * Tunniste merkkijonoksi: Wilman id on numero ja Päikyn merkkijono, ja taulu
+ * säilöö kummankin tekstinä (ks. core/store.ts).
  */
-function withLocalReadState(data: WilmaData): WilmaData & { messages: Array<WilmaData["messages"][number] & { localRead: boolean }> } {
-  const readIds = listReadMessageIds();
-  return {
-    ...data,
-    messages: data.messages.map((message) => ({ ...message, localRead: readIds.has(message.id) })),
-  };
+function withLocalReadState<T extends { id: string | number }>(
+  source: string,
+  messages: T[],
+): Array<T & { localRead: boolean }> {
+  const readIds = listReadMessageIds(source);
+  return messages.map((message) => ({ ...message, localRead: readIds.has(String(message.id)) }));
 }
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
@@ -126,7 +188,17 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     } else {
       const wilma = snapshots.wilma as ProviderSnapshot<WilmaData> | undefined;
       if (wilma?.data) {
-        snapshots.wilma = { ...wilma, data: withLocalReadState(wilma.data) };
+        snapshots.wilma = {
+          ...wilma,
+          data: { ...wilma.data, messages: withLocalReadState("wilma", wilma.data.messages) },
+        };
+      }
+      const paikky = snapshots.paikky as ProviderSnapshot<PaikkyData> | undefined;
+      if (paikky?.data) {
+        snapshots.paikky = {
+          ...paikky,
+          data: { ...paikky.data, messages: withLocalReadState("paikky", paikky.data.messages) },
+        };
       }
     }
 
@@ -216,21 +288,46 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // Wilma itself never tells us a message was read (see providers/wilma.ts),
-  // so "read" here means "opened on this display" — recorded the moment the
-  // dialog opens it. Trusted-only, not requireEditAccess: an EDIT_PIN lets a
-  // phone touch the shopping list, but per access.ts's own rule the
-  // children's school data stays with the wall display, TRUSTED_HOSTS
-  // devices, and FULL_PIN holders (isTrustedRequest covers all three). A
-  // phone without full trust never even sees Wilma messages
-  // (SENSITIVE_PROVIDERS above), so it has no legitimate reason to call this
-  // route at all.
-  app.post("/api/wilma/messages/:id/read", async (request, reply) => {
+  // Kumpikaan lähde ei kerro luotettavasti onko viesti luettu (Wilma ei
+  // lainkaan, ks. providers/wilma.ts; Päikyn oma väite voi olla "ei tiedossa",
+  // ks. providers/paikky.ts:parseUnread), joten "luettu" tarkoittaa tässä
+  // "avattu tällä näytöllä" — kirjataan sillä hetkellä kun dialogi avaa sen.
+  // Trusted-only, ei requireEditAccess: EDIT_PIN antaa puhelimen koskea
+  // muistilistaan, mutta access.ts:n oman säännön mukaan lasten koulu- ja
+  // hoitotiedot jäävät näyttölaitteelle, TRUSTED_HOSTS-laitteille ja FULL_PIN:n
+  // haltijoille (isTrustedRequest kattaa kaikki kolme). Puhelin ilman täyttä
+  // luottamusta ei edes näe näiden lähteiden viestejä (SENSITIVE_PROVIDERS
+  // yllä), joten sillä ei ole mitään syytä kutsua näitä reittejä.
+  app.post("/api/messages/:source/:id/read", async (request, reply) => {
     if (!isTrustedRequest(request)) return reply.code(403).send({ error: "Vain näyttölaitteelta" });
-    const id = Number((request.params as { id: string }).id);
-    if (!Number.isInteger(id)) return reply.code(400).send({ error: "Virheellinen tunniste" });
-    const readAt = markMessageRead(id);
+    const { source, id } = request.params as { source: string; id: string };
+    if (!READ_STATE_SOURCES.has(source)) return reply.code(404).send({ error: "Tuntematon lähde" });
+    if (!isValidMessageId(id)) return reply.code(400).send({ error: "Virheellinen tunniste" });
+    const readAt = markMessageRead(source, id);
     return { ok: true, readAt };
+  });
+
+  // "Merkitse kaikki luetuiksi". Tunnisteet tulevat asiakkaalta eikä palvelin
+  // päättele niitä itse: luettu-tila on paikallista kirjanpitoa, ja vain selain
+  // tietää mitkä viestit se juuri näyttää lukemattomina (esim. Päikyn
+  // suodatetut lapset). Palvelin ei siis merkitse mitään mitä käyttäjä ei
+  // nähnyt.
+  app.post("/api/messages/:source/read-all", async (request, reply) => {
+    if (!isTrustedRequest(request)) return reply.code(403).send({ error: "Vain näyttölaitteelta" });
+    const { source } = request.params as { source: string };
+    if (!READ_STATE_SOURCES.has(source)) return reply.code(404).send({ error: "Tuntematon lähde" });
+
+    const body = request.body as { ids?: unknown } | undefined;
+    const ids = body?.ids;
+    if (!Array.isArray(ids)) return reply.code(400).send({ error: "ids: lista viestitunnisteita" });
+    if (ids.length > MAX_READ_ALL_IDS) {
+      return reply.code(400).send({ error: `ids: enintään ${MAX_READ_ALL_IDS} tunnistetta kerralla` });
+    }
+    if (!ids.every(isValidMessageId)) {
+      return reply.code(400).send({ error: "ids: jokaisen tunnisteen on oltava merkkijono" });
+    }
+
+    return { ok: true, marked: markMessagesRead(source, ids) };
   });
 
   // "Testaa yhteys" -painike asetuksissa: yritys herättää Wilma-provider heti
