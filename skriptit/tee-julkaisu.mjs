@@ -420,6 +420,42 @@ const ARCHIVE_EXCLUDES = [
   "*/node_modules/*/examples",
 ];
 
+/**
+ * Vite antaa jokaiselle käännökselle uudet tiivistenimet, ja web/dist
+ * tyhjennetään ennen käännöstä (ks. web/package.json). Jos tyhjennys
+ * epäonnistuu HILJAA — mitä `fs.rmSync` joissakin ympäristöissä tekee: palaa
+ * virheettä poistamatta mitään — vanhat niput jäävät kansioon ja päätyvät
+ * pakettiin. Sovellus toimii silti, koska index.html viittaa vain uusiin,
+ * joten mikään ei paljasta vikaa: paketti vain lihoo käännös käännökseltä.
+ * Tämä on ehtinyt tapahtua kahdesti.
+ *
+ * Tarkistus on viittausperustainen eikä lukumääräperustainen: kelvollinen on
+ * tiedosto, johon index.html tai jokin assets-kansion CSS viittaa. Näin fontit
+ * ja kuvat, joihin viitataan vain tyylitiedostosta, eivät tuota väärää
+ * hälytystä.
+ */
+function assertNoStaleAssets(webDist) {
+  const assetsDir = path.join(webDist, "assets");
+  if (!fs.existsSync(assetsDir)) return;
+
+  const files = fs.readdirSync(assetsDir);
+  const sources = [fs.readFileSync(path.join(webDist, "index.html"), "utf8")];
+  for (const file of files) {
+    if (file.endsWith(".css")) sources.push(fs.readFileSync(path.join(assetsDir, file), "utf8"));
+  }
+  const referenced = sources.join("\n");
+
+  const orphans = files.filter((file) => !referenced.includes(file));
+  if (orphans.length > 0) {
+    fail(
+      `web/dist/assets sisältää ${orphans.length} tiedostoa joihin mikään ei viittaa — ` +
+        "edellisen käännöksen jäänteitä, jotka päätyisivät pakettiin.\n" +
+        `  ${orphans.slice(0, 8).join(", ")}${orphans.length > 8 ? ", …" : ""}\n` +
+        "Poista web/dist kokonaan ja aja koonti uudelleen.",
+    );
+  }
+}
+
 function createArchive(stagingParent, topFolderName, outFile) {
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.rmSync(outFile, { force: true });
@@ -706,6 +742,7 @@ async function main() {
   if (!fs.existsSync(path.join(webDist, "index.html"))) {
     fail("web/dist/index.html puuttuu käännöksen jälkeen — build epäonnistui hiljaisesti?");
   }
+  assertNoStaleAssets(webDist);
 
   const appVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 
