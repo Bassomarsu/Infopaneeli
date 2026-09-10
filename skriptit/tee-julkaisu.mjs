@@ -410,7 +410,12 @@ function fixLinuxExecutableBits(archivePath, topFolderName, platform, extraTarge
 //    eikä siihen saa kohdistua mitään. Huom: libarchiven poissulkukuviossa
 //    `*` osuu myös kauttaviivaan, joten yksi taso kattaa myös @scope-paketit.
 const ARCHIVE_EXCLUDES = [
-  "*/asennus/test-*.ps1",
+  // Asentimien testit, molemmat alustat. Pääte oli aiemmin sidottu .ps1:een,
+  // jolloin Linux-asentimen testit olisivat päätyneet pakettiin — ja koonti
+  // pysähtyi siihen, koska test-asenna.sh sisältää kirjaimellisen
+  // WILMA_PASSWORD-arvon testifikstuurina eikä salaisuustarkistus voi erottaa
+  // fikstuuria oikeasta salasanasta. Testit eivät kuulu pakettiin muutenkaan.
+  "*/asennus/test-*",
   "*/package-lock.json",
   "*/node_modules/.package-lock.json",
   "*/node_modules/.bin",
