@@ -59,8 +59,6 @@ if (fs.existsSync(config.webDist)) {
   }));
 }
 
-registry.startAll();
-
 async function shutdown(signal: string): Promise<void> {
   logger.warn({ event: "shutdown", signal }, "shutting down");
   registry.stopAll();
@@ -87,3 +85,12 @@ try {
   logger.error({ event: "listen_failed", err }, "server failed to start");
   process.exit(1);
 }
+
+// Vasta kuuntelun onnistuttua, ei ennen sitä. Näyttölaitteen lokeissa palvelin
+// käynnistyi kahdesti samalla sekunnilla ja jälkimmäinen kuoli EADDRINUSEen —
+// aiemmin tuo tuomittu prosessi ehti silti käynnistää providerien ajastimet.
+// Se ei ehtinyt tehdä hakuja (poistuminen kestää millisekunteja, lyhyinkin
+// aloitusviive on sekunteja), mutta kahden prosessin kirjautuminen samoilla
+// tunnuksilla on juuri se mitä tilin lukituksen esto ei kata: laskurit ovat
+// prosessikohtaisia. Tässä järjestyksessä sitä ei voi tapahtua lainkaan.
+registry.startAll();
