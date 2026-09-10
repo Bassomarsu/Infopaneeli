@@ -627,8 +627,19 @@ function copyServerSrc(destDir) {
   copyTree("server/src", path.join(repoRoot, "server", "src"), destDir, (f) => f.endsWith(".ts"));
 }
 
-function copyDir(label, src, dest) {
-  copyTree(label, src, dest);
+function copyDir(label, src, dest, fileFilter) {
+  copyTree(label, src, dest, fileFilter);
+}
+
+/**
+ * Asentimien testit eivät kuulu ajettavaan pakettiin. Suodatus tehdään jo
+ * lavastusvaiheessa eikä vasta arkistoitaessa, jotta KAIKKI myöhemmät vaiheet
+ * näkevät saman todellisuuden: pelkkä arkiston poissulku jätti tiedostot
+ * lavastukseen, jolloin suoritusoikeuslista poimi test-asenna.sh:n ja koonti
+ * pysähtyi siihen ettei sitä löytynyt valmiista arkistosta.
+ */
+function eiAsentimenTesti(polku) {
+  return !path.basename(polku).startsWith("test-");
 }
 
 // --- VERSIO.txt ja LUEMINUT.txt ---------------------------------------------
@@ -794,7 +805,7 @@ async function main() {
     step("web/dist kopiointi");
     copyDir("web/dist", webDist, path.join(stagingRoot, "web", "dist"));
     step("asennus kopiointi");
-    copyDir("asennus", asennusDir, path.join(stagingRoot, "asennus"));
+    copyDir("asennus", asennusDir, path.join(stagingRoot, "asennus"), eiAsentimenTesti);
 
     step("LUEMINUT.txt");
     fs.writeFileSync(path.join(stagingRoot, "LUEMINUT.txt"), buildReadme({ appVersion, platform }));
