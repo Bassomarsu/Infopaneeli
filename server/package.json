@@ -11,6 +11,7 @@
     "test:providers-manual": "node test/provider-manual-test.ts",
     "test:calendar": "node test/calendar-events.ts",
     "test:wilma": "node test/wilma-fetch.ts",
+    "test:wilma-session": "node test/wilma-session.ts",
     "test:prices": "node test/price-history.ts",
     "test:message-reads": "node test/message-reads.ts",
     "test:trusted-hosts": "node test/trusted-hosts.ts",

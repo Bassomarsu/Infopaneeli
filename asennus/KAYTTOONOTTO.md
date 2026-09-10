@@ -32,23 +32,29 @@ dokumentin lopussa.
    | Lokitaso (warn/error/debug) | warn |
    | Sään leveys- ja pituusaste, paikkakunta | Karstula |
    | Wilman osoite, käyttäjätunnus, salasana | tyhjä = Wilma pois käytöstä |
+   | Päikyn kuntaosoite, käyttäjätunnus, salasana | tyhjä = Päikky pois käytöstä |
    | Kalenterin ICS-osoite | tyhjä = kalenteri pois käytöstä |
    | `EDIT_PIN` | tyhjä = ei käytössä |
    | `FULL_PIN` (vähintään 6 merkkiä) | tyhjä = ei käytössä |
    | `TRUSTED_HOSTS` | tyhjä = ei luotettuja laitteita |
    | Otetaanko automaattikäynnistys käyttöön | kyllä |
 
-   Jokainen arvo validoidaan heti kysyttäessä (portti on vapaa, osoitteet ovat
+   Jokainen uusi arvo validoidaan heti kysyttäessä (porttinumero, osoitteet ovat
    kelvollisia URL-muotoja, `FULL_PIN` on riittävän pitkä tai tyhjä) — virheen
    sattuessa skripti kertoo mikä on vialla ja kysyy uudelleen, eikä jatka
-   virheellisellä arvolla. Wilman salasana ja PIN-koodit eivät koskaan näy
-   ruudulla eivätkä päädy lokiin.
+   virheellisellä arvolla. Portin vapautuminen tarkistetaan myös vanhan palvelimen
+   pysäyttämisen jälkeen. Salasanat ja PIN-koodit eivät koskaan näy ruudulla
+   eivätkä päädy lokiin. Kaikki kysymykset ja lopullinen vahvistus tehdään ennen
+   ohjelmien pysäyttämistä tai tiedostojen muuttamista. Vahvistuksen oletus on ei.
 
    Jos annat eri asennushakemiston kuin mistä paketti on purettu, skripti
    kopioi koko paketin sinne (`robocopy`). Jos kohteessa on jo aiempi asennus
    (päivitys), **`data`-kansio säilyy aina koskemattomana** — tietokanta,
    muistilista, hälytysäänet ja lokit eivät katoa. Olemassa oleva `.env`
-   korvataan vain erillisen vahvistuksen jälkeen.
+   säilyy päivityksessä nykyisine käyttöoikeuksineen. Skripti kysyy vain mallista
+   puuttuvat asetukset, esimerkiksi Päikyn tiedot, ja lisää ne tiedoston loppuun.
+   Tyhjäksi jätetty olemassa oleva asetus säilyy tyhjänä. Asetukset voi myös
+   määrittää kokonaan uudestaan valitsemalla erikseen **U** päivitystavan kysymyksessä.
 
 4. Skripti luo **työpöydän pikakuvakkeen** ("Infonäyttö (kioski)"), joka
    käynnistää sekä palvelimen (jos se ei jo ole käynnissä) että kioskiselaimen
@@ -62,8 +68,9 @@ dokumentin lopussa.
    skripti sanoo sen selvästi eikä väitä asennusta valmiiksi — tarkista
    silloin `<asennushakemisto>\data\logs\`.
 
-6. Jos annoit Wilman tunnukset, skripti tarjoaa **Wilma-yhteyden testausta**
-   heti asennuksen lopuksi (tasan yksi yritys, ei silmukkaa — ks. alempana
+6. Palvelimen vastatessa myös kioskiselain käynnistetään uudella versiolla.
+   Jos annoit Wilman tunnukset, skripti kysyy etukäteen luvan **Wilma-yhteyden testiin**,
+   joka tehdään asennuksen lopuksi (tasan yksi yritys, ei silmukkaa — ks. alempana
    "Tilin lukituksen esto"). Väärä salasana kannattaa löytää nyt, ei aamulla
    seinältä.
 
@@ -86,10 +93,29 @@ Poistaa ajastetut tehtävät ja työpöydän pikakuvakkeen. **Ei koskaan** `.env
 tiedostoa eikä `data`-kansiota — poista ne itse (tai koko asennushakemisto)
 jos et enää tarvitse niitä.
 
-Version päivitys on **tuettu tapaus**: pura uusi paketti, aja sen oma
-`asenna.ps1` ja anna sama asennushakemisto kuin ennen. `data`-kansio säilyy
-aina; edellinen palvelinprosessi pysäytetään automaattisesti ennen tiedostojen
-päivitystä.
+Version päivitys on **tuettu tapaus**: pura uusi paketti **erilliseen kansioon**,
+aja sen oma `asenna.ps1` ja anna aiempi pysyvä asennushakemisto kohteeksi. Valitse
+oletus **P** säilyttääksesi asetukset. Älä pura uutta versiota vanhan päälle:
+erillisestä paketista tehty peilaus poistaa myös uudesta versiosta poistuneet
+ohjelmatiedostot. Kohteen ylimääräiset tiedostot poistuvat, joten säilytä omat
+tiedostot `data`-kansiossa tai asennushakemiston ulkopuolella.
+
+`data`-kansio (myös paluutietokanta) ja `.env` säilyvät. `.env`:n nykyisiä tavuja
+tai käyttöoikeuksia ei muuteta; vain puuttuvat asetukset lisätään loppuun UTF-8:na.
+Edellinen palvelin ja sen porttiin osoittava kioskiselain pysäytetään ennen
+kopiointia. Asennus keskeytetään virheeseen, jos uusi palvelin ei vastaa.
+
+Olemassa olevien ajastettujen tehtävien käyttäjä, liipaisimet ja asetukset
+säilyvät; käynnistyskomento päivitetään tarvittaessa. Käytöstä poistetut tehtävät
+jäävät pois käytöstä, eikä osittaisesta tehtäväparista poistettua tehtävää luoda
+automaattisesti uudestaan. Jos tehtävää ei ole tai se on pois käytöstä, palvelin
+tai selain käynnistetään nyt asentajan istunnossa. Kun käytetään toisen käyttäjän
+olemassa olevaa ajastusta, tämän pitää olla kirjautuneena koneelle.
+
+Peilaus hyväksyy tyhjän kohdekansion tai tunnistetun Infonäytön julkaisupaketin.
+Se estää aseman juuren, kehityskopion, sisäkkäiset lähde- ja kohdehakemistot sekä
+symboliset linkit ja junctionit. Jos kohde ei läpäise tarkistusta, mitään ei
+kopioida eikä poisteta.
 
 ## Tapa 2: Kehityskopiosta
 

@@ -55,6 +55,15 @@ export interface ProviderOptions<T> {
   manualTestDailyLimit?: number;
   /** Rolling window the manual test daily cap is measured over. Overridable only for tests. */
   manualTestWindowMs?: number;
+  /**
+   * Ajetaan juuri ennen manuaalista koeyritystä, ei koskaan automaattisella
+   * kierroksella. Providerikohtainen paikka heittää pois se muistissa oleva
+   * tila, jonka takia automaattinen haku on jumissa — Wilmalla vanhentunut
+   * istunto, jota yksikään uusi yritys samalla istunnolla ei elvytä. Ilman
+   * tätä "Testaa yhteys" epäonnistuisi täsmälleen samalla tavalla kuin
+   * automaattinen haku, eli se ei olisi palautumiskeino lainkaan.
+   */
+  beforeManualTest?: () => void | Promise<void>;
 }
 
 export type ManualTestOutcome =
@@ -146,30 +155,13 @@ export class Provider<T = unknown> {
     this.maxBackoffMs = options.maxBackoffMs ?? 30 * 60 * 1000;
     this.fatalLimit = options.fatalLimit ?? 3;
     this.timeoutMs = options.timeoutMs ?? 90_000;
-    // 30 min, doubling to a 4 h ceiling. Worst case (a permanently wrong
-    // password, cached data present so quiet hours also apply) that is about
-    // 6 probes across the 18 active hours plus the 3 that opened the breaker —
-    // 9 login attempts a day, always at least half an hour apart. Far below
-    // any lockout threshold, while a genuinely transient outage gets a retry
-    // within the hour and is fully recovered the same day.
+    // 30 min, doubling to a 4 h ceiling. These pace fetch cycles; a provider
+    // can make several login requests inside one cycle (e.g. one per child).
     this.probeCooldownBaseMs = options.probeCooldownMs ?? 30 * 60 * 1000;
     this.probeCooldownMaxMs = options.maxProbeCooldownMs ?? 4 * 60 * 60 * 1000;
 
-    // "Testaa yhteys" -painike (ks. manualTest alempana): 5 min per käyttäjän
-    // nimenomainen vaatimus. Se yksin sallisi teoriassa 288 yritystä
-    // vuorokaudessa jatkuvasti painettuna — 32-kertainen automaattisen
-    // katkaisijan pahimman tapauksen (9/vrk, ks. probeCooldownBaseMs yllä)
-    // verran. Kosketusnäyttö on fyysisesti kaikkien perheenjäsenten
-    // ulottuvilla, joten pelkkä 5 min ei riitä estämään koko päivän
-    // nojaamista nappiin. Vuorokausikatto 12 sallii silti realistisen
-    // vianetsintäistunnon (tunti yhtäjaksoista 5 min välein testaamista, tai
-    // useampi lyhyempi istunto päivän mittaan) ilman että se muuttuu
-    // mielivaltaiseksi hakkaukseksi. Yhdessä automaattisen pahimman
-    // tapauksen kanssa se on korkeintaan 21 kirjautumisyritystä
-    // vuorokaudessa, ja koska 12 manuaalista jakautuvat vähintään 5 min
-    // väliin, tiheimmilläänkin ne ovat vain 3 yritystä/15 min — selvästi
-    // harvempi kuin useimpien järjestelmien lyhyen ikkunan
-    // lukitusrajat, vaikka Wilman omaa kynnystä ei tunneta.
+    // Viiden minuutin väli ja erillinen vuorokausikatto estävät jatkuvan
+    // manuaalisen uudelleenyrittämisen. Kumpikin raja koskee hakukierroksia.
     this.manualTestIntervalMs = options.manualTestIntervalMs ?? 5 * 60 * 1000;
     this.manualTestDailyLimit = options.manualTestDailyLimit ?? 12;
     this.manualTestWindowMs = options.manualTestWindowMs ?? DAY_MS;
@@ -211,6 +203,14 @@ export class Provider<T = unknown> {
     // the scheduled one cannot leave two timers racing.
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
+      this.timer = null;
+      // A manual test may still be running when this timer fires. Its failure
+      // leaves the automatic schedule alone, so retain a timer here instead
+      // of losing the only scheduled callback to runOnce's busy guard.
+      if (this.running) {
+        this.schedule(this.options.intervalMs);
+        return;
+      }
       void this.runOnce();
     }, withJitter(delayMs));
     this.timer.unref?.();
@@ -272,6 +272,10 @@ export class Provider<T = unknown> {
    * automaattista aikataulua, jota käyttäjä ei enää edes katso jos hän
    * nojaa tähän nappiin. Automaattinen jäähdytys jatkuu täsmälleen samana
    * kuin jos nappia ei olisi koskaan painettu.
+   *
+   * Yritys lähtee providerin omalta puhtaalta pöydältä (`beforeManualTest`).
+   * Jäähdytyksen ohittaminen ei yksin riitä, jos providerin jumi on sen
+   * omassa muistissa olevassa tilassa eikä aikataulussa.
    */
   async manualTest(now: () => number = Date.now): Promise<ManualTestOutcome> {
     if (this.stopped || this.running) return { outcome: "busy" };
@@ -303,6 +307,10 @@ export class Provider<T = unknown> {
 
     this.running = true;
     try {
+      // Providerikohtainen puhdistus ennen yritystä (ks. beforeManualTest).
+      // Jos se heittää, lopputulos on "failed" kuten mikä tahansa muukin
+      // epäonnistunut koeyritys — automaattista aikataulua se ei koske.
+      await this.options.beforeManualTest?.();
       const data = await withTimeout(this.options.fetch(), this.timeoutMs, this.id);
       this.onSuccess(data);
       logger.warn(

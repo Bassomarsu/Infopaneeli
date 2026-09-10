@@ -258,5 +258,34 @@ await testManualTestDailyLimit();
 await testManualTestUnknownProviderRejected();
 await testManualTestBusyWhileAlreadyRunning();
 
+async function testAutomaticPollingSurvivesOverlappingFailedManualTest(): Promise<void> {
+  let rejectManual!: (reason: Error) => void;
+  let calls = 0;
+  const provider = new Provider({
+    id: `test-manual-overlap-${process.pid}`,
+    intervalMs: 20,
+    initialDelayMs: 0,
+    fetch: () => ++calls === 1
+      ? new Promise<number>((_resolve, reject) => { rejectManual = reject; })
+      : Promise.resolve(42),
+  });
+  try {
+    provider.start();
+    const manual = provider.manualTest();
+    // The zero-delay automatic timer runs while the manual fetch is held open.
+    await sleep(50);
+    assert.equal(calls, 1, "scheduled ticks cannot start a concurrent fetch");
+    rejectManual(new Error("manual connection test failed"));
+    assert.equal((await manual).outcome, "failed");
+    const deadline = Date.now() + 1000;
+    while (calls < 2 && Date.now() < deadline) await sleep(10);
+    assert.ok(calls >= 2, "automatic polling must resume after the failed manual test");
+    assert.equal(provider.snapshot().status, "ok");
+  } finally { provider.stop(); }
+  console.log("ok  automatic polling survives a timer firing during a failed manual test");
+}
+
+await testAutomaticPollingSurvivesOverlappingFailedManualTest();
+
 console.log("\nall manual-test provider tests passed");
 process.exit(0);

@@ -574,7 +574,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 </script>
 
 <template>
-  <!-- Teleportattu <body>:n alle, jotta App.vuen yötila (filter #app.night)
+  <!-- Teleportattu <body>:n alle, jotta App.vuen yötila (filter .app.night)
        ei koskaan himmennä hälytysilmoitusta — aamu on juuri se hetki jolloin
        ilmoituksen pitää näkyä kirkkaana. -->
   <Teleport to="body">
@@ -1275,7 +1275,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 /*
  * Hälytysilmoitus: koko ruudun peittävä, mahdollisimman huomiota herättävä,
- * eikä koskaan #app.night-luokan filter-himmennyksen alainen (ks. Teleport
+ * eikä koskaan .app.night-luokan filter-himmennyksen alainen (ks. Teleport
  * yllä). z-index on korkea, koska tämä on <body>:n suora lapsi eikä muiden
  * modaalien tavoin App.vuen sisällä.
  */

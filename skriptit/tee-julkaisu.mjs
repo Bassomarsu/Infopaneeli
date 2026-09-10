@@ -410,6 +410,7 @@ function fixLinuxExecutableBits(archivePath, topFolderName, platform, extraTarge
 //    eikä siihen saa kohdistua mitään. Huom: libarchiven poissulkukuviossa
 //    `*` osuu myös kauttaviivaan, joten yksi taso kattaa myös @scope-paketit.
 const ARCHIVE_EXCLUDES = [
+  "*/asennus/test-*.ps1",
   "*/package-lock.json",
   "*/node_modules/.package-lock.json",
   "*/node_modules/.bin",
@@ -555,6 +556,7 @@ function verifyNoSecrets(archivePath, topFolderName) {
   // tarkistusta olisi pelkkä toive — juuri tähän kaatui aiempi versio, jossa
   // luotettiin tiedostojen poistamiseen työtilasta.
   const forbidden = [
+    path.join("asennus", "test-asenna.ps1"),
     "package.json",
     "package-lock.json",
     path.join("web", "package.json"),

@@ -20,6 +20,11 @@
   --radius: 20px;
   --gap: 1.1rem;
 
+  /* Sivun tausta omana muuttujanaan, koska se maalataan kahteen kertaan:
+     bodyyn ja `.app`:iin. Ks. `.app`-sääntö alempana — yötilan himmennys
+     osuu vain `.app`:iin, joten pelkkä bodyn tausta jäisi kirkkaaksi. */
+  --page-bg: radial-gradient(120% 90% at 50% 0%, var(--bg-glow) 0%, var(--bg) 60%);
+
   color-scheme: dark;
 }
 
@@ -35,7 +40,7 @@ body {
 }
 
 body {
-  background: radial-gradient(120% 90% at 50% 0%, var(--bg-glow) 0%, var(--bg) 60%);
+  background: var(--page-bg);
   color: var(--text);
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 18px;
@@ -51,10 +56,36 @@ body {
   height: 100dvh;
 }
 
-/* Dimmed at night so the display does not light up the room. */
-#app.night {
-  filter: brightness(0.42) saturate(0.85);
+/* Yötila himmentää näytön, ettei se valaise huonetta pimeässä.
+ *
+ * Valitsin on `.app.night` eikä `#app.night` — ÄLÄ palauta id-muotoa. Vue
+ * renderöi juurikomponenttinsa `#app`:n SISÄÄN eikä sen tilalle, joten
+ * App.vuen `<div class="app" :class="{ night: isNight }">` on `#app`:n LAPSI.
+ * `night`-luokka päätyy siis aina eri elementtiin kuin `id="app"`, ja
+ * `#app.night` (= sama elementti, jolla on molemmat) ei osunut koskaan
+ * mihinkään: himmennys oli rikki koko sen olemassaolon ajan.
+ *
+ * Himmennettävä on nimenomaan tämä, `.app`-taso, ei `<body>`: hälytysilmoitus
+ * on teleportattu `<body>`:n alle juuri siksi, ettei se himmene (ks.
+ * AlarmsPanel.vue). Bodyn suodattaminen himmentäisi myös sen.
+ *
+ * Siksi tässä myös maalataan sivun tausta uudestaan: se on bodyssä, siis
+ * suodattimen ULKOpuolella, eikä himmenisi lainkaan. Mitattuna ylälaidan
+ * hehku pysyi yötilassa täsmälleen samana (#141a26), jolloin se olisi
+ * himmennyksen jälkeen ruudun kirkkain iso pinta — juuri se mitä yötilan on
+ * määrä poistaa. `.app` peittää koko ruudun (100dvh), joten bodyn tausta
+ * jää vain varmistukseksi ja hälytysilmoituksen taakse.
+ *
+ * `transition` on tarkoituksella perussäännössä eikä `.night`-säännössä:
+ * jos se olisi vain jälkimmäisessä, himmennys liukuisi päälle mutta
+ * katoaisi aamulla yhdellä ruudunpäivityksellä. */
+.app {
+  background: var(--page-bg);
   transition: filter 4s ease;
+}
+
+.app.night {
+  filter: brightness(0.42) saturate(0.85);
 }
 
 .tnum {

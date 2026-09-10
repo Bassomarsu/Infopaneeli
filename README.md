@@ -60,6 +60,7 @@ Kehityksessä frontend erikseen: `npm run dev` (palvelin) ja `npm run dev:web`
 | `npm run build` | Kääntää frontendin `web/dist`-kansioon |
 | `npm run typecheck` | Tyyppitarkistus molemmille työtiloille |
 | `npm test` | Kaikki yksikkötestit: providerit, Wilma, hinnat, viestit, kalenteri, asettelu (ei verkkoa) |
+| `npm run test:asennus` | Windows-asentimen päivitys- ja säilytystestit eristetyissä testihakemistoissa; mukana myös `npm test` -ajossa Windowsissa |
 | `npm run release` | Kokoaa asennuspaketit (Windows + Linux) omine Node-ajonaikoineen `julkaisu/`-kansioon |
 | `npm run test:smoke` | Savutesti **oikeaa Wilmaa vasten** — aja kirjastopäivityksen jälkeen |
 
@@ -115,12 +116,12 @@ minuutin kuluttua tehdään yksi koeyritys. Jos sekin epäonnistuu, jäähdytys
 kaksinkertaistuu (60 min, 120 min, ...) aina 4 tunnin kattoon asti; onnistunut
 koeyritys nollaa katkaisijan täysin — laskurit, jäähdytyksen ja tilan.
 
-Pahimmassakin tapauksessa — salasana on pysyvästi väärä — tämä tuottaa
-korkeintaan noin **9 kirjautumisyritystä vuorokaudessa** (3 alkuperäistä plus
-~6 koeyritystä 4 tunnin jäähdytyksellä valveilla-olon 18 tunnin aikana),
-aina vähintään 30 minuutin välein. Se on kaukana mistä tahansa järkevästä
-lukituskynnyksestä, mutta riittävän tiheä palautumaan ohimenevästä katkosta
-saman päivän aikana.
+Myös kirjautumisen verkkovirhe tai uudelleenohjaussilmukka lasketaan
+kirjautumisvirheeksi. Näin tyhjä istuntovälimuisti ei aiheuta uutta
+kirjautumiskierrosta jokaisella tavallisella hakuvuorolla koko katkon ajan.
+Rajoitus koskee hakukierroksia: yksi kierros voi sisältää oppilaslistan
+kirjautumisen ja erillisen kirjautumisen kullekin lapselle. Kirjasto voi myös
+uusia kirjautumisen sisäisesti, joten kierrosten määrä ei ole HTTP-pyyntöjen määrä.
 
 Jäähdytys ja Wilman hiljaiset tunnit (23–05, ks. alla) eivät kertaannu:
 koeyritys joka osuisi hiljaisiin tunteihin vain odottaa seuraavaa aktiivista
@@ -131,7 +132,8 @@ uudelleen sen takia.
 
 Neljän tunnin jäähdytys on pitkä aika katsoa kuollutta korttia silloin kun syy
 on jo korjattu (salasana vaihdettu takaisin, verkko palannut). Asetusten
-**Wilma-yhteys → Testaa yhteys** ohittaa jäähdytyksen ja yrittää heti.
+**Wilma-yhteys → Testaa yhteys** ohittaa jäähdytyksen, pudottaa vanhan
+istunnon ja yrittää heti uudella kirjautumisella.
 
 > **Salasanan korjaaminen `.env`-tiedostoon vaatii palvelimen uudelleen-
 > käynnistyksen.** Tiedosto luetaan vain prosessin käynnistyessä
@@ -140,9 +142,9 @@ on jo korjattu (salasana vaihdettu takaisin, verkko palannut). Asetusten
 > uudestaan samalla vanhalla salasanalla ja kuluttaisi yhden yrityksen
 > turhaan. Järjestys on siis: korjaa `.env` → käynnistä palvelin uudelleen →
 > vasta tarvittaessa Testaa yhteys.
-Onnistuminen nollaa katkaisijan täysin; epäonnistuminen **ei** koske
-automaattiseen aikatauluun mitenkään, jottei napin painelu vahingossa venytä
-jäähdytystä jota käyttäjä ei siinä hetkessä edes seuraa.
+Onnistuminen nollaa katkaisijan täysin; epäonnistuminen säilyttää
+automaattisen katkaisijan laskurit ja jäähdytyksen. Jos automaattinen
+hakuvuoro osuu manuaalitestin ajalle, haku siirtyy seuraavaan vuoroon.
 
 Painike vaatii muokkausoikeuden (`EDIT_PIN`) — ei `FULL_PIN`iä, koska se ei
 paljasta Wilma-dataa, vain sen onnistuiko haku. **Rajoitin on palvelimella**,
@@ -154,14 +156,20 @@ Rajat ovat **5 min per yritys** ja **12 yritystä vuorokaudessa**. Pelkkä
 viiden minuutin väli sallisi 288 yritystä vuorokaudessa, ja kosketusnäyttö on
 fyysisesti koko perheen ulottuvilla — vuorokausikatto on se, mikä estää
 napista tulemasta hakkausvektoria. 12 riittää silti tunnin yhtäjaksoiseen
-vianetsintään. Pahin yhteenlaskettu tapaus on siis **21 kirjautumisyritystä
-vuorokaudessa** (9 automaattista + 12 manuaalista), tiheimmilläänkin vain
-3 per 15 minuuttia.
+vianetsintään. Nämäkin rajat koskevat hakukierroksia, eivät yksittäisiä
+kirjautumispyyntöjä.
 
-Muut virheet — 500, 429, satunnainen 404 — **eivät** pudota istuntoa. Ne
-jäävät providerin backoffin hoidettavaksi samalla istunnolla, jottei
-tilapäinen häiriö muuttuisi uusien kirjautumisten sarjaksi juuri silloin kun
-Wilma on jo vaikeuksissa.
+Yksittäinen haun HTTP-virhe ei pudota istuntoa. Kahden peräkkäisen
+epäonnistumisen jälkeen istunto uusitaan kerran saman häiriöjakson aikana.
+Pitkittyvä häiriö ei siis aiheuta kirjautumista jokaisella kierroksella.
+Onnistunut haku nollaa tämän laskurin.
+
+Yli 90 minuutin tauko hakuyrityksissä pudottaa istunnon ennen seuraavaa
+hakua. Tämä kattaa yön hiljaiset tunnit myös silloin, kun illalla luotu
+istunto ei ehtinyt palauttaa tietoja ennen yötä. Aikakatkaisun jälkeen
+valmistuva vanha kirjautuminen ei saa korvata uuden kierroksen istuntoa.
+Istunnon uusimisen syy kirjataan lokiin, ja virheen sisempi syy, esimerkiksi
+`redirect count exceeded`, näytetään kortissa pelkän `fetch failed` -tekstin lisäksi.
 
 ### Wilman kysely on niukkaa
 
