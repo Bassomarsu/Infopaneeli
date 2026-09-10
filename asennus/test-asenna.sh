@@ -109,6 +109,21 @@ lataa_env "$TESTIJUURI/ei-ole.env" "$NODE_BIN"
     && ok 'Puuttuva .env luetaan tyhjänä eikä kaada asenninta' \
     || kaadu 'Puuttuva .env ei tuottanut tyhjää tulosta'
 
+# Vioittunutta .env:iä ei voi tunnistaa jäsennysvirheestä -- parseEnv ei valita
+# mistään. Ainoa mittari on löytyykö sieltä yhtään mallin tuntemaa avainta.
+for roska in '' '# pelkkiä kommentteja' 'sekalaista roskaa ilman yhtäsuuruusmerkkiä' 'MUU_OHJELMA=1'; do
+    kirjoita_tiedosto "$TESTIJUURI/roska.env" "$roska"
+    lataa_env "$TESTIJUURI/roska.env" "$NODE_BIN"
+    [[ "$(tunnettuja_avaimia)" -eq 0 ]] \
+        && ok "Vioittunut .env tunnistetaan tunnettujen avainten puutteesta: '${roska:0:24}'" \
+        || kaadu "Vioittunut .env meni läpi ehjänä: '$roska'"
+done
+kirjoita_tiedosto "$TESTIJUURI/roska.env" 'PORT=4173'
+lataa_env "$TESTIJUURI/roska.env" "$NODE_BIN"
+[[ "$(tunnettuja_avaimia)" -eq 1 ]] \
+    && ok 'Yksikin tunnettu avain riittää: ehjää .env:iä ei väitetä vioittuneeksi' \
+    || kaadu 'Ehjä .env tulkittiin vioittuneeksi'
+
 # --- Puuttuvien avainten tunnistus ------------------------------------------
 
 # Rakennetaan ennen Päikkyä asennetun kaltainen .env: PAIKKY_* puuttuu, muut
@@ -234,6 +249,29 @@ unset -f kysy_asetus
 
 # --- Peilaava kopiointi -----------------------------------------------------
 
+if sisaltaa data "${PAKETIN_OSAT[@]}" || sisaltaa .env "${PAKETIN_OSAT[@]}"; then
+    kaadu 'PAKETIN_OSAT sisältää data/ tai .env -- peilaus tuhoaisi ne'
+fi
+ok 'PAKETIN_OSAT ei sisällä data/- eikä .env-tiedostoa (peilaus ei voi koskea niihin)'
+
+# Suojaus sitä vastaan että peilaus joskus kirjoitetaan uusiksi rsyncin varaan:
+# yksi lippu (--delete-excluded) veisi data/:n ja .env:n, eikä rsync ole edes
+# taattu Debianin minimiasennuksessa (Priority: standard).
+ASENNIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/asenna.sh"
+if grep -nE '^[[:space:]]*[^#[:space:]].*(rsync|--delete-excluded)' "$ASENNIN"; then
+    kaadu 'asenna.sh kutsuu rsynciä tai käyttää --delete-excludedia -- tarkista tarkistukset ja poissulut'
+fi
+ok 'Peilaus ei nojaa rsynciin (ei taattu jakeluissa) eikä --delete-excludediin'
+RM_RIVEJA=0
+while IFS= read -r rivi; do
+    RM_RIVEJA=$((RM_RIVEJA + 1))
+    [[ "$rivi" == *'${osa'* ]] \
+        || kaadu "rm -rf koskee muuhun kuin yksittäiseen paketin osaan: $rivi"
+done < <(grep -nE '^[[:space:]]*rm -rf' "$ASENNIN")
+[[ "$RM_RIVEJA" -ge 1 ]] \
+    && ok "rm -rf kohdistuu aina yhteen paketin osaan, ei koko kohdehakemistoon ($RM_RIVEJA kohtaa)" \
+    || kaadu 'Peilauksen rm -rf -riviä ei löytynyt -- tarkistus ei enää tarkista mitään'
+
 LAHDE="$TESTIJUURI/paketti"
 KOHDE="$TESTIJUURI/kohde"
 tee_testipaketti "$LAHDE"
@@ -272,11 +310,62 @@ peilaa_paketti "$LAHDE" "$KOHDE"
     && ok 'Peilaus säilyttää data/-kansion, paluutietokannan ja lokit' \
     || kaadu 'data/-kansio kärsi peilauksessa'
 
+[[ ! -e "$KOHDE/$(basename "$LAHDE")" ]] \
+    && ok 'Peilaus ei luo lähdehakemistoa kohteen sisään (päivitys ei jää hiljaa tekemättä)' \
+    || kaadu 'Peilaus loi kohteeseen alihakemiston lähteen nimellä -- vanha versio jäisi käyttöön'
+
+# Peilaus saa poistaa VAIN paketin osat. Kohteen muut tiedostot -- käyttäjän
+# omat, data/ ja .env -- eivät ole listalla eivätkä saa kadota.
+kirjoita_tiedosto "$KOHDE/oma-muistiinpano.txt" 'käyttäjän oma tiedosto'
+kirjoita_tiedosto "$KOHDE/data/omat-aanet/herätys.wav" 'hälytysääni'
+peilaa_paketti "$LAHDE" "$KOHDE"
+[[ -f "$KOHDE/oma-muistiinpano.txt" && -f "$KOHDE/data/omat-aanet/herätys.wav" && -f "$KOHDE/.env" ]] \
+    && ok 'Peilaus ei poista mitään paketin osien ulkopuolelta' \
+    || kaadu 'Peilaus poisti kohteesta tiedostoja jotka eivät kuulu pakettiin'
+
 odota_virhe 'Samaan hakemistoon peilaaminen estetään' peilaa_paketti "$LAHDE" "$LAHDE"
 odota_virhe 'Lähteen alihakemistoon peilaaminen estetään' peilaa_paketti "$LAHDE" "$LAHDE/sisalla"
 odota_virhe 'Lähteen ylähakemistoon peilaaminen estetään' peilaa_paketti "$LAHDE" "$TESTIJUURI"
 odota_virhe 'Juureen peilaaminen estetään' peilaa_paketti "$LAHDE" /
 odota_virhe 'Suhteellista kohdetta ei hyväksytä' peilaa_paketti "$LAHDE" kohde
+
+# Pahin tapaus: paketti puretaan asennushakemiston SISÄÄN ja asennin
+# osoitetaan samaan hakemistoon. Ilman sisäkkäisyystarkistusta peilaus poistaisi
+# lähdepaketin alta kesken kopioinnin: server/src jäisi tyhjäksi, asennus
+# rikkoutuisi eikä paluureittiä olisi.
+SISAKKAIN="$TESTIJUURI/sisakkain"
+tee_testipaketti "$SISAKKAIN"
+kirjoita_tiedosto "$SISAKKAIN/.env" 'tunnukset'
+kirjoita_tiedosto "$SISAKKAIN/data/infonaytto.db" 'perheen tietokanta'
+tee_testipaketti "$SISAKKAIN/uusi-paketti"
+odota_virhe 'Asennushakemiston sisään purettu paketti ei kelpaa lähteeksi' \
+    peilaa_paketti "$SISAKKAIN/uusi-paketti" "$SISAKKAIN"
+[[ -f "$SISAKKAIN/uusi-paketti/server/src/index.ts" && -f "$SISAKKAIN/server/src/index.ts" \
+   && -f "$SISAKKAIN/asennus/kaynnista.sh" && "$(cat "$SISAKKAIN/data/infonaytto.db")" == 'perheen tietokanta' ]] \
+    && ok 'Sisäkkäisen peilauksen torjunta säilytti sekä lähdepaketin että asennuksen' \
+    || kaadu 'Sisäkkäinen peilaus ehti tuhota lähdepaketin tai asennuksen'
+
+# Sama hakemisto ".."-polun kautta annettuna. Pelkkä merkkijonovertailu ei
+# huomaisi tätä, ja peilaus poistaisi paketin osat oman lähteensä alta.
+odota_virhe '".."-polun kautta annettu lähde = kohde tunnistetaan samaksi' \
+    peilaa_paketti "$LAHDE" "$KOHDE/../paketti"
+[[ -f "$LAHDE/server/src/index.ts" && -f "$LAHDE/node/bin/node" ]] \
+    && ok '".."-polun torjunta säilytti lähdepaketin' \
+    || kaadu '".."-polku pääsi tuhoamaan lähdepaketin'
+
+# Symlinkin kautta annettu lähde on sama hakemisto kuin kohde. Windowsin Git
+# Bash ei osaa luoda symlinkkejä ilman kehittäjätilaa; Linuxissa tämä ajetaan.
+if ln -s "$LAHDE" "$TESTIJUURI/linkki" 2>/dev/null && [[ -L "$TESTIJUURI/linkki" ]]; then
+    odota_virhe 'Symlinkin kautta annettu lähde tunnistetaan samaksi kuin kohde' \
+        peilaa_paketti "$TESTIJUURI/linkki" "$LAHDE"
+    odota_virhe 'Linkitettyä kohdetta ei hyväksytä' peilaa_paketti "$LAHDE" "$TESTIJUURI/linkki"
+    [[ -f "$LAHDE/server/src/index.ts" ]] \
+        && ok 'Symlinkkitorjunta säilytti lähdepaketin' \
+        || kaadu 'Symlinkin kautta ehdittiin tuhota lähdepaketti'
+    rm -f "$TESTIJUURI/linkki"
+else
+    echo "OHITETTU: symlinkkitestit -- tämä alusta ei luo symlinkkejä (ajetaan Linuxissa)"
+fi
 
 VIERAS="$TESTIJUURI/vieras"
 kirjoita_tiedosto "$VIERAS/.env" 'toinen projekti'

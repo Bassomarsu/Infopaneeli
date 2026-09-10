@@ -773,9 +773,6 @@ async function main() {
 
   console.log("\n--- 5/5: Paketointi ---");
   const asennusDir = path.join(repoRoot, "asennus");
-  const shellScripts = fs.existsSync(asennusDir)
-    ? fs.readdirSync(asennusDir).filter((n) => n.endsWith(".sh"))
-    : [];
 
   const results = [];
   for (const platform of platforms) {
@@ -832,7 +829,18 @@ async function main() {
     createArchive(stagingParent, topFolderName, outFile);
 
     if (platform.id === "linux-x64") {
-      const extraTargets = shellScripts.map((name) => `${topFolderName}/asennus/${name}`);
+      // Luetaan LAVASTUKSESTA eikä reposta: lista on silloin sama kuin se mitä
+      // arkistoon oikeasti päätyi. Repon kansiosta luettuna se sisälsi myös
+      // asentimen testit, jotka suodatetaan paketista pois — ja koska puuttuva
+      // polku keskeyttää koonnin, Linux-pakettia ei syntynyt lainkaan. Kaksi
+      // eri lähdettä samalle listalle oli koko vian syy.
+      const asennusStaging = path.join(stagingRoot, "asennus");
+      const extraTargets = fs.existsSync(asennusStaging)
+        ? fs
+            .readdirSync(asennusStaging)
+            .filter((name) => name.endsWith(".sh"))
+            .map((name) => `${topFolderName}/asennus/${name}`)
+        : [];
       fixLinuxExecutableBits(outFile, topFolderName, platform, extraTargets);
     }
 
