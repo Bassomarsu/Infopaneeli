@@ -62,11 +62,30 @@ export class WeatherLocationResolver {
     const fromSetting = this.tryPostalCode(sources.settingPostalCode);
     if (fromSetting) return fromSetting;
 
+    // Asetuksiin tallennettu numero, jota ei löydy, on käyttäjän oma
+    // kirjoitusvirhe, ja siitä on varoitettava VAIKKA .env tarjoaisi
+    // kelvollisen numeron. Aiemmin varoitus annettiin vasta kun kumpikin lähde
+    // epäonnistui, joten näppäilyvirhe asetuksissa vaihtoi kortin
+    // paikkakunnan .env:n mukaiseksi täysin hiljaa — juuri se, minkä
+    // estämiseksi tämä luokka on olemassa.
+    const settingCode = sources.settingPostalCode?.trim() ?? "";
+    const settingWarning = settingCode === "" ? null : this.pendingWarning(sources);
+    const warnMemory = this.lastWarnedCode;
+
     // Tyhjä .env-arvo ei ole postinumero vaan "ei asetettu", eikä siitä siis
     // varoiteta — muuten jokainen asennus jossa muuttujaa ei ole valittaisi.
     const envCode = sources.envPostalCode.trim();
     const fromEnv = envCode === "" ? null : this.tryPostalCode(envCode);
-    if (fromEnv) return fromEnv;
+    if (fromEnv) {
+      // tryPostalCode nollaa valitusmuistin onnistuessaan, mutta kelvollinen
+      // .env-numero ei tee asetusten virheellisestä numerosta yhtään
+      // oikeampaa. Palautus tehdään aina kun asetuksissa on numero — EI vain
+      // silloin kun varoitus juuri syntyi: vaimennetulla kierroksella muisti
+      // jäisi muuten nollatuksi, ja varoitus heilahtelisi päälle joka toisella
+      // haulla. Mitattu: varoitus, ei varoitusta, varoitus.
+      if (settingCode !== "") this.lastWarnedCode = warnMemory;
+      return { location: fromEnv.location, warning: settingWarning };
+    }
 
     // Kumpikin postinumerolähde tyhjä tai tuntematon. Jos jokin sijainti on jo
     // kerran ratkennut, pidetään se; muuten koordinaatit (tai niiden oletus)
@@ -74,7 +93,11 @@ export class WeatherLocationResolver {
     // joten pudotus ei ole hiljainen.
     const fallback = this.lastGood ?? sources.envLocation;
     this.lastGood = fallback;
-    const warning = this.pendingWarning(sources);
+    // Varoitus on voitu jo laskea asetusten numerolle yllä. pendingWarning
+    // muistaa mistä on valitettu, joten toinen kutsu samalla numerolla
+    // palauttaisi null ja nielaisisi varoituksen kokonaan — mitattu: testi
+    // "tuntemattomasta postinumerosta on varoitettava" kaatui juuri tähän.
+    const warning = settingWarning ?? this.pendingWarning(sources);
     return { location: fallback, warning };
   }
 

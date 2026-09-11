@@ -184,6 +184,47 @@ function testLoadTimeIsReported(): void {
   console.log(`ok  aineiston lataus kesti ${ms.toFixed(1)} ms`);
 }
 
+/**
+ * Löydetty ajamalla, ei lukemalla: tuntematon numero ASETUKSISSA jäi täysin
+ * hiljaiseksi silloin kun .env tarjosi kelvollisen postinumeron, koska varoitus
+ * annettiin vasta kun kumpikin lähde epäonnistui. Käyttäjän näppäilyvirhe
+ * vaihtoi siis sääkortin paikkakunnan .env:n mukaiseksi kertomatta mitään —
+ * juuri se hiljainen väärä tieto, jota tässä projektissa vältetään.
+ *
+ * Toinen puoli on yhtä tärkeä: varoitus ei saa toistua joka hakukierroksella.
+ * Sääproviderin sykli on 20 minuuttia, joten toistuva varoitus täyttäisi lokin
+ * rivillä joka ei kerro mitään uutta.
+ */
+function testUnknownSettingWarnsEvenWhenEnvPostalCodeResolves(): void {
+  const resolver = new WeatherLocationResolver();
+  const sources = { settingPostalCode: "00000", envPostalCode: "00100", envLocation: KARSTULA_ENV };
+
+  const first = resolver.resolve(sources);
+  assert.equal(first.location.place, "Helsinki", "kelvollinen .env-numero ratkaisee sijainnin");
+  assert.ok(first.warning, "asetusten tuntemattomasta numerosta on varoitettava vaikka .env kelpaa");
+  assert.ok(first.warning.includes("00000"), `varoituksen on nimettävä numero: ${first.warning}`);
+  assert.ok(first.warning.includes("asetuksissa"), `varoituksen on kerrottava mistä numero tuli: ${first.warning}`);
+
+  // Kolme peräkkäistä kierrosta: yksikään ei saa valittaa uudestaan. Yksi
+  // kierros ei riittäisi todisteeksi — vika jonka löysin heilautti varoituksen
+  // päälle joka toisella haulla, ja se olisi mennyt läpi kahden kierroksen
+  // testistä.
+  for (let i = 2; i <= 4; i += 1) {
+    const again = resolver.resolve(sources);
+    assert.equal(again.location.place, "Helsinki");
+    assert.equal(again.warning, null, `sama varoitus ei saa toistua (kierros ${i})`);
+  }
+
+  // Korjattu numero nollaa valituksen, ja sama virhe on sen jälkeen taas uusi.
+  const fixed = resolver.resolve({ ...sources, settingPostalCode: "96100" });
+  assert.equal(fixed.location.place, "Rovaniemi");
+  assert.equal(fixed.warning, null);
+  const brokenAgain = resolver.resolve(sources);
+  assert.ok(brokenAgain.warning, "korjauksen jälkeen sama virhe on taas uusi ja siitä kuuluu varoittaa");
+
+  console.log("ok  asetusten tuntematon numero varoittaa kerran myös kelvollisen .env-numeron rinnalla");
+}
+
 testKnownPostalCodeResolves();
 testUnknownPostalCodeIsNotFound();
 testMalformedInputIsRejected();
@@ -194,5 +235,6 @@ testUnknownPostalCodeKeepsPreviousLocation();
 testUnknownEnvPostalCodeFallsBackToCoordinatesLoudly();
 testSettingAcceptsAndNormalizes();
 testLoadTimeIsReported();
+testUnknownSettingWarnsEvenWhenEnvPostalCodeResolves();
 
 console.log("\nKaikki postinumerotestit läpi.");

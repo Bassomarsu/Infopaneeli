@@ -226,6 +226,20 @@ kirjoita_tiedosto "$TESTIJUURI/vieras.example" "$(printf 'PORT=1\nUUSI_AVAIN=2\n
 [[ "$(mallista_puuttuvat_avaimet "$TESTIJUURI/vieras.example" | tr '\n' ' ')" == "TOINEN_UUSI UUSI_AVAIN " ]] \
     && ok 'Mallista puuttuva .env.example-avain huomataan' \
     || kaadu 'Mallista puuttuvaa .env.example-avainta ei huomattu'
+# Mallista poistettu avain ei saa kaataa asennusta: .env.example saa yhä
+# dokumentoida WEATHER_LAT/LON/PLACEn palvelimen varareittinä, vaikkei asennin
+# enää kysy niitä.
+kirjoita_tiedosto "$TESTIJUURI/vanhentunut.example" \
+    "$(printf 'PORT=1\nWEATHER_POSTAL_CODE=43500\nWEATHER_LAT=62.86667\nWEATHER_LON=24.78333\nWEATHER_PLACE=Karstula\n')"
+[[ -z "$(mallista_puuttuvat_avaimet "$TESTIJUURI/vanhentunut.example")" ]] \
+    && ok 'Mallista poistetut koordinaattiavaimet eivät kaada tarkistusta' \
+    || kaadu "Vanhentunut avain kaataisi asennuksen: $(mallista_puuttuvat_avaimet "$TESTIJUURI/vanhentunut.example" | tr '\n' ' ')"
+# ...mutta uusi avain pitää silti huomata, myös vanhentuneiden seasta.
+kirjoita_tiedosto "$TESTIJUURI/vanhentunut-ja-uusi.example" \
+    "$(printf 'WEATHER_LAT=62.86667\nWEATHER_UUSI=1\n')"
+[[ "$(mallista_puuttuvat_avaimet "$TESTIJUURI/vanhentunut-ja-uusi.example" | tr '\n' ' ')" == "WEATHER_UUSI " ]] \
+    && ok 'Uusi avain huomataan vaikka samassa tiedostossa on vanhentuneita' \
+    || kaadu 'Uutta avainta ei huomattu vanhentuneiden seasta'
 
 # --- .env-sisällön muodostus ------------------------------------------------
 
