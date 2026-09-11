@@ -10,6 +10,7 @@
     "test:providers": "node test/provider-transitions.ts",
     "test:providers-manual": "node test/provider-manual-test.ts",
     "test:calendar": "node test/calendar-events.ts",
+    "test:calendar-month": "node test/calendar-month.ts",
     "test:wilma": "node test/wilma-fetch.ts",
     "test:wilma-session": "node test/wilma-session.ts",
     "test:prices": "node test/price-history.ts",

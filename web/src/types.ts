@@ -9,6 +9,39 @@ export interface ProviderSnapshot<T> {
   error: { type: string; message: string } | null;
 }
 
+export interface CalendarEvent {
+  id: string;
+  /** ISO instant. */
+  start: string;
+  /** ISO instant. */
+  end: string;
+  title: string;
+  allDay: boolean;
+  location: string | null;
+  /** Local day this row falls on — a multi-day event contributes one row per day. */
+  dateKey: string;
+  /** Present only for multi-day events: which day of the span this row is, and the span length. */
+  span?: { day: number; totalDays: number };
+}
+
+/**
+ * Yhden kuukauden tapahtumat kuukausinäkymää varten (`GET /api/calendar/month`).
+ *
+ * `covered` on tämän rajapinnan tärkein kenttä eikä sitä saa ohittaa: lähde ei
+ * välttämättä kata koko kuukautta (esim. haku hakee vain lähiviikot), jolloin
+ * päivä josta `days` vaikenee EI ole tapahtumaton päivä vaan päivä josta ei
+ * tiedetä. Nämä kaksi näytetään käyttöliittymässä eri tavalla — ks.
+ * CalendarMonthDialog.vue ja `dayKind` calendarMonth.ts:ssä.
+ */
+export interface CalendarMonth {
+  /** "YYYY-MM". */
+  month: string;
+  /** Päiväavain "YYYY-MM-DD" → tapahtumat aikajärjestyksessä. Tapahtumaton päivä puuttuu. */
+  days: Record<string, CalendarEvent[]>;
+  /** false = emme tiedä koko kuukautta, EI "ei tapahtumia". */
+  covered: boolean;
+}
+
 export interface PriceHour {
   hour: number;
   price: number | null;

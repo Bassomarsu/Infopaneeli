@@ -1,22 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import CardShell from "./CardShell.vue";
-import type { ProviderSnapshot } from "../types";
-
-export interface CalendarEvent {
-  id: string;
-  title: string;
-  /** ISO instant. */
-  start: string;
-  /** ISO instant. */
-  end: string;
-  allDay: boolean;
-  location: string | null;
-  /** Local day this row falls on — a multi-day event contributes one row per day. */
-  dateKey: string;
-  /** Present only for multi-day events: which day of the span this row is, and the span length. */
-  span?: { day: number; totalDays: number };
-}
+import CalendarMonthDialog from "./CalendarMonthDialog.vue";
+import type { CalendarEvent, ProviderSnapshot } from "../types";
 
 export interface CalendarData {
   events: CalendarEvent[];
@@ -96,6 +82,26 @@ function timeLabel(event: CalendarEvent): string {
   if (event.span.day === event.span.totalDays) return formatTime(event.end);
   return "koko päivä";
 }
+
+const monthOpen = ref(false);
+
+/**
+ * Otsikko avaa kuukausinäkymän vain kun kortilla on oikeasti lähde takanaan.
+ *
+ * `failed` = haku ei onnistunut, `hidden` = palvelin ei anna tätä tälle
+ * laitteelle, `idle`/puuttuva = kalenteria ei ole konfiguroitu tai ensimmäinen
+ * haku on yhä kesken. Kaikissa näissä kuukausihaku päätyisi samaan seinään, ja
+ * painallus avaisi dialogin joka toistaa saman virheen isommalla. Kortin runko
+ * kertoo syyn jo nyt (CardShell näyttää "Tietoja ei saatu" / "Haetaan…"), joten
+ * otsikko jää tavalliseksi otsikoksi: ei painiketta, ei fokusta, ei lupausta
+ * jota ei voi pitää.
+ *
+ * `stale` on tarkoituksella mukana: vanha vastaus on yhä vastaus, ja
+ * kuukausihaku voi hyvin onnistua vaikka viimeisin pollaus ei onnistunut.
+ */
+const canBrowseMonths = computed(
+  () => props.snapshot?.status === "ok" || props.snapshot?.status === "stale",
+);
 </script>
 
 <template>
@@ -105,6 +111,8 @@ function timeLabel(event: CalendarEvent): string {
     :status="snapshot?.status"
     :fetched-at="snapshot?.fetchedAt"
     :error="snapshot?.error"
+    :title-action="canBrowseMonths ? 'Avaa kalenterin kuukausinäkymä' : undefined"
+    @title-click="monthOpen = true"
   >
     <div v-if="groups.length === 0" class="state">
       <span>Ei tulevia tapahtumia</span>
@@ -132,6 +140,8 @@ function timeLabel(event: CalendarEvent): string {
       </div>
     </div>
   </CardShell>
+
+  <CalendarMonthDialog :open="monthOpen" @close="monthOpen = false" />
 </template>
 
 <style scoped>

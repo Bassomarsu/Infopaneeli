@@ -17,6 +17,7 @@ import { exitKiosk } from "../core/kiosk.ts";
 import { logger } from "../core/logging.ts";
 import type { PaikkyData } from "../providers/paikky.ts";
 import type { WilmaData } from "../providers/wilma.ts";
+import { buildCalendarMonth, isMonthKey, trimToDashboardWindow, type CalendarData } from "../providers/calendar.ts";
 import { fullPinEnabled, isLocalRequest, isTrustedRequest, requireEditAccess, verifyEditPin, verifyFullPinOnly } from "./access.ts";
 
 /**
@@ -202,6 +203,18 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
+    // Kalenteriprovider laajentaa yli vuoden verran tapahtumia, jotta
+    // kuukausinäkymällä on selattavaa myös heti käynnistyksen jälkeen (ks.
+    // providers/calendar.ts). Kortti sen sijaan näyttää kahden viikon ikkunan
+    // ja piirtää kaiken minkä saa, ja tämä vastaus lähtee selaimelle 60
+    // sekunnin välein — koko ikkunan lähettäminen sekä rikkoisi kortin että
+    // kymmenkertaistaisi seinänäytön normaalin liikenteen. Rajaus tehdään
+    // tässä eikä providerissa, jotta kuukausinäkymä näkee yhä koko datan.
+    const calendar = snapshots.calendar as ProviderSnapshot<CalendarData> | undefined;
+    if (calendar?.data) {
+      snapshots.calendar = { ...calendar, data: trimToDashboardWindow(calendar.data) };
+    }
+
     return {
       generatedAt: new Date().toISOString(),
       timezone: config.timezone,
@@ -211,6 +224,24 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       providers: snapshots,
       localClient: local,
     };
+  });
+
+  // Kalenterin kuukausinäkymä: yksi kuukausi kerrallaan päiväkohtaisesti
+  // ryhmiteltynä. Ei omaa pääsyporttia — kalenteri ei ole SENSITIVE_PROVIDERS-
+  // joukossa, joten se näkyy dashboardilla puhelimellekin, ja sama data
+  // toisessa muodossa ei voi olla arkaluontoisempaa kuin alkuperäinen.
+  //
+  // Reitti ei koskaan laajenna mitään itse eikä hae verkosta: se lukee
+  // providerin viimeisimmän hyötykuorman ja ryhmittelee sen. Jos providerilla
+  // ei ole vielä dataa tai sen ikkuna ei ulotu pyydettyyn kuukauteen, vastaus
+  // on `covered: false` — "emme tiedä", ei "ei tapahtumia".
+  app.get("/api/calendar/month", async (request, reply) => {
+    const month = (request.query as { month?: unknown } | undefined)?.month;
+    if (!isMonthKey(month)) {
+      return reply.code(400).send({ error: "month: odotettu muoto YYYY-MM" });
+    }
+    const snapshot = registry.get("calendar")?.snapshot() as ProviderSnapshot<CalendarData> | undefined;
+    return buildCalendarMonth(month, snapshot?.data ?? null);
   });
 
   app.get("/api/settings", async () => getSettings());

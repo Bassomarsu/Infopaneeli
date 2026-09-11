@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "test:schedule": "node test/schedule-day.ts",
+    "test:calendar-month": "node test/calendar-month.ts",
     "test:layout": "node test/panel-layout.ts",
     "test:alarms": "node test/alarms.ts",
     "test:edit-access": "node test/edit-access.ts",

@@ -9,7 +9,19 @@ const props = defineProps<{
   fetchedAt?: string | null;
   error?: { type: string; message: string } | null;
   note?: string;
+  /**
+   * Kun annettu, kortin otsikosta tulee painike joka lähettää `titleClick`.
+   * Arvo on painikkeen saavutettava nimi ("Avaa …"), koska otsikkoteksti
+   * itsessään ei kerro ruudunlukijalle mitä painallus tekee.
+   *
+   * Ilman tätä propsia otsikko renderöityy TÄSMÄLLEEN kuten ennen — ei
+   * painiketta, ei fokusjärjestystä, ei aria-attribuutteja. Muut kortit
+   * eivät saa muuttua siksi että kalenteri tarvitsi tämän.
+   */
+  titleAction?: string;
 }>();
+
+const emit = defineEmits<{ titleClick: [] }>();
 
 /**
  * One place decides how a broken or stale source looks, so a failing card
@@ -35,8 +47,32 @@ const staleLabel = computed(() => {
   <section class="card" :class="{ 'card--stale': isStale }">
     <header class="card__head">
       <h2 class="card__title">
-        <span v-if="accent" class="card__accent" :style="{ background: accent }" />
-        {{ title }}
+        <button
+          v-if="titleAction"
+          type="button"
+          class="title-button"
+          :aria-label="titleAction"
+          aria-haspopup="dialog"
+          @click="emit('titleClick')"
+        >
+          <span v-if="accent" class="card__accent" :style="{ background: accent }" />
+          {{ title }}
+          <!--
+            Seinänäytössä ei ole hiiren osoitinta, joten "tätä voi painaa" on
+            sanottava muodolla: hiusrajattu pilleri ja merkki joka esittää
+            juuri sitä ruudukkoa jonka painallus avaa. Muoto kestää yötilan
+            himmennyksen, pelkkä värivihje ei kestäisi.
+          -->
+          <svg class="title-button__glyph" viewBox="0 0 14 14" aria-hidden="true">
+            <rect x="0.6" y="2.1" width="12.8" height="11.3" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" />
+            <path d="M0.6 5.9h12.8M4.9 5.9v7.5M9.2 5.9v7.5M0.6 9.65h12.8" stroke="currentColor" stroke-width="0.9" />
+            <path d="M4 0.6v2.2M10 0.6v2.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+        </button>
+        <template v-else>
+          <span v-if="accent" class="card__accent" :style="{ background: accent }" />
+          {{ title }}
+        </template>
       </h2>
       <span v-if="isStale" class="badge badge--warn">vanhentunut · {{ staleLabel }}</span>
       <span v-else-if="isFailed" class="badge badge--error">ei yhteyttä</span>
@@ -69,3 +105,64 @@ const staleLabel = computed(() => {
     </div>
   </section>
 </template>
+
+<style scoped>
+/*
+ * Vain klikattavan otsikon tyylit. Kortin muut luokat elävät style.css:ssä
+ * globaaleina; näitä ei ole siellä koska ne koskevat yhtä korttia.
+ */
+.title-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  /* Painike ei peri otsikon kirjasinta itsestään. */
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  /* Negatiivinen marginaali pitää otsikkotekstin samassa kohdassa kuin muissa
+     korteissa — pilleri kasvaa ulospäin eikä siirrä otsikkoa. */
+  margin: -0.32rem -0.6rem;
+  padding: 0.32rem 0.6rem;
+  border-radius: 999px;
+  cursor: pointer;
+  /* Kosketusalue sormelle: pilleri itse on matala, joten alue kasvatetaan
+     näkymättömällä reunuksella eikä korttia levittävällä korkeudella. */
+  position: relative;
+}
+
+.title-button::after {
+  content: "";
+  position: absolute;
+  inset: -0.55rem -0.5rem;
+}
+
+.title-button__glyph {
+  width: 0.78em;
+  height: 0.78em;
+  flex-shrink: 0;
+  color: var(--accent-calendar);
+  /* Merkki on ohut ja pieni; hieman lisää painoa jotta se erottuu parin
+     metrin päästä ja yötilan himmennyksen jälkeen. */
+  opacity: 0.9;
+}
+
+.title-button:hover,
+.title-button:focus-visible {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.title-button:active {
+  background: var(--surface-strong);
+  transform: translateY(1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-button:active {
+    transform: none;
+  }
+}
+</style>
