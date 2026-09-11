@@ -547,6 +547,10 @@ function verifyNoSecrets(archivePath, topFolderName) {
   // puuttuva tiedosto huomattaisiin muuten vasta kohdelaitteella.
   const required = [
     path.join("server", "src", "index.ts"),
+    // Postinumeroaineisto: ilman sita sovellus KAYNNISTYY NORMAALISTI mutta
+    // jokainen postinumerohaku epaonnistuu. Siksi se on pakollisten listalla
+    // eika pelkastaan kopiointisuodattimen varassa (ks. copyServerSrc).
+    path.join("server", "src", "data", "postinumerot.json"),
     path.join("web", "dist", "index.html"),
     "node_modules",
     "VERSIO.txt",
@@ -621,10 +625,17 @@ function copyTree(label, src, dest, fileFilter) {
 }
 
 function copyServerSrc(destDir) {
-  // Puolustava suodatin: server/src sisaltaa tata kirjoitettaessa vain
-  // .ts-tiedostoja, mutta jos joku pudottaa sinne editorin roskatiedoston
-  // (.DS_Store yms.), se ei saa paatya pakettiin.
-  copyTree("server/src", path.join(repoRoot, "server", "src"), destDir, (f) => f.endsWith(".ts"));
+  // Puolustava suodatin: server/src sisaltaa lahdekoodin lisaksi niputetun
+  // postinumeroaineiston (server/src/data/postinumerot.json), mutta ei mitaan
+  // muuta — jos joku pudottaa sinne editorin roskatiedoston (.DS_Store yms.),
+  // se ei saa paatya pakettiin.
+  //
+  // .json on tassa listassa siksi etta ILMAN SITA AINEISTO JAISI POIS
+  // HILJAA: kehityksessa kaikki toimisi, mutta tuotannossa jokainen
+  // postinumero olisi "ei loydy" eika mikaan kertoisi miksi. Sama tiedosto on
+  // myos verifyPackageContentsin pakollisten listalla, jotta puuttuminen
+  // pysayttaa koonnin sen sijaan etta se huomattaisiin kohdelaitteella.
+  copyTree("server/src", path.join(repoRoot, "server", "src"), destDir, (f) => f.endsWith(".ts") || f.endsWith(".json"));
 }
 
 function copyDir(label, src, dest, fileFilter) {

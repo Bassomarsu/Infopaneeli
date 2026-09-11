@@ -12,6 +12,8 @@ import {
   setNoteDone,
 } from "../core/store.ts";
 import { config } from "../core/config.ts";
+import { isPostalCode, lookupPostalCode } from "../core/postal-codes.ts";
+import { currentWeatherLocation } from "../providers/weather.ts";
 import { listCustomSounds, resolveCustomSound } from "../core/alarm-sounds.ts";
 import { exitKiosk } from "../core/kiosk.ts";
 import { logger } from "../core/logging.ts";
@@ -218,7 +220,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return {
       generatedAt: new Date().toISOString(),
       timezone: config.timezone,
-      place: config.weather.place,
+      // Ratkaistu sijainti, ei config.weather.place: postinumero voi tulla
+      // asetuksista, jolloin .env:n paikannimi on väärä. Sama lähde kuin
+      // sääproviderilla, jotta otsikko ja haettu sää eivät voi olla eri
+      // paikkakunnilta.
+      place: currentWeatherLocation().place,
       settings: getSettings(),
       notes: listNotes(),
       providers: snapshots,
@@ -242,6 +248,30 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     }
     const snapshot = registry.get("calendar")?.snapshot() as ProviderSnapshot<CalendarData> | undefined;
     return buildCalendarMonth(month, snapshot?.data ?? null);
+  });
+
+  // Postinumero → paikannimi ja koordinaatit. Asetuspaneeli kutsuu tätä sitä
+  // mukaa kun numeroa kirjoitetaan, jotta käyttäjä NÄKEE minkä paikan numero
+  // tarkoittaa ennen tallennusta — kirjoitusvirhettä ei muuten huomaisi
+  // mistään ennen kuin sääkortti näyttää väärää paikkakuntaa.
+  //
+  // Ei omaa pääsyporttia, sama kuin /api/settings ja /api/calendar/month: haku
+  // kohdistuu niputettuun julkiseen avoimen datan aineistoon eikä paljasta
+  // mitään tästä kodista. Aineisto on paikallinen, joten reitti ei myöskään voi
+  // toimia välityspalvelimena ulospäin.
+  //
+  // Muoto tarkistetaan ENNEN hakua: `:code` tulee pyynnöstä, ja viisi numeroa
+  // on ainoa muoto jolla aineistosta on mitään mieltä hakea.
+  app.get("/api/postal-code/:code", async (request, reply) => {
+    const code = (request.params as { code: string }).code;
+    if (!isPostalCode(code)) {
+      return reply.code(400).send({ error: "Postinumero: viisi numeroa" });
+    }
+    const found = lookupPostalCode(code);
+    if (!found) {
+      return reply.code(404).send({ error: "Postinumeroa ei löydy" });
+    }
+    return found;
   });
 
   app.get("/api/settings", async () => getSettings());

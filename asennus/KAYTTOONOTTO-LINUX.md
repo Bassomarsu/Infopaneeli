@@ -116,7 +116,7 @@ sudo ./asenna.sh
 ```
 
 Skripti kysyy interaktiivisesti kaiken tarvittavan (asennushakemisto,
-portti, sään koordinaatit, Wilma-tunnukset ja -salasana, kalenterin
+portti, sään postinumero, Wilma-tunnukset ja -salasana, kalenterin
 ICS-osoite, PIN-koodit, luotetut laitteet), kirjoittaa `.env`-tiedoston
 oikeuksin 600, tarjoaa automaattikäynnistyksen (systemd-palvelu +
 lightdm/openbox-kioski, sama malli kuin `asenna-kioski.sh`:ssä alla) ja
@@ -128,6 +128,16 @@ Uudelleenajo (`sudo ./asenna.sh` uudestaan samaan kohteeseen) on normaali
 tapa päivittää asetuksia tai paketti — se säilyttää aina `data/`-kansion
 (tietokanta, muistilista, hälytysäänet, lokit) ja käyttää olemassa olevan
 `.env`:n arvoja oletuksina, joten Enterillä läpi pääsee tuhoamatta mitään.
+
+Päivitys kysyy vain ne asetukset joita nykyisestä `.env`:stä puuttuu, ja
+lisää ne tiedoston loppuun koskematta vanhoihin riveihin tai oikeuksiin.
+Vanhassa asennuksessa olevat `WEATHER_LAT`, `WEATHER_LON` ja `WEATHER_PLACE`
+säilyvät siis sellaisinaan — palvelin käyttää niitä varareittinä, jos
+postinumerosta ei löydy sijaintia — ja uutena avaimena kysytään vain
+`WEATHER_POSTAL_CODE`. Uuteen asennukseen vanhoja koordinaattiavaimia ei
+kirjoiteta lainkaan. Jos vastaat päivityskysymykseen *ei* ja annat asetukset
+uudestaan, `.env` kirjoitetaan kokonaan uusiksi ja vanhat koordinaatit
+katoavat; skripti luettelee tällöin katoavat avaimet ennen vahvistusta.
 
 Purku: `sudo ./asenna.sh --poista` (ks. skriptin oma ohje: `--help`).
 

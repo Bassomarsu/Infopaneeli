@@ -1,5 +1,6 @@
 import { getSetting, setSetting } from "./store.ts";
 import { parseClockTime } from "./time.ts";
+import { isPostalCode } from "./postal-codes.ts";
 
 /**
  * The wall display is one screen that never scrolls, so panels are placed on a
@@ -142,6 +143,15 @@ export interface Settings {
    * -haaran anchor: "breakfast").
    */
   breakfastTime: string;
+  /**
+   * Sään sijainti postinumerona, tai null jos sitä ei ole asetettu (jolloin
+   * .env päättää, ks. core/weather-location.ts).
+   *
+   * Tämä on tässä eikä pelkässä .env:ssä siksi, että .env luetaan vain
+   * käynnistyksessä: asetuksista vaihdettu postinumero vaihtaa sääkortin
+   * paikkakunnan ilman palvelimen uudelleenkäynnistystä.
+   */
+  weatherPostalCode: string | null;
   /** Where each panel sits. Null means "never edited", so the default is used. */
   panelLayout: PanelLayout | null;
   alarms: Alarm[];
@@ -156,6 +166,7 @@ export const defaultSettings: Settings = {
   nightModeStart: "21:30",
   nightModeEnd: "06:00",
   breakfastTime: "08:00",
+  weatherPostalCode: null,
   panelLayout: null,
   alarms: [],
 };
@@ -213,6 +224,10 @@ export function updateSettings(patch: unknown): Settings {
     next[key] = value;
   }
 
+  if ("weatherPostalCode" in input) {
+    next.weatherPostalCode = parseWeatherPostalCode(input["weatherPostalCode"]);
+  }
+
   if ("panelLayout" in input) {
     next.panelLayout = parsePanelLayout(input["panelLayout"]);
   }
@@ -245,6 +260,28 @@ function parseVisibleIds(value: unknown, message: string): string[] | null {
   if (value === null) return null;
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) return value as string[];
   throw new SettingsValidationError(message);
+}
+
+/**
+ * Vain MUOTO tarkistetaan, ei sitä tunteeko niputettu aineisto numeron.
+ * Tuntematon mutta muodollisesti kelvollinen postinumero on eri vika kuin
+ * roskasyöte: aineisto voi olla vanhentunut, ja silloin oikea vastaus on
+ * varoitus lokiin ja edellinen sijainti voimassa (ks. core/weather-location.ts)
+ * — ei tallennuksen torjuminen, joka jättäisi käyttäjän jumiin väärään
+ * paikkakuntaan. Tyhjä merkkijono normalisoidaan nulliksi, jotta "tyhjennä
+ * kenttä" käyttöliittymässä tarkoittaa samaa kuin "ei asetettu".
+ */
+function parseWeatherPostalCode(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new SettingsValidationError("weatherPostalCode: viisinumeroinen postinumero tai null");
+  }
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  if (!isPostalCode(trimmed)) {
+    throw new SettingsValidationError("weatherPostalCode: viisinumeroinen postinumero tai null");
+  }
+  return trimmed;
 }
 
 function positiveInt(value: unknown, label: string, max: number): number {

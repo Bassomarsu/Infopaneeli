@@ -64,7 +64,18 @@ export const config = {
 
   timezone: "Europe/Helsinki",
 
+  /**
+   * Sään sijainti. `postalCode` on se jonka asennus kysyy nykyään; koordinaatit
+   * ovat yhä tässä, koska olemassa olevassa asennuksessa on WEATHER_LAT/LON/
+   * PLACE eikä päivitys saa siirtää sen sään toiselle paikkakunnalle.
+   *
+   * Näiden kenttien VÄLINEN etusijajärjestys — ja tietokantaan tallennetun
+   * asetuksen etusija molempiin nähden — ei ole täällä vaan
+   * core/weather-location.ts:ssä: config.ts vain lukee arvot, ei arvioi niitä
+   * (sama jako kuin fullPinillä alla).
+   */
   weather: {
+    postalCode: str("WEATHER_POSTAL_CODE"),
     latitude: num("WEATHER_LAT", 62.86667),
     longitude: num("WEATHER_LON", 24.78333),
     place: str("WEATHER_PLACE", "Karstula"),

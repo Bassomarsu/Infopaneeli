@@ -154,6 +154,65 @@ OLEMASSA[OMA_LISAYS]=1
     && ok 'Käsin lisätty tuntematon avain huomataan ennen .env:n korvaamista' \
     || kaadu 'Tuntematonta avainta ei huomattu'
 
+# --- Sään postinumero korvaa koordinaatit -----------------------------------
+
+sisaltaa WEATHER_POSTAL_CODE "${MALLI_AVAIMET[@]}" \
+    && ok 'Sään sijainti kysytään postinumerona' \
+    || kaadu 'WEATHER_POSTAL_CODE puuttuu asetusmallista'
+if sisaltaa WEATHER_LAT "${MALLI_AVAIMET[@]}" || sisaltaa WEATHER_LON "${MALLI_AVAIMET[@]}" \
+   || sisaltaa WEATHER_PLACE "${MALLI_AVAIMET[@]}"; then
+    kaadu 'Malli kysyy yhä koordinaatteja -- uuteen asennukseen ei saa kirjoittaa WEATHER_LAT/LON/PLACEa'
+fi
+ok 'Koordinaattiavaimia ei kysytä eikä kirjoiteta uuteen asennukseen'
+[[ "${MALLI_TYYPPI[WEATHER_POSTAL_CODE]}" == "postinumero" && "${MALLI_OLETUS[WEATHER_POSTAL_CODE]}" == "43500" ]] \
+    && ok 'Postinumero tarkistetaan postinumerona ja oletus on 43500' \
+    || kaadu "Postinumeron tyyppi tai oletus on väärä: ${MALLI_TYYPPI[WEATHER_POSTAL_CODE]} / ${MALLI_OLETUS[WEATHER_POSTAL_CODE]}"
+
+# Tuotantoasennuksen kaltainen .env: kaikki muu on jo paikallaan ja vanhat
+# koordinaattiavaimet ovat mukana, vain postinumero puuttuu. Tämä on se tapaus
+# joka päivityksessä oikeasti tulee vastaan.
+ASETUKSET=()
+for avain in "${MALLI_AVAIMET[@]}"; do ASETUKSET["$avain"]="${MALLI_OLETUS[$avain]}"; done
+KAIKKI_AVAIMET=("${MALLI_AVAIMET[@]}")
+VANHA_MALLI=()
+for avain in "${KAIKKI_AVAIMET[@]}"; do
+    [[ "$avain" == WEATHER_POSTAL_CODE ]] || VANHA_MALLI+=("$avain")
+done
+MALLI_AVAIMET=("${VANHA_MALLI[@]}")
+VANHA_SAA_ENV="$(uusi_env_sisalto)"
+MALLI_AVAIMET=("${KAIKKI_AVAIMET[@]}")
+SAA_ENV="$TESTIJUURI/vanha-saa.env"
+kirjoita_tiedosto "$SAA_ENV" "$VANHA_SAA_ENV"
+printf '\n# --- Sää ---\nWEATHER_LAT=62.86667\nWEATHER_LON=24.78333\nWEATHER_PLACE=Karstula\n' >> "$SAA_ENV"
+chmod 600 "$SAA_ENV"
+lataa_env "$SAA_ENV" "$NODE_BIN"
+[[ "$(puuttuvat_avaimet | tr '\n' ' ')" == "WEATHER_POSTAL_CODE " ]] \
+    && ok 'Päivitys kysyy vanhasta asennuksesta vain postinumeron' \
+    || kaadu "Päivitys kysyisi väärät avaimet: $(puuttuvat_avaimet | tr '\n' ' ')"
+
+SAA_ENNEN_KOKO="$(wc -c < "$SAA_ENV")"
+SAA_ENNEN_TAVUT="$(cksum < "$SAA_ENV")"
+SAA_ENNEN_OIKEUDET="$(ls -l "$SAA_ENV" | cut -c1-10)"
+ASETUKSET[WEATHER_POSTAL_CODE]=43500
+lisaa_env_tiedostoon "$SAA_ENV" "$(env_lisays_sisalto WEATHER_POSTAL_CODE)"
+[[ "$(head -c "$SAA_ENNEN_KOKO" "$SAA_ENV" | cksum)" == "$SAA_ENNEN_TAVUT" \
+   && "$(ls -l "$SAA_ENV" | cut -c1-10)" == "$SAA_ENNEN_OIKEUDET" ]] \
+    && ok 'Postinumeron lisäys ei muuta vanhoja tavuja eikä oikeuksia' \
+    || kaadu 'Postinumeron lisäys muutti vanhaa .env-sisältöä tai oikeuksia'
+lataa_env "$SAA_ENV" "$NODE_BIN"
+[[ "${OLEMASSA[WEATHER_LAT]}" == "62.86667" && "${OLEMASSA[WEATHER_LON]}" == "24.78333" \
+   && "${OLEMASSA[WEATHER_PLACE]}" == "Karstula" && "${OLEMASSA[WEATHER_POSTAL_CODE]}" == "43500" ]] \
+    && ok 'Vanhat koordinaattiavaimet säilyvät palvelimen varareittinä postinumeron rinnalla' \
+    || kaadu 'Päivitys hukkasi vanhat koordinaattiavaimet'
+
+# Uudelleenmäärittely kirjoittaa .env:n uusiksi, jolloin koordinaatit katoavat.
+# Siitä on varoitettava: vanhentuneet avaimet EIVÄT saa hiljentyä tuntemattomien
+# listalta, vaikka mallista_puuttuvat_avaimet ne hyväksyykin. Eri kysymys, eri
+# vastaus.
+[[ "$(tuntemattomat_avaimet | tr '\n' ' ')" == "WEATHER_LAT WEATHER_LON WEATHER_PLACE " ]] \
+    && ok 'Uudelleenmäärittely varoittaa katoavista koordinaattiavaimista' \
+    || kaadu "Katoavista koordinaattiavaimista ei varoiteta: $(tuntemattomat_avaimet | tr '\n' ' ')"
+
 # --- Malli vs. .env.example (kehityspuun tarkistus) -------------------------
 
 ESIMERKKI="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env.example"
@@ -216,6 +275,20 @@ ok 'Kelvottomat portit hylätään ilman kokonaislukuylivuotoa'
 desimaali_kelpaa 62.86667 && desimaali_kelpaa -3 && ! desimaali_kelpaa 62,86667 && ! desimaali_kelpaa x \
     && ok 'Desimaaliluku vaaditaan pisteellä (JS:n Number() lukee sen)' \
     || kaadu 'Desimaalitarkistus ei toimi'
+postinumero_kelpaa 43500 && postinumero_kelpaa 00100 \
+    && ok 'Viisinumeroinen postinumero hyväksytään (myös etunollilla)' \
+    || kaadu 'Kelvollinen postinumero hylättiin'
+# Asennin EI tunne postinumeroaineistoa: 99999 kelpaa muodoltaan, ja
+# tuntemattomasta numerosta kertominen jää palvelimelle.
+postinumero_kelpaa 99999 \
+    && ok 'Asennin ei väitä tuntevansa postinumeroaineistoa (muoto riittää)' \
+    || kaadu 'Asennin hylkäsi muodoltaan kelvollisen postinumeron'
+for EI_KELPAA in 4350 435000 4350a ' 43500' '43500 ' '43 00' '435o0' '' $'43500\n43501'; do
+    if postinumero_kelpaa "$EI_KELPAA"; then
+        kaadu "Kelvoton postinumero hyväksyttiin: '$EI_KELPAA'"
+    fi
+done
+ok 'Kelvoton postinumero hylätään (väärä pituus, kirjaimet, välilyönnit, rivinvaihto)'
 url_kelpaa '' && url_kelpaa https://karstula.paikky.fi && ! url_kelpaa karstula.paikky.fi \
     && ok 'Tyhjä osoite kelpaa (= pois käytöstä), muu vaatii http(s)://' \
     || kaadu 'Osoitetarkistus ei toimi'

@@ -159,6 +159,18 @@ function Test-UrlKelvollinen {
     return ($uri.Scheme -eq 'http' -or $uri.Scheme -eq 'https')
 }
 
+# Suomalainen postinumero: tasan viisi numeroa. Asennin EI tarkista onko
+# postinumero olemassa — se ei tunne postinumeroaineistoa, ja tuntemattomasta
+# numerosta kertominen on palvelimen tehtävä (sillä on aineisto käsillä).
+#
+# \A ja \z eivätkä ^ ja $: .NETin $ hyväksyy perässä rivinvaihdon, jolloin
+# "43500`n" menisi läpi. [0-9] eikä \d: \d täsmää .NETissä myös muiden
+# kirjoitusjärjestelmien numeroihin, eikä niistä muodostu postinumeroa.
+function Test-PostinumeroValidi {
+    param([string]$Arvo)
+    return $Arvo -cmatch '\A[0-9]{5}\z'
+}
+
 # Desimaaliluku pisteellä eikä pilkulla (server/src/core/config.ts lukee
 # arvon JS:n Number()-funktiolla), riippumatta koneen alueasetuksesta.
 function Test-DesimaaliValidi {
@@ -241,7 +253,8 @@ function Read-SalainenTeksti {
 #   Ohje         rivit jotka näytetään ennen kysymystä
 #   Kehote       kysymysteksti
 #   Oletus       Enterin arvo uudessa asennuksessa
-#   Tyyppi       portti | valinta | desimaali | teksti | url | salaisuus | fullpin
+#   Tyyppi       portti | valinta | desimaali | postinumero | teksti | url |
+#                salaisuus | fullpin
 #   Vaihtoehdot  sallitut arvot (Tyyppi = valinta)
 #   Riippuu      kysytään vain jos tällä avaimella on arvo (esim. Wilman
 #                tunnus vain jos Wilman osoite annettiin)
@@ -258,21 +271,13 @@ $script:AsetusMalli = @(
        Tyyppi = 'valinta'
        Vaihtoehdot = @('warn', 'error', 'debug') }
 
-    @{ Avain = 'WEATHER_LAT'
+    @{ Avain = 'WEATHER_POSTAL_CODE'
        Otsikko = 'Sää (Open-Meteo, ei API-avainta)'
-       Kehote = 'Sään leveysaste (WEATHER_LAT)'
-       Oletus = '62.86667'
-       Tyyppi = 'desimaali' }
-
-    @{ Avain = 'WEATHER_LON'
-       Kehote = 'Sään pituusaste (WEATHER_LON)'
-       Oletus = '24.78333'
-       Tyyppi = 'desimaali' }
-
-    @{ Avain = 'WEATHER_PLACE'
-       Kehote = 'Paikkakunnan nimi säätiedoille (WEATHER_PLACE)'
-       Oletus = 'Karstula'
-       Tyyppi = 'teksti' }
+       Ohje = @('Palvelin päättelee postinumerosta sekä sijainnin että näytölle',
+                'tulevan paikkakunnan nimen — koordinaatteja ei tarvitse tietää.')
+       Kehote = 'Postinumero säätietoja varten'
+       Oletus = '43500'
+       Tyyppi = 'postinumero' }
 
     @{ Avain = 'WILMA_BASE_URL'
        Otsikko = 'Wilma'
@@ -342,6 +347,17 @@ $script:AsetusMalli = @(
        Tyyppi = 'teksti' }
 )
 
+# Avaimet joita asennin EI enää kysy eikä kirjoita, mutta jotka palvelin yhä
+# lukee. WEATHER_LAT/LON/PLACE ovat WEATHER_POSTAL_CODEn varareitti: jos
+# postinumeroa ei ole, palvelin käyttää näitä. Siksi päivitys ei saa poistaa
+# niitä vanhasta .env:stä — eikä päivitys poistakaan, koska se vain lisää
+# puuttuvat avaimet tiedoston loppuun.
+#
+# Tämä lista on olemassa vain jottei .env.examplen ja mallin vertailu (ks.
+# Get-MallistaPuuttuvatAvaimet) kaatuisi avaimeen joka on tarkoituksella
+# poistettu mallista. Uusi asennus ei kirjoita näitä avaimia lainkaan.
+$script:VanhentuneetAvaimet = @('WEATHER_LAT', 'WEATHER_LON', 'WEATHER_PLACE')
+
 # Muotoilee arvon .env-riville. LAINAUSMERKIT EIVÄT OLE KOSMETIIKKAA: Node
 # katkaisee lainausmerkittömän arvon risuaidan (#) kohdalta, ja loppuosa katoaa
 # äänettömästi. Tämä on jo purrut oikeassa käytössä — salasana meni perille
@@ -385,14 +401,19 @@ function Get-PuuttuvatAvaimet {
 # Kehityspuun tarkistus: onko .env.examplessa avaimia joita mallissa ei ole.
 # Julkaisupaketissa .env.exampleä ei ole mukana, jolloin tämä palauttaa tyhjän
 # eikä väitä mitään.
+#
+# Vanhentuneet avaimet eivät ole tässä puute: ne saavat esiintyä
+# .env.examplessa (ja esiintyvät vanhoissa .env-tiedostoissa) ilman että
+# asennus kaatuu. Tarkistus etsii vain sitä yhtä vikaa jota varten se on
+# olemassa: .env.exampleen lisättiin UUSI avain jota asennin ei osaa kysyä.
 function Get-MallistaPuuttuvatAvaimet {
     param([string]$EsimerkkiPolku, [array]$Malli = $script:AsetusMalli)
     if (-not (Test-Path $EsimerkkiPolku)) { return @() }
     $avaimet = @([IO.File]::ReadAllLines($EsimerkkiPolku) | ForEach-Object {
         if ($_ -match '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=') { $Matches[1] }
     })
-    $mallinAvaimet = @($Malli | ForEach-Object { $_.Avain })
-    return @($avaimet | Where-Object { $mallinAvaimet -notcontains $_ } | Sort-Object)
+    $tunnetut = @($Malli | ForEach-Object { $_.Avain }) + $script:VanhentuneetAvaimet
+    return @($avaimet | Where-Object { $tunnetut -notcontains $_ } | Sort-Object)
 }
 
 # Rakentaa .env-tiedoston sisällön annetuista arvoista. Puhdas funktio —
@@ -532,6 +553,12 @@ function Read-AsetusArvo {
         } elseif ($tyyppi -eq 'desimaali') {
             if (-not (Test-DesimaaliValidi $arvo)) {
                 Write-Host 'Anna desimaaliluku pisteellä, esim. 62.86667.' -ForegroundColor Yellow
+            } else {
+                return $arvo
+            }
+        } elseif ($tyyppi -eq 'postinumero') {
+            if (-not (Test-PostinumeroValidi $arvo)) {
+                Write-Host 'Anna postinumero viitenä numerona, esim. 43500.' -ForegroundColor Yellow
             } else {
                 return $arvo
             }

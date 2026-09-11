@@ -86,7 +86,8 @@ PAKETIN_OSAT=(node server web node_modules asennus VERSIO.txt LUEMINUT.txt)
 #
 # Kentät (malli_lisaa AVAIN TYYPPI OLETUS KEHOTE [otsikko=] [riippuu=]
 # [ohje=] [vaihtoehdot=]):
-#   TYYPPI       portti | valinta | desimaali | teksti | url | salaisuus | fullpin
+#   TYYPPI       portti | valinta | desimaali | postinumero | teksti | url |
+#                salaisuus | fullpin
 #   otsikko      ryhmän otsikko: tulostetaan ennen ensimmäistä kysymystä ja
 #                kirjoitetaan kommenttina .env-tiedostoon
 #   riippuu      kysytään vain jos tällä avaimella on arvo (esim. Wilman
@@ -125,10 +126,10 @@ malli_lisaa PORT portti 4173 "Portti" \
 malli_lisaa LOG_LEVEL valinta warn "Lokitaso (warn/error/debug)" \
     vaihtoehdot="warn error debug"
 
-malli_lisaa WEATHER_LAT desimaali 62.86667 "Sään leveysaste (WEATHER_LAT)" \
-    otsikko="Sää (Open-Meteo, ei API-avainta)"
-malli_lisaa WEATHER_LON desimaali 24.78333 "Sään pituusaste (WEATHER_LON)"
-malli_lisaa WEATHER_PLACE teksti Karstula "Paikkakunnan nimi näytölle (WEATHER_PLACE)"
+malli_lisaa WEATHER_POSTAL_CODE postinumero 43500 "Postinumero säätietoja varten" \
+    otsikko="Sää (Open-Meteo, ei API-avainta)" \
+    ohje="Palvelin päättelee postinumerosta sekä sijainnin että näytölle" \
+    ohje="tulevan paikkakunnan nimen -- koordinaatteja ei tarvitse tietää."
 
 malli_lisaa WILMA_BASE_URL url "" "Wilman osoite, esim. https://koulu.inschool.fi (tyhjä = Wilma pois käytöstä)" \
     otsikko="Wilma"
@@ -160,6 +161,19 @@ malli_lisaa FULL_PIN fullpin "" "FULL_PIN (tyhjä = ei käytössä)" \
     ohje="lyhyempi EI ota tasoa käyttöön lainkaan."
 malli_lisaa TRUSTED_HOSTS teksti "" "Luotetut laitteet, pilkulla erotettuna (esim. 192.168.10.50, tyhjä = ei mitään)" \
     otsikko="Luotetut laitteet"
+
+# Avaimet joita asennin EI enää kysy eikä kirjoita, mutta jotka palvelin yhä
+# lukee. WEATHER_LAT/LON/PLACE ovat WEATHER_POSTAL_CODEn varareitti: jos
+# postinumeroa ei ole, palvelin käyttää näitä. Siksi päivitys ei saa poistaa
+# niitä vanhasta .env:stä -- eikä päivitys poistakaan, koska se vain lisää
+# puuttuvat avaimet tiedoston loppuun.
+#
+# Tämä lista on olemassa vain jottei .env.examplen ja mallin vertailu (ks.
+# mallista_puuttuvat_avaimet) kaatuisi avaimeen joka on tarkoituksella poistettu
+# mallista. Uusi asennus ei kirjoita näitä avaimia lainkaan, ja jos .env
+# kirjoitetaan uusiksi, tuntemattomat_avaimet varoittaa niiden katoamisesta --
+# se on eri kysymys eikä saa hiljentyä tämän listan takia.
+declare -a MALLI_VANHENTUNEET=(WEATHER_LAT WEATHER_LON WEATHER_PLACE)
 
 # =============================================================================
 # Puhtaat funktiot -- testattavissa ilman asennusta (ks. test-asenna.sh)
@@ -259,6 +273,11 @@ tuntemattomat_avaimet() {
 # Julkaisupaketissa .env.exampleä ei ole mukana, jolloin tämä palauttaa tyhjän
 # eikä väitä mitään. Tämä on ainoa automaattinen turva sitä vastaan että
 # asentimet ajautuvat erilleen avain kerrallaan.
+#
+# Vanhentuneet avaimet eivät ole tässä puute: ne saavat esiintyä
+# .env.examplessa ilman että asennus kaatuu. Tarkistus etsii vain sitä yhtä
+# vikaa jota varten se on olemassa: .env.exampleen lisättiin UUSI avain jota
+# asennin ei osaa kysyä.
 mallista_puuttuvat_avaimet() {
     local esimerkki="$1" avain
     [[ -f "$esimerkki" ]] || return 0
@@ -268,7 +287,7 @@ mallista_puuttuvat_avaimet() {
     { cat "$esimerkki"; printf '\n'; } \
         | sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' \
         | while IFS= read -r avain; do
-            sisaltaa "$avain" "${MALLI_AVAIMET[@]}" || printf '%s\n' "$avain"
+            sisaltaa "$avain" "${MALLI_AVAIMET[@]}" "${MALLI_VANHENTUNEET[@]}" || printf '%s\n' "$avain"
         done | sort -u
 }
 
@@ -284,6 +303,13 @@ portti_kelpaa() {
 desimaali_kelpaa() {
     # Piste eikä pilkku: server/src/core/config.ts lukee arvon JS:n Number():llä.
     [[ "${1-}" =~ ^-?[0-9]+([.][0-9]+)?$ ]]
+}
+
+# Suomalainen postinumero: tasan viisi numeroa. Asennin EI tarkista onko
+# postinumero olemassa -- se ei tunne postinumeroaineistoa, ja tuntemattomasta
+# numerosta kertominen on palvelimen tehtävä (sillä on aineisto käsillä).
+postinumero_kelpaa() {
+    [[ "${1-}" =~ ^[0-9]{5}$ ]]
 }
 
 url_kelpaa() {
@@ -565,6 +591,12 @@ kysy_asetus() {
                     desimaali)
                         if ! desimaali_kelpaa "$vastaus"; then
                             echo "  Anna desimaaliluku pisteellä, esim. 62.86667." >&2
+                            continue
+                        fi
+                        ;;
+                    postinumero)
+                        if ! postinumero_kelpaa "$vastaus"; then
+                            echo "  Anna postinumero viitenä numerona, esim. 43500." >&2
                             continue
                         fi
                         ;;

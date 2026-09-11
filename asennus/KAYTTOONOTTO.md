@@ -30,7 +30,7 @@ dokumentin lopussa.
    | Asennushakemisto | puretun paketin oma sijainti (ei kopioida) |
    | Portti | 4173 |
    | Lokitaso (warn/error/debug) | warn |
-   | Sään leveys- ja pituusaste, paikkakunta | Karstula |
+   | Postinumero säätietoja varten | 43500 |
    | Wilman osoite, käyttäjätunnus, salasana | tyhjä = Wilma pois käytöstä |
    | Päikyn kuntaosoite, käyttäjätunnus, salasana | tyhjä = Päikky pois käytöstä |
    | Kalenterin ICS-osoite | tyhjä = kalenteri pois käytöstä |
@@ -39,8 +39,9 @@ dokumentin lopussa.
    | `TRUSTED_HOSTS` | tyhjä = ei luotettuja laitteita |
    | Otetaanko automaattikäynnistys käyttöön | kyllä |
 
-   Jokainen uusi arvo validoidaan heti kysyttäessä (porttinumero, osoitteet ovat
-   kelvollisia URL-muotoja, `FULL_PIN` on riittävän pitkä tai tyhjä) — virheen
+   Jokainen uusi arvo validoidaan heti kysyttäessä (porttinumero, postinumero on
+   viisi numeroa, osoitteet ovat kelvollisia URL-muotoja, `FULL_PIN` on riittävän
+   pitkä tai tyhjä) — virheen
    sattuessa skripti kertoo mikä on vialla ja kysyy uudelleen, eikä jatka
    virheellisellä arvolla. Portin vapautuminen tarkistetaan myös vanhan palvelimen
    pysäyttämisen jälkeen. Salasanat ja PIN-koodit eivät koskaan näy ruudulla
@@ -52,9 +53,16 @@ dokumentin lopussa.
    (päivitys), **`data`-kansio säilyy aina koskemattomana** — tietokanta,
    muistilista, hälytysäänet ja lokit eivät katoa. Olemassa oleva `.env`
    säilyy päivityksessä nykyisine käyttöoikeuksineen. Skripti kysyy vain mallista
-   puuttuvat asetukset, esimerkiksi Päikyn tiedot, ja lisää ne tiedoston loppuun.
-   Tyhjäksi jätetty olemassa oleva asetus säilyy tyhjänä. Asetukset voi myös
-   määrittää kokonaan uudestaan valitsemalla erikseen **U** päivitystavan kysymyksessä.
+   puuttuvat asetukset, esimerkiksi Päikyn tiedot tai sään postinumeron, ja lisää
+   ne tiedoston loppuun. Tyhjäksi jätetty olemassa oleva asetus säilyy tyhjänä.
+   Asetukset voi myös määrittää kokonaan uudestaan valitsemalla erikseen **U**
+   päivitystavan kysymyksessä.
+
+   Vanhat `WEATHER_LAT`, `WEATHER_LON` ja `WEATHER_PLACE` säilyvät päivityksessä
+   koskemattomina: palvelin käyttää niitä varareittinä, jos postinumerosta ei
+   löydy sijaintia. Uuteen asennukseen niitä ei kirjoiteta lainkaan. Jos valitset
+   **U** ja annat asetukset uudestaan, ne katoavat: `.env` kirjoitetaan silloin
+   kokonaan uusiksi (skripti varoittaa tästä ennen vahvistusta).
 
 4. Skripti luo **työpöydän pikakuvakkeen** ("Infonäyttö (kioski)"), joka
    käynnistää sekä palvelimen (jos se ei jo ole käynnissä) että kioskiselaimen
@@ -154,7 +162,7 @@ Set-ExecutionPolicy -ExecutionPolicy Unrestricted
 | `WILMA_BASE_URL` | Koulun Wilma-osoite, esim. `https://karstulakyyjarvi.inschool.fi` |
 | `WILMA_USERNAME`, `WILMA_PASSWORD` | Huoltajatunnukset |
 | `CALENDAR_ICS_URL` | Google Calendar → kalenterin asetukset → **Salainen osoite iCal-muodossa** |
-| `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_PLACE` | Oletuksena Karstula |
+| `WEATHER_POSTAL_CODE` | Sään sijainnin postinumero, esim. `43500`. Palvelin päättelee siitä koordinaatit ja paikkakunnan nimen. Oletuksena Karstula. |
 | `EDIT_PIN` | Vapaavalintainen. Antaa puhelimelle oikeuden muokata muistilistaa, asetuksia ja hälytyksiä — **ei** lasten Wilma-tietoja. |
 | `FULL_PIN` | Vapaavalintainen, **vähintään 6 merkkiä**. Antaa puhelimelle täydet oikeudet, myös lasten Wilma-tiedot. Lyhyempää ei oteta käyttöön lainkaan. |
 | `TRUSTED_HOSTS` | Vapaavalintainen. Pilkulla erotettu lista IP-osoitteita tai konenimiä, jotka saavat täydet oikeudet ilman koodia. |

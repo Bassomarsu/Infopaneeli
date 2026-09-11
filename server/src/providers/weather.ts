@@ -1,5 +1,8 @@
 import { Provider } from "../core/provider.ts";
 import { config } from "../core/config.ts";
+import { logger } from "../core/logging.ts";
+import { getSettings } from "../core/settings.ts";
+import { WeatherLocationResolver, type WeatherLocation } from "../core/weather-location.ts";
 import { localDateKey, localParts } from "../core/time.ts";
 
 const API_URL = "https://api.open-meteo.com/v1/forecast";
@@ -206,10 +209,44 @@ function dailyForecast(daily: OpenMeteoDaily, hourly: OpenMeteoHourly): WeatherD
   return days;
 }
 
+/**
+ * Yksi jaettu ratkaisija koko prosessin ajaksi, jotta "edellinen kelvollinen
+ * sijainti" todella säilyy hakujen välillä (ks. core/weather-location.ts).
+ * Myös routes/api.ts lukee sijainnin tämän kautta, jotta koontinäkymän
+ * paikannimi ja haettu sää eivät voi kertoa kahdesta eri paikkakunnasta.
+ */
+const locationResolver = new WeatherLocationResolver();
+
+/**
+ * Sijainti HAKUHETKELLÄ, ei moduulin latautuessa: asetuksista vaihdettu
+ * postinumero vaihtaa paikkakunnan ilman palvelimen uudelleenkäynnistystä, ja
+ * se on koko muutoksen tarkoitus.
+ *
+ * Varoitus lokitetaan `warn`-tasolla, joka on oletustaso (ks. core/config.ts) —
+ * tuntematon postinumero on nimenomaan se tapaus jonka käyttäjän pitää nähdä
+ * lokista ilman että hän ensin arvaa säätävänsä LOG_LEVELiä.
+ */
+export function currentWeatherLocation(): WeatherLocation {
+  const { location, warning } = locationResolver.resolve({
+    settingPostalCode: getSettings().weatherPostalCode,
+    envPostalCode: config.weather.postalCode,
+    envLocation: {
+      place: config.weather.place,
+      latitude: config.weather.latitude,
+      longitude: config.weather.longitude,
+    },
+  });
+  if (warning) {
+    logger.warn({ event: "weather_postal_code_unknown", place: location.place }, warning);
+  }
+  return location;
+}
+
 async function fetchWeather(): Promise<WeatherData> {
+  const location = currentWeatherLocation();
   const params = new URLSearchParams({
-    latitude: String(config.weather.latitude),
-    longitude: String(config.weather.longitude),
+    latitude: String(location.latitude),
+    longitude: String(location.longitude),
     current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation",
     daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunrise,sunset",
     hourly: "temperature_2m,apparent_temperature,precipitation,precipitation_probability,weather_code,wind_speed_10m",
@@ -237,7 +274,7 @@ async function fetchWeather(): Promise<WeatherData> {
   }
 
   return {
-    place: config.weather.place,
+    place: location.place,
     current: {
       temperature: body.current.temperature_2m,
       apparentTemperature: body.current.apparent_temperature,

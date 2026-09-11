@@ -18,6 +18,7 @@
     "test:trusted-hosts": "node test/trusted-hosts.ts",
     "test:alarm-settings": "node test/alarm-settings.ts",
     "test:alarm-sounds": "node test/alarm-sounds.ts",
+    "test:postal-codes": "node test/postal-codes.ts",
     "test:edit-access": "node test/edit-access.ts",
     "test:edit-access-disabled": "node test/edit-access-disabled.ts",
     "test:edit-access-full-too-short": "node test/edit-access-full-too-short.ts",

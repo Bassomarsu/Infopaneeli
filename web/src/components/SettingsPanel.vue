@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { NARROW_LAYOUT_BREAKPOINT_PX } from "../composables/usePanelLayout";
 import { useEditAccess, type PinLevel } from "../composables/useEditAccess.ts";
+import {
+  createPostalCodeLookup,
+  fetchCurrentWeatherLocation,
+  type CurrentWeatherLocation,
+} from "../composables/useWeatherLocation.ts";
 import ConnectionTest from "./ConnectionTest.vue";
 import type { PaikkyChild, Settings, WilmaStudent } from "../types";
 
@@ -78,6 +83,135 @@ watch(
   { immediate: true },
 );
 
+// ---- Sään sijainti postinumerona -------------------------------------------
+
+const postalInput = ref("");
+const postalLookup = createPostalCodeLookup(editAccess.editFetch);
+const currentLocation = ref<CurrentWeatherLocation | null>(null);
+const currentLocationLoading = ref(false);
+
+onUnmounted(() => postalLookup.dispose());
+
+/**
+ * Postinumerokenttä nollataan VAIN kun paneeli avataan, ei aina kun
+ * `props.settings` vaihtuu. Yllä oleva draft-watch tekee jälkimmäistä, koska
+ * settings on App.vuessa laskettu dashboardista ja saa uuden identiteetin
+ * joka pollauksella — kesken kirjoitettu postinumero katoaisi siihen
+ * minuutin välein. Siksi tallennettava arvo luetaan hakukentän tilasta
+ * (`postalToSave`) eikä draftista.
+ */
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) return;
+    postalInput.value = postalLookup.setInput(props.settings.weatherPostalCode ?? "");
+    void loadCurrentLocation();
+  },
+  { immediate: true },
+);
+
+async function loadCurrentLocation(): Promise<void> {
+  currentLocationLoading.value = true;
+  try {
+    currentLocation.value = await fetchCurrentWeatherLocation(editAccess.editFetch);
+  } finally {
+    currentLocationLoading.value = false;
+  }
+}
+
+function onPostalInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  postalInput.value = postalLookup.setInput(target.value);
+  // Kenttä itse voi jäädä näyttämään hylättyjä merkkejä (kirjaimet, välilyönnit,
+  // kuudes numero), koska v-model ei ehdi väliin — pakotetaan sama arvo takaisin.
+  if (target.value !== postalInput.value) target.value = postalInput.value;
+}
+
+function clearPostalCode(): void {
+  postalInput.value = postalLookup.setInput("");
+}
+
+/**
+ * Mikä arvo lähtee palvelimelle. Tyhjä kenttä on nimenomaan `null` eli
+ * "palaa .env:n arvoon" — ei "älä muuta". Muissa kuin tyhjässä ja
+ * ratkaistussa tilassa tallennus on estetty, joten viimeinen haara ei
+ * käytännössä toteudu; se säilyttää tallennetun arvon varmuuden vuoksi.
+ */
+const postalToSave = computed<string | null>(() => {
+  const state = postalLookup.state.value;
+  if (state.kind === "empty") return null;
+  if (state.kind === "found") return state.code;
+  return props.settings.weatherPostalCode ?? null;
+});
+
+/** Näytettävä tila kentän alla. `warn` = käyttäjän pitää korjata jotain. */
+const postalStatus = computed<{ tone: "ok" | "warn" | "muted"; text: string }>(() => {
+  const state = postalLookup.state.value;
+  switch (state.kind) {
+    case "empty":
+      return { tone: "muted", text: "Tyhjä kenttä: sää haetaan .env-tiedoston sijainnista." };
+    case "incomplete":
+      return { tone: "muted", text: "Postinumerossa on viisi numeroa, esim. 43500." };
+    case "loading":
+      return { tone: "muted", text: "Haetaan paikkakuntaa…" };
+    case "found":
+      return { tone: "ok", text: `${state.code} — ${state.place.place}` };
+    case "unknown":
+      return {
+        tone: "warn",
+        text: `Postinumeroa ${state.code} ei löytynyt. Tarkista numero — se on viisi numeroa, esim. 43500.`,
+      };
+    case "error":
+      return { tone: "warn", text: state.message };
+  }
+});
+
+/**
+ * Ratkaisematonta sijaintia ei saa tallentaa: numero näyttäisi menneen
+ * perille, mutta virhe paljastuisi vasta säätiedoissa. Null = tallennus saa
+ * edetä.
+ */
+const postalBlocksSave = computed<string | null>(() => {
+  const state = postalLookup.state.value;
+  switch (state.kind) {
+    case "empty":
+    case "found":
+      return null;
+    case "incomplete":
+      return "Postinumero on kesken — kirjoita viisi numeroa tai tyhjennä kenttä.";
+    case "loading":
+      return "Odota hetki: postinumeron paikkakuntaa haetaan vielä.";
+    case "unknown":
+      return `Postinumeroa ${state.code} ei löytynyt — korjaa numero tai tyhjennä kenttä.`;
+    case "error":
+      return `Postinumeroa ei voitu tarkistaa: ${state.message}`;
+  }
+});
+
+/**
+ * Mikä sijainti on NYT käytössä ja mistä se tulee. Tallennettu asetus, ei
+ * kesken muokattu kenttä — muuten teksti väittäisi jo tapahtuneeksi jotain
+ * mitä ei ole vielä tallennettu.
+ */
+const currentLocationText = computed<string>(() => {
+  if (currentLocationLoading.value) return "Haetaan nykyistä sijaintia…";
+  const location = currentLocation.value;
+  const saved = props.settings.weatherPostalCode ?? null;
+  if (!location) {
+    // Paikkakunnan nimeä ei saatu, mutta lähteestä tiedetään yhä tämä verran.
+    return saved !== null
+      ? `Nyt käytössä: postinumero ${saved} (asetuksista). Paikkakunnan nimeä ei saatu palvelimelta.`
+      : "Nyt käytössä: .env-tiedoston sijainti. Paikkakunnan nimeä ei saatu palvelimelta.";
+  }
+  const fromSettings = location.source === null ? saved !== null : location.source === "settings";
+  if (!fromSettings) return `Nyt käytössä: ${location.place} — .env-tiedostosta.`;
+  return saved !== null
+    ? `Nyt käytössä: ${location.place} — postinumerosta ${saved} (asetuksista).`
+    : `Nyt käytössä: ${location.place} — asetuksista.`;
+});
+
+// ----------------------------------------------------------------------------
+
 function toggleStudent(studentNumber: string): void {
   const current = draft.value.visibleStudents;
   // null means "every child"; the first deselection turns it into an explicit
@@ -118,13 +252,20 @@ function isPaikkyChildVisible(childId: string): boolean {
  * äänettömästi. Palauttaa onnistuiko, jotta kutsuja voi päättää jatkaako.
  */
 async function persistDraft(): Promise<boolean> {
+  // Sama este kuin Tallenna-napin `disabled`illa, mutta tässä myös
+  // "Muokkaa asettelua" -polulle — ja tämä on se paikka joka oikeasti
+  // estää ratkaisemattoman sijainnin menemästä palvelimelle.
+  if (postalBlocksSave.value !== null) {
+    error.value = postalBlocksSave.value;
+    return false;
+  }
   saving.value = true;
   error.value = null;
   try {
     const response = await editAccess.editFetch("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft.value),
+      body: JSON.stringify({ ...draft.value, weatherPostalCode: postalToSave.value }),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -204,7 +345,7 @@ async function save(): Promise<void> {
         <fieldset class="group">
           <legend>Paneelien asettelu</legend>
           <p class="group__hint">Siirrä paneeleja ja muuta niiden kokoa suoraan näytöllä.</p>
-          <button type="button" class="btn" :disabled="isNarrow || saving" @click="editLayout">
+          <button type="button" class="btn" :disabled="isNarrow || saving || postalBlocksSave !== null" @click="editLayout">
             {{ saving ? "Tallennetaan…" : "Muokkaa asettelua" }}
           </button>
           <p v-if="isNarrow" class="group__hint">Asettelua muokataan infonäytöllä — näkymä on nyt liian kapea.</p>
@@ -243,6 +384,43 @@ async function save(): Promise<void> {
             <span>Alkuaika</span>
             <input v-model="draft.breakfastTime" type="time" />
           </label>
+        </fieldset>
+
+        <!-- Sää hakee sijaintinsa tästä postinumerosta. Nykyinen sijainti
+             näytetään erikseen kentän yläpuolella, koska tyhjä kenttä ei
+             tarkoita "ei sijaintia" vaan ".env:n arvo" — ks. types.ts:n
+             weatherPostalCode. -->
+        <fieldset class="group">
+          <legend>Sään sijainti</legend>
+          <p class="group__hint">{{ currentLocationText }}</p>
+          <label class="field">
+            <span>Postinumero</span>
+            <!-- inputmode="numeric" nostaa puhelimessa numeronäppäimistön;
+                 type pysyy tekstinä, koska number-kenttä syö etunollat
+                 (esim. 00100) ja tarjoaa turhat nuolipainikkeet. -->
+            <input
+              :value="postalInput"
+              class="postal__input"
+              type="text"
+              inputmode="numeric"
+              autocomplete="postal-code"
+              enterkeyhint="done"
+              maxlength="5"
+              placeholder="esim. 43500"
+              @input="onPostalInput"
+            />
+          </label>
+          <p class="postal__status" :class="`postal__status--${postalStatus.tone}`">
+            {{ postalStatus.text }}
+          </p>
+          <button
+            type="button"
+            class="btn btn--quiet"
+            :disabled="postalInput.length === 0"
+            @click="clearPostalCode"
+          >
+            Tyhjennä — käytä .env:n sijaintia
+          </button>
         </fieldset>
 
         <fieldset class="group">
@@ -299,8 +477,11 @@ async function save(): Promise<void> {
       </div>
 
       <footer class="panel__foot">
+        <!-- Syy näkyy tässä eikä vain sään ryhmässä: Tallenna on paneelin
+             pohjalla, eikä harmaa nappi ilman selitystä kerro mitään. -->
+        <p v-if="postalBlocksSave" class="panel__blocked">{{ postalBlocksSave }}</p>
         <button type="button" class="btn" @click="emit('close')">Peruuta</button>
-        <button type="button" class="btn btn--primary" :disabled="saving" @click="save">
+        <button type="button" class="btn btn--primary" :disabled="saving || postalBlocksSave !== null" @click="save">
           {{ saving ? "Tallennetaan…" : "Tallenna" }}
         </button>
       </footer>
@@ -350,6 +531,9 @@ async function save(): Promise<void> {
   gap: 0.7rem;
   justify-content: flex-end;
   border-top: 1px solid var(--border);
+  /* Estesyy voi olla pitkä; puhelimen leveydellä se saa siirtyä omalle
+     rivilleen sen sijaan että puristaisi napit kasaan. */
+  flex-wrap: wrap;
 }
 
 .panel__body {
@@ -423,6 +607,49 @@ async function save(): Promise<void> {
   font-size: 1.1rem;
   padding: 0.55rem 0.7rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* Viisi numeroa ei tarvitse paneelin koko leveyttä, mutta kosketuskorkeus
+   tulee .field inputin paddingista. `ch` skaalaa kentän sisällön mukaan. */
+.postal__input {
+  width: 9ch;
+  letter-spacing: 0.12em;
+}
+
+.postal__status {
+  margin: 0;
+  font-size: 0.82rem;
+  /* Kolme tilaa vaihtelee eri mittaisiksi teksteiksi; kiinteä korkeus estää
+     ryhmää hyppimästä kun tila vaihtuu kirjoittaessa. */
+  min-height: 2.4em;
+}
+
+.postal__status--muted {
+  color: var(--text-faint);
+}
+
+.postal__status--ok {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.postal__status--warn {
+  color: #f79b9b;
+}
+
+/* Toissijainen toiminto sään ryhmässä: sama kosketusalue kuin muilla
+   napeilla, mutta ei kilpaile Tallenna-napin kanssa katseesta. */
+.btn--quiet {
+  align-self: flex-start;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.9rem;
+}
+
+.panel__blocked {
+  margin: 0 auto 0 0;
+  color: #f79b9b;
+  font-size: 0.8rem;
+  max-width: 22rem;
 }
 
 .panel__close {

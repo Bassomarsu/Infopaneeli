@@ -393,6 +393,15 @@ export interface Settings {
   /** Null = ei koskaan muokattu, käytetään oletusasettelua. */
   panelLayout: PanelLayout | null;
   alarms: Alarm[];
+  /**
+   * Sään sijainti postinumerona. null = käytetään .env:n arvoja.
+   *
+   * Palvelimen etusijajärjestys on asetus > .env-postinumero >
+   * .env-koordinaatit > oletus, joten `null` EI tarkoita "ei sijaintia" vaan
+   * "sijainti tulee .env:stä" — ks. SettingsPanel.vue, joka näyttää nykyisen
+   * sijainnin ja sen lähteen erikseen tämän kentän arvosta riippumatta.
+   */
+  weatherPostalCode: string | null;
 }
 
 export interface Dashboard {
