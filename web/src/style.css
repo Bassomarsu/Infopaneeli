@@ -56,6 +56,56 @@ body {
   height: 100dvh;
 }
 
+/*
+ * Vieritystila (Settings.gridOverflow === "scroll"): ruudukko saa olla ruutua
+ * korkeampi, ja sivu vierittyy pystysuunnassa.
+ *
+ * `:has()` on tässä oikea keino eikä oikku: tilan tietää vain Vue-sovellus,
+ * ja tämä sääntö koskee `html`- ja `body`-elementtejä jotka ovat sovelluksen
+ * ULKOPUOLELLA — luokkaa ei siis voi sitoa niihin komponentista. Sama syy
+ * miksi yötilan `--page-bg` maalataan erikseen myös `.app`ille.
+ *
+ * VAIN PYSTYSUUNTA. Vaakavieritys pysyy estettynä: seinänäytöllä sivuttain
+ * vieritetty sisältö ei palaisi takaisin ilman että joku käy koskemassa, ja
+ * yläpalkin ylivuoto on jo kertaalleen korjattu vika — sen paluuta ei pidä
+ * tehdä näkymättömäksi antamalla sivun vierittyä sen ympäri.
+ */
+html:has(.app--scroll) {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/*
+ * `body` jaa VISIBLEksi, eika saa `overflow`ia lainkaan. Tama ei ole
+ * tyylikysymys vaan toimintakysymys, ja se on MITATTU:
+ *
+ * Perussaanto ylla on `html, body { overflow: hidden }`. Mika tahansa muu
+ * arvo kuin `visible` tekee elementista VIERITYSSAILION, joten pelkka
+ * `hidden`in perima riittaa: ylapalkin `position: sticky` alkaa seurata bodyn
+ * vieritysporttia — joka ei koskaan vierity — eika nakymaa.
+ *
+ * Mitattu ennen korjausta 1920x1080: palkki oli `position: sticky` ja
+ * `top: 0`, mutta sen y meni vieritettaessa 0 -> -1324 ja KioskExitHotspot
+ * sen mukana (-1302..-1249), jolloin kioskista ei paase ulos lainkaan.
+ * Esivanhempien ketju kertoi syyn: BODY overflow hidden/hidden.
+ *
+ * `visible` on siis pakollinen, ei siivousta. Vaakasuunnan leikkaus jaa
+ * `html`ille, joka valittyy nakymalle.
+ */
+body:has(.app--scroll) {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+body:has(.app--scroll) #app {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 /* Yötila himmentää näytön, ettei se valaise huonetta pimeässä.
  *
  * Valitsin on `.app.night` eikä `#app.night` — ÄLÄ palauta id-muotoa. Vue

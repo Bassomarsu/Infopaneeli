@@ -224,6 +224,17 @@ const canPreviewSchedule = computed(() => isTrustedClient.value);
 const newsLinksAllowed = computed(() => !isDisplayDevice.value);
 
 /**
+ * Saako ruudukko vuotaa ruudun alalaidan yli (jolloin sivu vierittyy), vai
+ * puristetaanko se aina näkyviin? Ks. Settings.gridOverflow.
+ *
+ * Oletus on `false` myös silloin kun asetuksia ei ole vielä haettu: seinällä
+ * ei kosketa näyttöön ohi kulkiessa, joten piiloon vieritetty kortti olisi
+ * yhtä kuin poissa. Väärään suuntaan erehtyminen maksaa siis eri verran —
+ * puristettu kortti on luettavissa, vieritetty ei ole edes tiedossa.
+ */
+const gridScrolls = computed(() => settings.value?.gridOverflow === "scroll");
+
+/**
  * Mitä tallennettu koodi TÄLLÄ HETKELLÄ avaa — aina johdettu tuoreimmasta
  * palvelinvastauksesta (isTrustedClient), ei erikseen muistiin talletetusta
  * lipusta. Näin näyttö ei voi jäädä väittämään "täydet oikeudet" enää sen
@@ -331,7 +342,7 @@ const isNight = computed(() => {
 </script>
 
 <template>
-  <div class="app" :class="{ night: isNight }">
+  <div class="app" :class="{ night: isNight, 'app--scroll': gridScrolls }">
     <header v-if="panelLayout.editing.value" class="topbar topbar--editing">
       <div class="topbar__editing-main">
         <span class="topbar__editing-label" :class="{ 'topbar__editing-label--notice': panelLayout.notice.value }">
@@ -1274,6 +1285,46 @@ const isNight = computed(() => {
   gap: var(--gap);
   grid-template-columns: repeat(6, minmax(0, 1fr));
   grid-template-rows: repeat(8, minmax(0, 1fr));
+}
+
+/*
+ * VIERITYSTILA (Settings.gridOverflow === "scroll").
+ *
+ * Oletustilassa kahdeksan riviä jakaa ruudun korkeuden keskenään, joten kaikki
+ * on aina näkyvissä mutta rivi kutistuu sitä matalammaksi mitä enemmän
+ * kortteja on. Vieritystilassa rivillä on VÄHIMMÄISKORKEUS: kortit pysyvät
+ * luettavina, ja jos ruudukko ei mahdu, sivu vierittyy.
+ *
+ * Rivimäärä ei muutu (ks. Settings.gridOverflow) — vain rivin korkeuden
+ * käytös. Sama asettelu kelpaa siis molemmissa tiloissa, eikä asetuksen
+ * vaihtaminen voi hylätä käyttäjän asettelua.
+ *
+ * YLÄPALKKI ON TARTTUVA, JA SE ON PAKOLLISTA EIKÄ KOSMEETTISTA.
+ * KioskExitHotspot elää yläpalkin päivämäärän kohdalla ja on ainoa tapa
+ * poistua kioskitilasta. Jos palkki vierittyisi näkyvistä, poistumisalue
+ * katoaisi sen mukana ja laitteen saisi auki vain näppäimistöllä tai
+ * virtanapista. Tausta on läpinäkymätön samasta syystä: läpikuultavan palkin
+ * alta kulkeva kortti tekisi näkymättömästä alueesta sattumanvaraisen.
+ */
+.app--scroll {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app--scroll .grid {
+  grid-template-rows: repeat(8, minmax(5.5rem, auto));
+}
+
+.app--scroll .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  background: var(--page-bg);
+  /* Palkin oma yläpehmuste tulee .appin täytteestä, joka ei vieritä mukana —
+     ilman tätä kortti kurkistaisi palkin yläpuolelta sitä vieritettäessä. */
+  padding-top: 1.1rem;
+  margin-top: -1.1rem;
 }
 
 /*

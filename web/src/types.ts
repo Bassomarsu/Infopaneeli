@@ -313,6 +313,9 @@ export const PANEL_IDS = [
 
 export type PanelId = (typeof PANEL_IDS)[number];
 
+/** Ks. Settings.gridOverflow. Pidettävä samana kuin server/src/core/settings.ts. */
+export type GridOverflow = "fit" | "scroll";
+
 export interface PanelPlacement {
   /** 1-pohjainen, inklusiivinen. */
   col: number;
@@ -526,6 +529,16 @@ export interface Settings {
    * `shouldRenderPanel`.
    */
   hiddenPanels: PanelId[];
+  /**
+   * Mahtuuko ruudukko aina ruudulle ("fit", oletus) vai saako se vuotaa
+   * pystysuunnassa jolloin sivu vierittyy ("scroll"). Pidettävä samana kuin
+   * server/src/core/settings.ts:n GridOverflow.
+   *
+   * Rivimäärä on sama molemmissa tiloissa — vain rivin korkeuden käytös
+   * muuttuu. Jos "scroll" sallisi enemmän rivejä, siinä tehty asettelu olisi
+   * kelvoton "fit"-tilassa ja asetuksen vaihtaminen takaisin hylkäisi sen.
+   */
+  gridOverflow: GridOverflow;
   alarms: Alarm[];
   /**
    * Sään sijainti postinumerona. null = käytetään .env:n arvoja.

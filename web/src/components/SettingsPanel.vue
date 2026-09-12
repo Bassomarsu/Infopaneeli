@@ -506,6 +506,23 @@ async function save(): Promise<void> {
         </fieldset>
 
         <fieldset class="group">
+          <legend>Kun paneeleja on paljon</legend>
+          <label class="radio">
+            <input v-model="draft.gridOverflow" type="radio" value="fit" />
+            <span>Sovita ruudulle — kaikki näkyy kerralla, kortit kutistuvat</span>
+          </label>
+          <label class="radio">
+            <input v-model="draft.gridOverflow" type="radio" value="scroll" />
+            <span>Anna vuotaa yli — kortit pysyvät luettavina, näyttöä voi vierittää alaspäin</span>
+          </label>
+          <p class="group__hint">
+            Seinänäytölle sopii yleensä sovitus: siihen ei kosketa ohi kulkiessa, joten
+            alas vieritetty kortti jäisi näkymättömiin. Vieritys on hyödyllisempi puhelimessa
+            ja silloin kun paneeleja on enemmän kuin ruudulle mukavasti mahtuu.
+          </p>
+        </fieldset>
+
+        <fieldset class="group">
           <legend>Lukujärjestyksen asettelu</legend>
           <label class="radio">
             <input v-model="draft.scheduleLayout" type="radio" value="split" />

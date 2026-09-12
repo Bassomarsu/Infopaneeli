@@ -459,4 +459,121 @@ testFreeSpotIsDeterministic();
 testMigrationIsIdempotentAndWritesNothing();
 testStoredGarbageIsNormalisedOnRead();
 
+/**
+ * Vieritystilan asetus. Oletus on "fit", koska seinänäytöllä alas vieritetty
+ * kortti olisi yhtä kuin poissa — siihen ei kosketa ohi kulkiessa.
+ */
+function testGridOverflowDefaultsToFit(): void {
+  setSetting("settings", {});
+  assert.equal(getSettings().gridOverflow, "fit");
+  console.log("ok  gridOverflow on oletuksena 'fit'");
+}
+
+function testGridOverflowAcceptsBothModes(): void {
+  setSetting("settings", {});
+  assert.equal(updateSettings({ gridOverflow: "scroll" }).gridOverflow, "scroll");
+  assert.equal(updateSettings({ gridOverflow: "fit" }).gridOverflow, "fit");
+  setSetting("settings", {});
+  console.log("ok  gridOverflow hyväksyy 'fit' ja 'scroll'");
+}
+
+function testGridOverflowRejectsAnythingElse(): void {
+  for (const bad of ["kissa", "", "FIT", 0, 1, true, null, [], {}]) {
+    assert.throws(
+      () => updateSettings({ gridOverflow: bad }),
+      (err: unknown) =>
+        err instanceof SettingsValidationError && err.message.includes("gridOverflow"),
+      `gridOverflow olisi hyväksynyt: ${JSON.stringify(bad)}`,
+    );
+  }
+  setSetting("settings", {});
+  console.log("ok  gridOverflow hylkää muut arvot ja virheviesti nimeää kentän");
+}
+
+/**
+ * Vanha tallennettu asetusrivi ei sisällä avainta lainkaan. Puuttuva avain ei
+ * saa kääntää oletusta — juuri siksi arvo on "fit" eikä esim. boolean jonka
+ * puuttuminen tarkoittaisi falsea.
+ */
+function testStoredSettingsWithoutGridOverflowGetTheDefault(): void {
+  setSetting("settings", { rolloverTime: "12:00", scheduleLayout: "split" });
+  assert.equal(getSettings().gridOverflow, "fit");
+  setSetting("settings", {});
+  console.log("ok  ilman gridOverflow-avainta tallennettu asetus saa oletuksen 'fit'");
+}
+
+/**
+ * Rivimäärä on sama molemmissa tiloissa. Jos "scroll" sallisi enemmän rivejä,
+ * siinä tehty asettelu olisi kelvoton "fit"-tilassa ja asetuksen vaihtaminen
+ * takaisin hylkäisi käyttäjän asettelun.
+ */
+function testLayoutIsValidInBothModes(): void {
+  const täysi = buildSevenPanelLayout();
+  for (const mode of ["fit", "scroll"] as const) {
+    setSetting("settings", {});
+    updateSettings({ gridOverflow: mode, panelLayout: täysi, hiddenPanels: [] });
+    const luettu = getSettings();
+    assert.equal(luettu.gridOverflow, mode);
+    assert.deepEqual(luettu.panelLayout, täysi, `asettelu muuttui tilassa ${mode}`);
+  }
+  setSetting("settings", {});
+  console.log("ok  sama asettelu kelpaa molemmissa tiloissa eikä muutu vaihdettaessa");
+}
+
+/**
+ * Käyttäjä kysyi nimenomaan tästä: mahtuuko ruudulle enemmän kuin kuusi
+ * widgettiä. Ruudukko on GRID_COLUMNS x GRID_ROWS ja pienin paneeli
+ * MIN_PANEL_SPAN kumpaankin suuntaan, joten raja on niiden osamäärä — ei
+ * mikään erillinen luku, jota voisi vahingossa laskea liian pieneksi.
+ */
+function buildSevenPanelLayout(): PanelLayout {
+  const layout = {} as PanelLayout;
+  let col = 1;
+  let row = 1;
+  for (const id of PANEL_IDS) {
+    layout[id] = { col, row, colSpan: MIN_PANEL_SPAN, rowSpan: MIN_PANEL_SPAN };
+    col += MIN_PANEL_SPAN;
+    if (col + MIN_PANEL_SPAN - 1 > GRID_COLUMNS) {
+      col = 1;
+      row += MIN_PANEL_SPAN;
+    }
+  }
+  return layout;
+}
+
+function testGridFitsMoreThanSixPanels(): void {
+  const mahtuu = Math.floor(GRID_COLUMNS / MIN_PANEL_SPAN) * Math.floor(GRID_ROWS / MIN_PANEL_SPAN);
+  assert.ok(mahtuu > 6, `ruudukkoon mahtuu vain ${mahtuu} paneelia`);
+  assert.ok(
+    mahtuu >= PANEL_IDS.length,
+    `paneelityyppejä on ${PANEL_IDS.length} mutta ruudukkoon mahtuu ${mahtuu}`,
+  );
+
+  // Eikä se ole pelkkää laskentaa: rakennetaan asettelu jossa KAIKKI paneelit
+  // ovat näkyvissä yhtä aikaa, ja tarkistetaan että validointi hyväksyy sen.
+  const layout = buildSevenPanelLayout();
+  const kelpaa = parsePanelLayout(layout);
+  assert.equal(Object.keys(kelpaa ?? {}).length, PANEL_IDS.length);
+
+  // Eikä yksikään mene toisen päälle.
+  const varatut = new Set<string>();
+  for (const p of Object.values(kelpaa ?? {})) {
+    for (let c = p.col; c < p.col + p.colSpan; c += 1) {
+      for (let r = p.row; r < p.row + p.rowSpan; r += 1) {
+        const avain = `${c},${r}`;
+        assert.ok(!varatut.has(avain), `solu ${avain} varattu kahdesti`);
+        varatut.add(avain);
+      }
+    }
+  }
+  console.log(`ok  ruudukkoon mahtuu ${mahtuu} paneelia, ja kaikki ${PANEL_IDS.length} yhtä aikaa näkyvissä kelpaa`);
+}
+
+testGridOverflowDefaultsToFit();
+testGridOverflowAcceptsBothModes();
+testGridOverflowRejectsAnythingElse();
+testStoredSettingsWithoutGridOverflowGetTheDefault();
+testLayoutIsValidInBothModes();
+testGridFitsMoreThanSixPanels();
+
 console.log("\npaneeliasetukset ok");

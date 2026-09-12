@@ -32,6 +32,9 @@ export const PANEL_IDS = [
 
 export type PanelId = (typeof PANEL_IDS)[number];
 
+/** Ks. Settings.gridOverflow. Pidettävä samana kuin web/src/types.ts. */
+export type GridOverflow = "fit" | "scroll";
+
 const PANEL_ID_SET: ReadonlySet<string> = new Set(PANEL_IDS);
 
 export function isPanelId(value: unknown): value is PanelId {
@@ -201,6 +204,25 @@ export interface Settings {
    * lisättävä paneeli olisi oletuksena piilossa.
    */
   hiddenPanels: PanelId[];
+  /**
+   * Mahtuuko ruudukko aina ruudulle, vai saako se vuotaa pystysuunnassa yli?
+   *
+   *   "fit"    — nykyinen ja oletus. Kahdeksan riviä jakaa ruudun korkeuden
+   *              keskenään, joten mikään ei jää näkymättömiin eikä sivu
+   *              vierity. Seinänäytöllä tämä on se mitä halutaan: siihen ei
+   *              kosketa ohi kulkiessa, ja piiloon vieritetty kortti olisi
+   *              yhtä kuin poissa.
+   *   "scroll" — riveillä on vähimmäiskorkeus, joten kortit pysyvät
+   *              luettavina vaikka niitä olisi monta. Jos ruudukko ei mahdu,
+   *              sivu vierittyy pystysuunnassa.
+   *
+   * Rivimäärä on SAMA molemmissa tiloissa (GRID_ROWS). Vain rivin korkeuden
+   * käyttäytyminen muuttuu. Tämä on tarkoituksellista: jos "scroll" sallisi
+   * enemmän rivejä, siinä tehty asettelu olisi kelvoton "fit"-tilassa, ja
+   * asetuksen vaihtaminen takaisin hylkäisi käyttäjän asettelun tai
+   * pudottaisi osan paneeleista näkymättömiin.
+   */
+  gridOverflow: GridOverflow;
   alarms: Alarm[];
 }
 
@@ -217,6 +239,7 @@ export const defaultSettings: Settings = {
   weatherPostalCode: null,
   panelLayout: null,
   hiddenPanels: [],
+  gridOverflow: "fit",
   alarms: [],
 };
 
@@ -379,6 +402,14 @@ export function updateSettings(patch: unknown): Settings {
       input["visiblePaikkyChildren"],
       "visiblePaikkyChildren: lista lapsitunnisteita tai null",
     );
+  }
+
+  if ("gridOverflow" in input) {
+    const value = input["gridOverflow"];
+    if (value !== "fit" && value !== "scroll") {
+      throw new SettingsValidationError("gridOverflow: 'fit' tai 'scroll'");
+    }
+    next.gridOverflow = value;
   }
 
   if ("scheduleLayout" in input) {
