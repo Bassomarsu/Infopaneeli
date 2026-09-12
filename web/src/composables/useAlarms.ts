@@ -68,34 +68,191 @@ function weekdayOf(dateKey: string): number {
   return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).getDay();
 }
 
+const MINUTE_MS = 60_000;
+const DAY_MS = 86_400_000;
+
+/** Paikallisen ajan siirtymä UTC:stä (ms) annetulla hetkellä — kesäaikana eri kuin talvella. */
+function offsetMsAt(utcMs: number): number {
+  return -new Date(utcMs).getTimezoneOffset() * MINUTE_MS;
+}
+
+function isWallClock(utcMs: number, year: number, month0: number, day: number, hour: number, minute: number): boolean {
+  const date = new Date(utcMs);
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month0 &&
+    date.getDate() === day &&
+    date.getHours() === hour &&
+    date.getMinutes() === minute
+  );
+}
+
+/**
+ * Kaikki hetket joiden paikallinen seinäkello on TÄSMÄLLEEN annettu, aikaisin
+ * ensin. Tavallisena päivänä täsmälleen yksi — mutta kesäajan siirtopäivinä ei
+ * välttämättä:
+ *
+ *  - kevät (Suomessa maaliskuun viimeinen sunnuntai): kello hyppää 03.00 →
+ *    04.00, joten kellonaikoja 03.00–03.59 EI OLE OLEMASSA → tyhjä lista.
+ *  - syksy (lokakuun viimeinen sunnuntai): kello palaa 04.00 → 03.00, joten
+ *    kellonajat 03.00–03.59 esiintyvät KAHDESTI → kaksi hetkeä.
+ *
+ * `new Date(y, m, d, h, min)` ei kerro kummastakaan mitään: se normalisoi
+ * olemattoman ajan äänettömästi eteenpäin (03.30 → 04.30) ja valitsee
+ * toistuvasta ajasta yhden esiintymän ilmoittamatta siitä. Siksi ehdokkaat
+ * lasketaan tässä itse molemmilla siirtymillä (vuorokausi ennen ja jälkeen) ja
+ * jokainen tarkistetaan lukemalla paikallinen kello takaisin.
+ */
+function instantsForWallClock(year: number, month0: number, day: number, hour: number, minute: number): number[] {
+  const asUtc = Date.UTC(year, month0, day, hour, minute, 0, 0);
+  const found: number[] = [];
+  for (const offset of [offsetMsAt(asUtc - DAY_MS), offsetMsAt(asUtc + DAY_MS)]) {
+    const candidate = asUtc - offset;
+    if (!found.includes(candidate) && isWallClock(candidate, year, month0, day, hour, minute)) found.push(candidate);
+  }
+  return found.sort((a, b) => a - b);
+}
+
+/**
+ * Paikallinen hetki annetulle päivälle ja kellonajalle, kesäajan siirrot
+ * nimenomaisesti ratkaisten (vrt. `instantsForWallClock` yllä):
+ *
+ *  - Toistuva aika (syksy): ENSIMMÄINEN esiintymä. Hälytys on "herätä
+ *    viimeistään" -väline, joten aikaisempi esiintymä on oikea — ja koska
+ *    tavoiteaika on yksi hetki eikä kellonaika, jälkimmäinen esiintymä on
+ *    tunnin myöhässä laukeamisikkunasta eikä voi laukaista samaa hälytystä
+ *    toiseen kertaan.
+ *
+ * TÄMÄ SÄÄNTÖ KOSKEE VAIN KELLONAIKOJA, ei kaikkia hälytyksiä — ks. tarkempi
+ * perustelu `alarmPlanForDate`ssa. Lyhyesti: sääntö on olemassa siksi että
+ * seinäkello on syksyn yönä MONITULKINTAINEN ("03.30" tarkoittaa kahta eri
+ * hetkeä, ja jonkun on valittava). Lukujärjestykseen sidottu hälytys ei anna
+ * kellonaikaa vaan keston ("166 min ennen koulun alkua"), eikä kesto ole
+ * monitulkintainen — se lasketaan siis suoraan ankkurihetkestä, ja tulos voi
+ * osua toistuvan tunnin JÄLKIMMÄISEEN esiintymään. Se ei ole poikkeaminen
+ * säännöstä vaan merkki siitä ettei sääntö päde: tulkittavaa kellonaikaa ei
+ * ole. Älä "yhtenäistä" näitä pakottamalla relative-tilan tulosta tähän
+ * funktioon — se rikkoisi ainoan lupauksen jonka relative-tila antaa.
+ *  - Olematon aika (kevät): ENSIMMÄINEN OLEMASSA OLEVA hetki, eli siirtymän
+ *    hetki (03.30 → 04.00, ei 04.30). Kokonaisen tunnin viive on huonompi kuin
+ *    puolen tunnin, eikä JS:n normalisointi ole valinta vaan sivuvaikutus.
+ *    Haku etenee minuutti kerrallaan, koska aukon pituutta ei voi tietää
+ *    etukäteen; tavallisena päivänä silmukka ei kierrä kertaakaan. Pahin
+ *    mahdollinen tapaus on kokonaan kalenterista kadonnut vuorokausi (Samoa
+ *    30.12.2011), jolloin silmukka käy koko vuorokauden läpi ja putoaa lopun
+ *    varasääntöön — mitattuna 1230 kierrosta ja 1 ms, eli ei este.
+ *
+ *    TIETOINEN SEURAUS: koko aukko romahtaa yhteen hetkeen. Hälytykset 03.00,
+ *    03.30 ja 03.59 soivat kaikki 04.00, ja jos käyttäjällä on niistä kaksi,
+ *    ne soivat sinä yhtenä yönä samanaikaisesti (jonon kautta peräkkäin, ei
+ *    kumpikaan katoa). Ainoa vaihtoehto olisi säilyttää järjestys aukon
+ *    sisällä (04.00, 04.30, 04.59) — mutta se on täsmälleen se JS:n
+ *    normalisointikäytös joka tässä hylättiin, ja se veisi 03.59:n hälytyksen
+ *    tuntia myöhemmäksi. Päällekkäinen hälytys kerran vuodessa on parempi
+ *    kuin myöhästynyt. Älä siis "korjaa" tätä.
+ */
 function dateAt(dateKey: string, clockTime: string): Date {
   const [y, m, d] = dateKey.split("-").map(Number);
   const [h, min] = clockTime.split(":").map(Number);
-  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, h ?? 0, min ?? 0, 0, 0);
+  const year = y ?? 1970;
+  const month0 = (m ?? 1) - 1;
+  const day = d ?? 1;
+  let hour = h ?? 0;
+  let minute = min ?? 0;
+  while (hour < 24) {
+    const instants = instantsForWallClock(year, month0, day, hour, minute);
+    if (instants.length > 0) return new Date(instants[0]!);
+    minute += 1;
+    if (minute === 60) {
+      minute = 0;
+      hour += 1;
+    }
+  }
+  // Vuorokauden loppuun asti olematon kellonaika ei ole mahdollinen missään
+  // oikeassa aikavyöhykkeessä; palataan JS:n omaan normalisointiin ettei
+  // funktio voi missään oloissa palauttaa epäkelpoa Datea.
+  return new Date(year, month0, day, h ?? 0, min ?? 0, 0, 0);
+}
+
+function clockToMinutes(clockTime: string): number {
+  const [h, min] = clockTime.split(":").map(Number);
+  return (h ?? 0) * 60 + (min ?? 0);
+}
+
+export interface AlarmPlan {
+  /** Hetki jona hälytys oikeasti soi. */
+  time: Date;
+  /**
+   * Kellonaika jonka käyttäjä odottaa näkevänsä — `fixed`-tilassa hänen
+   * asettamansa aika, `relative`-tilassa kellotaulua taaksepäin laskettu aika
+   * (ankkuri miinus minuutit) — muotoiltuna samoin kuin näytöllä. Null silloin
+   * kun hälytys soi täsmälleen sillä kellonajalla, eli kaikkina muina päivinä
+   * kuin kesäajan siirtopäivinä. Ei-null siis tarkoittaa aina "tässä on
+   * poikkeus jonka näytön on kerrottava", ks. `describeOccurrence`.
+   */
+  plannedClock: string | null;
+}
+
+function planAt(time: Date, plannedMinutes: number): AlarmPlan {
+  const planned = formatClockMinutes(((plannedMinutes % 1440) + 1440) % 1440);
+  return { time, plannedClock: planned === formatClock(time) ? null : planned };
 }
 
 /**
  * Hälytyksen tavoiteajankohta annetulle kalenteripäivälle, paikallisessa
- * ajassa. Null jos hälytys ei ole aktiivinen sinä viikonpäivänä, tai (relative-
+ * ajassa, yhdessä sen kanssa mitä käyttäjälle pitää kellonaikana näyttää.
+ * Null jos hälytys ei ole aktiivinen sinä viikonpäivänä, tai (relative-
  * tilassa) jos relevanteilla oppilailla ei ole tunteja sinä päivänä — sekä
  * `schoolStart`- että `breakfast`-ankkuri seuraavat siis samaa "ei tunteja =
  * ei koulupäivä = ei hälytystä" -sääntöä, koska aamupalakin on koulupäivän
  * osa. `fixed`-tila on tästä tahallisesti riippumaton: se ei seuraa mitään,
  * joten pelkkä viikonpäivävalinta ratkaisee.
+ *
+ * `minutesBefore` vähennetään TODELLISENA kuluvana aikana, ei kellotaulua
+ * pyörittäen. Ero näkyy vain kesäajan siirtopäivinä, mutta silloin rajusti:
+ * kellotauluaritmetiikalla (`target.setMinutes(getMinutes() - n)`) "60 min
+ * ennen koulun alkua" tarkoitti keväällä nollaa minuuttia ennen — kello 03.30
+ * ei ole olemassa, joten se normalisoitui takaisin ankkurihetkeen 04.30 — ja
+ * syksyllä 120 minuuttia ennen, koska kello 03.30 tuli sinä yönä kahdesti ja
+ * aikaisempi esiintymä oli kaksi tuntia ennen ankkuria. Ankkuri (koulun alku,
+ * aamupala) on oikea hetki; luvattu etuaika on oikea kesto; niiden erotus on
+ * siis laskettava hetkinä.
+ *
+ * SEURAUS, JOKA NÄYTTÄÄ EPÄJOHDONMUKAISUUDELTA MUTTA EI OLE: syksyn
+ * siirtopäivänä relative-hälytys voi soida toistuvan tunnin JÄLKIMMÄISELLÄ
+ * esiintymällä, vaikka `dateAt` valitsee kellonajoille aina ensimmäisen.
+ * Esimerkiksi ankkurilla 06.45 ja etuajalla 166–225 min tulos osuu
+ * jälkimmäiseen 03.00–03.59:ään. Tämä on tahallista:
+ *
+ *  - `dateAt`n sääntö on KELLONAJAN TULKINTASÄÄNTÖ. Se on olemassa vain siksi
+ *    että käyttäjän kirjoittama "03.30" osoittaa syksyn yönä kahteen eri
+ *    hetkeen, ja jonkun on valittava kumpi. Se on syötteen tulkintaa.
+ *  - Relative-tilassa ei ole kellonaikaa tulkittavana. Syöte on ankkuri
+ *    (yksikäsitteinen hetki) ja kesto (yksikäsitteinen). Niiden erotus on
+ *    yksikäsitteinen hetki. Sillä hetkellä sattuu olemaan jokin seinäkellon
+ *    lukema, mutta se on TULOS eikä syöte, eikä tuloksen "tulkitseminen"
+ *    jälkikäteen ensimmäiseksi esiintymäksi tarkoittaisi muuta kuin että
+ *    hälytys soisi tunnin luvattua aikaisemmin.
+ *
+ * Samasta syystä `plannedClock` on näissä tapauksissa null: ei ole mitään
+ * "normaalia" kellonaikaa josta poikettaisiin, koska käyttäjä ei ole asettanut
+ * kellonaikaa. Näyttö ei siis vaikene mistään — kerrottavaa ei ole.
+ * Ks. testi "syksy: relative-hälytys pitää luvatun etuajan myös toistuvan
+ * tunnin jälkimmäisellä esiintymällä", joka lukitsee tämän.
  */
-export function alarmTargetForDate(
+export function alarmPlanForDate(
   alarm: Alarm,
   wilma: WilmaData | null,
   allStudents: WilmaStudent[],
   dateKey: string,
   breakfastTime: string,
-): Date | null {
+): AlarmPlan | null {
   const weekday = weekdayOf(dateKey);
   const trigger = alarm.trigger;
 
   if (trigger.mode === "fixed") {
     if (!trigger.weekdays.includes(weekday)) return null;
-    return dateAt(dateKey, trigger.time);
+    return planAt(dateAt(dateKey, trigger.time), clockToMinutes(trigger.time));
   }
 
   const rule = trigger.weekdays.find((r) => r.weekday === weekday);
@@ -110,9 +267,20 @@ export function alarmTargetForDate(
   }
   if (anchorTime === null) return null;
 
-  const target = dateAt(dateKey, anchorTime);
-  target.setMinutes(target.getMinutes() - trigger.minutesBefore);
-  return target;
+  const anchor = dateAt(dateKey, anchorTime);
+  const target = new Date(anchor.getTime() - trigger.minutesBefore * MINUTE_MS);
+  return planAt(target, clockToMinutes(anchorTime) - trigger.minutesBefore);
+}
+
+/** Pelkkä laukeamishetki — ks. `alarmPlanForDate`, jolta tämä saa sen. */
+export function alarmTargetForDate(
+  alarm: Alarm,
+  wilma: WilmaData | null,
+  allStudents: WilmaStudent[],
+  dateKey: string,
+  breakfastTime: string,
+): Date | null {
+  return alarmPlanForDate(alarm, wilma, allStudents, dateKey, breakfastTime)?.time ?? null;
 }
 
 /**
@@ -173,6 +341,8 @@ export interface AlarmOccurrence {
   time: Date;
   /** True kun kyseessä on tämän kalenteripäivän hetki, false jos tuleva koulupäivä. */
   isToday: boolean;
+  /** Ks. `AlarmPlan.plannedClock` — ei-null vain kesäajan siirtopäivänä. */
+  plannedClock: string | null;
 }
 
 /**
@@ -191,10 +361,10 @@ export function nextAlarmOccurrence(
   const todayKey = toDateKey(now);
   for (let offset = 0; offset <= MAX_LOOKAHEAD_DAYS; offset += 1) {
     const dateKey = shiftDateKey(todayKey, offset);
-    const target = alarmTargetForDate(alarm, wilma, allStudents, dateKey, breakfastTime);
-    if (target === null) continue;
-    if (offset === 0 && target.getTime() <= now.getTime()) continue;
-    return { dateKey, time: target, isToday: offset === 0 };
+    const plan = alarmPlanForDate(alarm, wilma, allStudents, dateKey, breakfastTime);
+    if (plan === null) continue;
+    if (offset === 0 && plan.time.getTime() <= now.getTime()) continue;
+    return { dateKey, time: plan.time, isToday: offset === 0, plannedClock: plan.plannedClock };
   }
   return null;
 }
@@ -257,13 +427,34 @@ const WEEKDAYS = [
   "lauantaina",
 ];
 
+function formatClockMinutes(minutesOfDay: number): string {
+  return `${Math.floor(minutesOfDay / 60)}.${String(minutesOfDay % 60).padStart(2, "0")}`;
+}
+
 function formatClock(date: Date): string {
   return `${date.getHours()}.${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+/**
+ * Kesäajan siirtopäivän lisäys kellonajan perään, muuten tyhjä.
+ *
+ * Kerran vuodessa hälytys soi eri kellonajalla kuin millä se muulloin soisi:
+ * keväällä asetettua kellonaikaa ei ole olemassa (03.30 → soi 04.00), ja sekä
+ * keväällä että syksyllä lukujärjestykseen sidotun hälytyksen etuaika osuu
+ * siirtymän yli. Kumpaakaan ei saa näyttää hiljaa: pelkkä "4.00" olisi aika
+ * jota käyttäjä ei ole asettanut, ja pelkkä "3.30" olisi aika jolloin mitään ei
+ * tapahdu. Siksi molemmat luvut näkyvät, laukeamishetki otsikkona ja tavallinen
+ * kellonaika perusteluineen sulkeissa. `plannedClock` on ei-null vain näissä
+ * tapauksissa, joten tavallisena päivänä teksti ei muutu lainkaan.
+ */
+function dstSuffix(occurrence: AlarmOccurrence): string {
+  if (occurrence.plannedClock === null) return "";
+  return ` (kellonsiirto, normaalisti ${occurrence.plannedClock})`;
+}
+
 /** "tänään klo 7.55", "huomenna klo 7.55" tai "keskiviikkona klo 7.55". */
 export function describeOccurrence(occurrence: AlarmOccurrence, now: Date): string {
-  const time = formatClock(occurrence.time);
+  const time = `${formatClock(occurrence.time)}${dstSuffix(occurrence)}`;
   const todayKey = toDateKey(now);
   if (occurrence.dateKey === todayKey) return `tänään klo ${time}`;
   if (occurrence.dateKey === shiftDateKey(todayKey, 1)) return `huomenna klo ${time}`;
@@ -302,9 +493,19 @@ function formatShortDate(date: Date): string {
  * SHORT_WEEKDAY_HORIZON_DAYS. Sama `formatClock`, sama päiväraja
  * (`shiftDateKey`) ja sama `occurrence.time.getDay()` kuin pitkässä muodossa,
  * jottei kaksi esitystapaa voi antaa eri kellonaikaa tai eri päivää.
+ *
+ * Kesäajan siirtopäivänä kellonajan tilalle tulee "3.30→4.00": samat kaksi
+ * lukua kuin pitkässä muodossa (`dstSuffix`), mutta nuolena eikä sanoina —
+ * palkkiin ei mahtuisi "(kellonsiirto, normaalisti 3.30)" ilman että banneri
+ * kasvaisi kerran vuodessa yli koko yläpalkin leveyden. Nuoli lukee samaan
+ * suuntaan kuin sanallinen muoto ("normaalisti näin, nyt näin"), joten
+ * kumpikaan muoto ei kerro kellonaikaa jota toinen ei kertoisi; vain
+ * sanallinen perustelu jää lyhyestä pois, ja se löytyy hälytyspaneelin
+ * esikatselusta.
  */
 export function describeOccurrenceShort(occurrence: AlarmOccurrence, now: Date): string {
-  const time = formatClock(occurrence.time);
+  const actual = formatClock(occurrence.time);
+  const time = occurrence.plannedClock === null ? actual : `${occurrence.plannedClock}→${actual}`;
   const todayKey = toDateKey(now);
   if (occurrence.dateKey === todayKey) return time;
   if (occurrence.dateKey === shiftDateKey(todayKey, 1)) return `huomenna ${time}`;

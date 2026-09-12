@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { nextTick, ref } from "vue";
 import {
+  alarmPlanForDate,
   alarmsDueNow,
   alarmTargetForDate,
   describeOccurrence,
@@ -21,6 +22,34 @@ import {
   type StorageLike,
 } from "../src/composables/useAlarms.ts";
 import type { Alarm, AlarmWeekdayRule, ScheduleLesson, WilmaData, WilmaStudent } from "../src/types.ts";
+
+/**
+ * Aikavyöhyke pakotetaan, koska kesäajan siirtoja koskevat testit kuvaavat
+ * hetkiä joiden paikallinen kello riippuu vyöhykkeestä — koneen omalla
+ * asetuksella ne olisivat sattumaa eivätkä testejä. Nodessa `process.env.TZ`
+ * vaikuttaa heti seuraaviin Date-operaatioihin (>= v16); alla oleva tarkistus
+ * kaataa ajon heti jos näin ei jostain syystä ole, koska hiljaa väärällä
+ * vyöhykkeellä ajettu testi on pahempi kuin ei testiä lainkaan. Myös muut kuin
+ * kesäaikatestit hyötyvät: koko tiedosto ajaa nyt samalla vyöhykkeellä
+ * riippumatta siitä kenen koneella se ajetaan.
+ */
+process.env.TZ = "Europe/Helsinki";
+assert.equal(
+  new Date(2026, 2, 29, 3, 30).toISOString(),
+  "2026-03-29T01:30:00.000Z",
+  "aikavyöhykkeen pakotus ei toiminut — kaikki kesäaikatestit olisivat merkityksettömiä",
+);
+
+/** Ajaa lohkon toisella vyöhykkeellä ja palauttaa asetuksen ennalleen. */
+function withTimeZone(timeZone: string, run: () => void): void {
+  const previous = process.env.TZ;
+  process.env.TZ = timeZone;
+  try {
+    run();
+  } finally {
+    process.env.TZ = previous;
+  }
+}
 
 /**
  * Muistinvarainen `localStorage`-korvike: Node ei tarjoa globaalia
@@ -521,6 +550,279 @@ const neverRung = () => false;
   console.log("ok  lyhyen muodon raja on tasan kuusi päivää");
 }
 
+// --- Kesäajan siirrot: kevät (olematon kello) ja syksy (toistuva kello) ---
+//
+// Suomessa kello siirtyy maaliskuun viimeisenä sunnuntaina 03.00 -> 04.00,
+// jolloin kellonaikoja 03.00-03.59 EI OLE OLEMASSA, ja lokakuun viimeisenä
+// sunnuntaina 04.00 -> 03.00, jolloin samat kellonajat TULEVAT KAHDESTI.
+// Vuonna 2026 nämä ovat su 29.3. ja su 25.10.
+//
+// Odotukset on kiinnitetty absoluuttisiin hetkiin (`toISOString`) eikä
+// paikallisiin kenttiin juuri siksi, että paikallinen kello on näinä öinä
+// monitulkintainen: "03.30" ei yksilöi hetkeä kumpanakaan yönä. Laukeamishetki
+// ja näyttöteksti todennetaan erikseen — ne ovat eri asioita, ja kevään
+// korjauksen koko pointti on että ne EROAVAT toisistaan.
+
+/** Ensimmäinen olemassa oleva hetki kevään siirron jälkeen: 04.00 Suomen aikaa. */
+const KEVAT_NELJA = "2026-03-29T01:00:00.000Z";
+/** Syksyn 03.30 tulee kahdesti: ensin kesäajassa, tuntia myöhemmin talviajassa. */
+const SYKSY_KOLME_PUOLI_ENSIN = "2026-10-25T00:30:00.000Z";
+const SYKSY_KOLME_PUOLI_UUDELLEEN = "2026-10-25T01:30:00.000Z";
+
+/** Kiinteä hälytys joka on valittu kaikille viikonpäiville — molemmat siirtopäivät ovat sunnuntaita. */
+function fixedAt(time: string): Alarm {
+  return alarm({ trigger: { mode: "fixed", time, weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+}
+
+/** Kaikki hetket joilla hälytys laukeaa annetulla aikavälillä, minuutin tarkkuudella. */
+function firingInstants(a: Alarm, fromUtcMs: number, toUtcMs: number): string[] {
+  const hits: string[] = [];
+  for (let t = fromUtcMs; t <= toUtcMs; t += 60_000) {
+    // alreadyRung on tahallaan VAKIO false: näin testi mittaa laukaisulogiikkaa
+    // itseään eikä kirjanpitoa, joka voisi peittää kaksinkertaisen laukeamisen.
+    if (alarmsDueNow([a], null, [], new Date(t), BREAKFAST, neverRung).length > 0) hits.push(new Date(t).toISOString());
+  }
+  return hits;
+}
+
+// Kevät, laukeamishetki: olematon kellonaika siirtyy ENSIMMÄISEEN olemassa
+// olevaan hetkeen. Vanha käytös oli 04.30 — JS:n normalisoinnin sivutuote, eli
+// kokonaisen tunnin viive siihen mitä käyttäjä asetti.
+{
+  const target = (time: string) => alarmTargetForDate(fixedAt(time), null, [], "2026-03-29", BREAKFAST);
+
+  assert.equal(target("03:30")?.toISOString(), KEVAT_NELJA, "olematon 03.30 -> 04.00, EI 04.30");
+  assert.equal(target("03:00")?.toISOString(), KEVAT_NELJA, "aukon alku -> 04.00");
+  assert.equal(target("03:59")?.toISOString(), KEVAT_NELJA, "aukon loppu -> 04.00, ei 04.59");
+  assert.equal(target("04:00")?.toISOString(), KEVAT_NELJA, "aukon jälkeinen kellonaika on ennallaan");
+  assert.equal(target("02:59")?.toISOString(), "2026-03-29T00:59:00.000Z", "aukkoa ennen oleva kellonaika on ennallaan");
+  console.log("ok  kevät: olematon kellonaika siirtyy ensimmäiseen olemassa olevaan hetkeen");
+}
+
+// Kevät, laukeaminen: hälytys laukeaa tasan kerran eikä jää soimatta — koko yö
+// tikitettynä minuutti kerrallaan on täsmälleen yksi osuma.
+{
+  const a = fixedAt("03:30");
+  assert.equal(alarmsDueNow([a], null, [], new Date(KEVAT_NELJA), BREAKFAST, neverRung).length, 1, "hälytyksen pitää laueta 04.00:ssa");
+  assert.equal(
+    alarmsDueNow([a], null, [], new Date(Date.parse(KEVAT_NELJA) + 30 * 60_000), BREAKFAST, neverRung).length,
+    0,
+    "vanha käytös (04.30) ei saa palata takaoven kautta",
+  );
+  assert.deepEqual(
+    firingInstants(a, Date.UTC(2026, 2, 28, 21, 0), Date.UTC(2026, 2, 29, 9, 0)),
+    [KEVAT_NELJA],
+    "siirtoyön yli tikitettynä hälytys laukeaa tasan kerran — ei nollasti eikä kahdesti",
+  );
+  console.log("ok  kevät: hälytys laukeaa tasan kerran, ensimmäisellä olemassa olevalla hetkellä");
+}
+
+// Kevät, näyttö: kumpaakaan kellonaikaa ei saa näyttää hiljaa. Pelkkä "4.00"
+// olisi aika jota käyttäjä ei asettanut, pelkkä "3.30" aika jolloin ei tapahdu
+// mitään — molemmat luvut näkyvät siis kummassakin muodossa.
+{
+  const a = fixedAt("03:30");
+  const lauantaiIlta = at(2026, 3, 28, 20, 0);
+  const occ = nextAlarmOccurrence(a, null, [], lauantaiIlta, BREAKFAST);
+  assert.ok(occ);
+  assert.equal(occ.dateKey, "2026-03-29");
+  assert.equal(occ.time.toISOString(), KEVAT_NELJA, "esikatselun hetki on sama kuin laukeamishetki");
+  assert.equal(describeOccurrence(occ, lauantaiIlta), "huomenna klo 4.00 (kellonsiirto, normaalisti 3.30)");
+  assert.equal(describeOccurrenceShort(occ, lauantaiIlta), "huomenna 3.30→4.00", "banneri kertoo samat kaksi lukua tiiviisti");
+  console.log("ok  kevät: näyttö kertoo sekä asetetun että todellisen kellonajan");
+}
+
+// Syksy, laukeamishetki: toistuvasta kellonajasta valitaan ENSIMMÄINEN esiintymä.
+{
+  const target = (time: string) => alarmTargetForDate(fixedAt(time), null, [], "2026-10-25", BREAKFAST);
+
+  assert.equal(target("03:30")?.toISOString(), SYKSY_KOLME_PUOLI_ENSIN, "toistuvasta kellonajasta valitaan ensimmäinen esiintymä");
+  assert.notEqual(target("03:30")?.toISOString(), SYKSY_KOLME_PUOLI_UUDELLEEN, "ei jälkimmäinen — se olisi tunnin myöhässä");
+  assert.equal(target("03:00")?.toISOString(), "2026-10-25T00:00:00.000Z", "toiston alku samoin ensimmäisestä esiintymästä");
+  assert.equal(target("04:00")?.toISOString(), "2026-10-25T02:00:00.000Z", "siirron jälkeinen 04.00 esiintyy vain kerran, talviajassa");
+  assert.equal(target("02:30")?.toISOString(), "2026-10-24T23:30:00.000Z", "ennen siirtoa oleva kellonaika on ennallaan");
+  console.log("ok  syksy: toistuvasta kellonajasta valitaan ensimmäinen esiintymä");
+}
+
+// Syksy, laukeaminen: kello 03.30 tulee tänä yönä kahdesti, mutta hälytys saa
+// soida vain kerran. Huomaa että `firingInstants` pitää "jo soinut" -muistin
+// jatkuvasti tyhjänä: suoja ei saa tulla kirjanpidosta vaan siitä, että
+// tavoiteaika on HETKI eikä kellonaika, jolloin jälkimmäinen esiintymä on
+// tunnin myöhässä laukeamisikkunasta.
+{
+  assert.deepEqual(
+    firingInstants(fixedAt("03:30"), Date.UTC(2026, 9, 24, 21, 0), Date.UTC(2026, 9, 25, 9, 0)),
+    [SYKSY_KOLME_PUOLI_ENSIN],
+    "toistuva tunti ei saa laukaista samaa hälytystä kahdesti",
+  );
+  console.log("ok  syksy: toistuva tunti ei laukaise hälytystä kahdesti");
+}
+
+// Syksy, näyttö: kello näyttää soidessa täsmälleen asetettua aikaa, joten
+// lisäystä ei tarvita eikä sitä saa tulla.
+{
+  const a = fixedAt("03:30");
+  const lauantaiIlta = at(2026, 10, 24, 20, 0);
+  const occ = nextAlarmOccurrence(a, null, [], lauantaiIlta, BREAKFAST);
+  assert.ok(occ);
+  assert.equal(occ.time.toISOString(), SYKSY_KOLME_PUOLI_ENSIN);
+  assert.equal(occ.plannedClock, null, "ei poikkeusta kerrottavaksi");
+  assert.equal(describeOccurrence(occ, lauantaiIlta), "huomenna klo 3.30");
+  assert.equal(describeOccurrenceShort(occ, lauantaiIlta), "huomenna 3.30");
+  console.log("ok  syksy: näyttö näyttää asetetun kellonajan ilman lisäyksiä");
+}
+
+// Lukujärjestykseen sidottu hälytys: luvattu etuaika on KESTO, joten se on
+// mitattava todellisena aikana. Kellotauluaritmetiikalla (vanha
+// `target.setMinutes(getMinutes() - n)`) tunnin etuajasta tuli keväällä nolla
+// minuuttia — 03.30 ei ole olemassa, joten se normalisoitui takaisin
+// ankkurihetkeen — ja syksyllä 120 minuuttia, koska 03.30 tuli kahdesti.
+{
+  const rel = (mins: number) =>
+    alarm({ trigger: { mode: "relative", minutesBefore: mins, studentNumber: null, weekdays: allWeekdays() } });
+  const leadMinutes = (wilma: WilmaData, dateKey: string, mins: number): number => {
+    const target = alarmTargetForDate(rel(mins), wilma, wilma.students, dateKey, BREAKFAST);
+    const anchor = alarmTargetForDate(rel(0), wilma, wilma.students, dateKey, BREAKFAST);
+    assert.ok(target && anchor, "esiehto: sekä ankkurilla että tavoiteajalla pitää olla arvo");
+    return (anchor.getTime() - target.getTime()) / 60_000;
+  };
+
+  const kevat = wilmaFor({ "1": [lesson("2026-03-29", "04:30")] });
+  assert.equal(leadMinutes(kevat, "2026-03-29", 60), 60, "keväällä tunnin etuajan pitää olla todellinen tunti (oli 0 min)");
+  assert.equal(leadMinutes(kevat, "2026-03-29", 90), 90, "sama pidemmällä etuajalla (oli 30 min)");
+  assert.equal(
+    alarmTargetForDate(rel(60), kevat, kevat.students, "2026-03-29", BREAKFAST)?.toISOString(),
+    "2026-03-29T00:30:00.000Z",
+    "tunti ennen 04.30:tä on siirtoyönä kello 02.30 talviaikaa",
+  );
+
+  const syksy = wilmaFor({ "1": [lesson("2026-10-25", "04:30")] });
+  assert.equal(leadMinutes(syksy, "2026-10-25", 60), 60, "syksyllä tunnin etuajan pitää olla todellinen tunti (oli 120 min)");
+  assert.equal(leadMinutes(syksy, "2026-10-25", 90), 90, "sama pidemmällä etuajalla (oli 150 min)");
+  assert.equal(
+    alarmTargetForDate(rel(60), syksy, syksy.students, "2026-10-25", BREAKFAST)?.toISOString(),
+    SYKSY_KOLME_PUOLI_UUDELLEEN,
+    "syksyllä tunti ennen 04.30:tä on JÄLKIMMÄINEN 03.30",
+  );
+  console.log("ok  luvattu etuaika toteutuu todellisena aikana molemmissa siirroissa");
+}
+
+// Sama näytöllä: keväällä kellotaulusta laskettu 3.30 ei pidä paikkaansa, ja
+// se on sanottava; syksyllä kello näyttää soidessa 3.30 eikä ole mitään
+// kerrottavaa, vaikka laukeamishetki onkin toistuvan tunnin jälkimmäinen.
+{
+  const rel = alarm({ trigger: { mode: "relative", minutesBefore: 60, studentNumber: null, weekdays: allWeekdays() } });
+
+  const kevat = wilmaFor({ "1": [lesson("2026-03-29", "04:30")] });
+  const maaliskuunLauantai = at(2026, 3, 28, 20, 0);
+  const kevatOcc = nextAlarmOccurrence(rel, kevat, kevat.students, maaliskuunLauantai, BREAKFAST);
+  assert.ok(kevatOcc);
+  assert.equal(describeOccurrence(kevatOcc, maaliskuunLauantai), "huomenna klo 2.30 (kellonsiirto, normaalisti 3.30)");
+  assert.equal(describeOccurrenceShort(kevatOcc, maaliskuunLauantai), "huomenna 3.30→2.30");
+
+  const syksy = wilmaFor({ "1": [lesson("2026-10-25", "04:30")] });
+  const lokakuunLauantai = at(2026, 10, 24, 20, 0);
+  const syksyOcc = nextAlarmOccurrence(rel, syksy, syksy.students, lokakuunLauantai, BREAKFAST);
+  assert.ok(syksyOcc);
+  assert.equal(syksyOcc.time.toISOString(), SYKSY_KOLME_PUOLI_UUDELLEEN, "esiehto: soi toistuvan tunnin jälkimmäisellä esiintymällä");
+  assert.equal(syksyOcc.plannedClock, null, "kello näyttää silloin 3.30, joten lisäystä ei tarvita");
+  assert.equal(describeOccurrence(syksyOcc, lokakuunLauantai), "huomenna klo 3.30");
+  console.log("ok  näyttö kertoo myös lukujärjestykseen sidotun hälytyksen siirtymän");
+}
+
+// Syksyn siirtymän tahallinen poikkeus, ks. alarmPlanForDate.
+//
+// "Toistuvasta kellonajasta valitaan ensimmäinen esiintymä" on KELLONAJAN
+// tulkintasääntö: se ratkaisee mihin käyttäjän kirjoittama "03.30" osoittaa,
+// kun sellaisia hetkiä on kaksi. Lukujärjestykseen sidottu hälytys ei anna
+// kellonaikaa vaan keston, eikä kesto ole monitulkintainen — sen tulos saa ja
+// sen TÄYTYY osua toistuvan tunnin jälkimmäiseen esiintymään silloin kun
+// ankkurista taaksepäin mitattuna päädytään sinne. Jos joku "yhtenäistää"
+// tämän pakottamalla ensimmäisen esiintymän, hälytys soi tunnin luvattua
+// aikaisemmin — eli juuri se vika joka äsken korjattiin, toisin päin.
+{
+  const rel = (mins: number) =>
+    alarm({ trigger: { mode: "relative", minutesBefore: mins, studentNumber: null, weekdays: allWeekdays() } });
+  const wilma = wilmaFor({ "1": [lesson("2026-10-25", "06:45")] });
+  const ankkuri = alarmTargetForDate(rel(0), wilma, wilma.students, "2026-10-25", BREAKFAST);
+  assert.ok(ankkuri);
+  assert.equal(ankkuri.toISOString(), "2026-10-25T04:45:00.000Z", "esiehto: ankkuri 06.45 on siirron jälkeen, talviajassa");
+
+  // 166–225 min ennen 06.45 osuu toistuvaan tuntiin — ja nimenomaan sen
+  // jälkimmäiseen esiintymään. Molemmat reunat tarkistetaan.
+  for (const [minutesBefore, expectedIso, expectedClock] of [
+    [166, "2026-10-25T01:59:00.000Z", "3.59"],
+    [225, "2026-10-25T01:00:00.000Z", "3.00"],
+  ] as const) {
+    const plan = alarmPlanForDate(rel(minutesBefore), wilma, wilma.students, "2026-10-25", BREAKFAST);
+    assert.ok(plan);
+    assert.equal(
+      (ankkuri.getTime() - plan.time.getTime()) / 60_000,
+      minutesBefore,
+      `luvattu ${minutesBefore} minuutin etuaika on pidettävä myös toistuvan tunnin yli`,
+    );
+    assert.equal(plan.time.toISOString(), expectedIso, "jälkimmäinen esiintymä, ei ensimmäinen");
+    assert.equal(
+      describeOccurrenceShort({ dateKey: "2026-10-25", time: plan.time, isToday: true, plannedClock: plan.plannedClock }, plan.time),
+      expectedClock,
+      "kello näyttää soidessa tätä lukemaa",
+    );
+    assert.equal(plan.plannedClock, null, "ei ole mitään 'normaalia' kellonaikaa josta poikettaisiin — käyttäjä ei asettanut kellonaikaa");
+
+    // Sama seinäkellon lukema KELLONAIKANA annettuna menee sääntöä pitkin
+    // ensimmäiseen esiintymään, tuntia aikaisemmaksi. Kaksi eri vastausta
+    // samalle kellotaulun lukemalle on tämän poikkeuksen koko sisältö.
+    const kellonaikana = alarmTargetForDate(fixedAt(`0${expectedClock.replace(".", ":")}`), null, [], "2026-10-25", BREAKFAST);
+    assert.ok(kellonaikana);
+    assert.equal(
+      (plan.time.getTime() - kellonaikana.getTime()) / 60_000,
+      60,
+      "kellonaikana sama lukema tarkoittaa ensimmäistä esiintymää, tuntia aikaisemmin",
+    );
+  }
+  console.log("ok  syksy: relative-hälytys pitää luvatun etuajan myös toistuvan tunnin jälkimmäisellä esiintymällä");
+}
+
+// Tavallisena päivänä mikään ei muutu: ei poikkeusmerkintää, ei muuttunutta
+// tekstiä, sama hetki kuin ennenkin.
+{
+  const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const rel = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: allWeekdays() } });
+  const kiintea = fixedAt("07:30");
+  const aamu = at(2026, 8, 11, 6, 0);
+
+  assert.equal(alarmPlanForDate(rel, wilma, wilma.students, "2026-08-11", BREAKFAST)?.plannedClock, null);
+  assert.equal(alarmPlanForDate(kiintea, wilma, wilma.students, "2026-08-11", BREAKFAST)?.plannedClock, null);
+  assert.equal(
+    alarmPlanForDate(kiintea, wilma, wilma.students, "2026-08-11", BREAKFAST)?.time.toISOString(),
+    at(2026, 8, 11, 7, 30).toISOString(),
+    "tavallisen päivän hetki on täsmälleen asetettu kellonaika",
+  );
+
+  const occ = nextAlarmOccurrence(rel, wilma, wilma.students, aamu, BREAKFAST);
+  assert.ok(occ);
+  assert.equal(describeOccurrence(occ, aamu), "tänään klo 7.30", "tavallisen päivän teksti ei saa saada lisäystä");
+  assert.equal(describeOccurrenceShort(occ, aamu), "7.30");
+  console.log("ok  tavallisena päivänä siirtologiikka ei muuta mitään");
+}
+
+// Sääntö ei ole Suomeen kovakoodattu: sama koodi ratkaisee aukon ja toiston
+// vyöhykkeellä jolla siirrot ovat eri päivinä ja eri kellonaikoina.
+withTimeZone("America/New_York", () => {
+  // 8.3.2026: 02.00 -> 03.00 (aukko). 1.11.2026: 02.00 -> 01.00 (toisto).
+  assert.equal(
+    alarmTargetForDate(fixedAt("02:30"), null, [], "2026-03-08", BREAKFAST)?.toISOString(),
+    "2026-03-08T07:00:00.000Z",
+    "olematon 02.30 -> ensimmäinen olemassa oleva hetki eli 03.00 kesäaikaa",
+  );
+  assert.equal(
+    alarmTargetForDate(fixedAt("01:30"), null, [], "2026-11-01", BREAKFAST)?.toISOString(),
+    "2026-11-01T05:30:00.000Z",
+    "toistuva 01.30 -> ensimmäinen esiintymä eli vielä kesäaikaa",
+  );
+  console.log("ok  sama sääntö pätee muuallakin kuin Suomessa (America/New_York)");
+});
+
 /**
  * Seuraavat testit ajavat itse `useAlarms`-composablea (ei vain puhtaita
  * funktioita) — ne todentavat katselmoinnissa löydetyt kaksi bugia:
@@ -756,6 +1058,92 @@ async function testRetrySoundUnlocksAndReplaysActiveAlarm(): Promise<void> {
   console.log("ok  retrySound avaa äänilukon ja soittaa aktiivisen hälytyksen äänen uudestaan");
 }
 
+/**
+ * Kaksinkertainen hälytys yöllä olisi pahempi vika kuin väärin näytetty
+ * kellonaika, joten toistuva tunti ajetaan läpi myös koko moottorilla — ei
+ * pelkällä `alarmsDueNow`illa. Nämä kattavat kaksi eri kirjanpitoa: muistissa
+ * oleva jono/aktiivinen ja `localStorage`iin tallennettu "jo soinut" -muisti.
+ */
+
+// Toistuva tunti kokonaisuudessaan minuutti kerrallaan: ääni saa käynnistyä
+// tasan kerran, vaikka kello näyttää 03.30:tä kahtena eri hetkenä.
+async function testAutumnRepeatedHourRingsOnceThroughTheEngine(): Promise<void> {
+  const player = fakeSoundPlayer();
+  const start = Date.UTC(2026, 9, 24, 23, 50); // 02.50 kesäaikaa, ennen ensimmäistä 03.30:tä
+  const now = ref(new Date(start));
+  const wilma = ref<WilmaData | null>(null);
+  const alarmsRef = ref<Alarm[]>([fixedAt("03:30")]);
+  const students = ref<WilmaStudent[]>([]);
+  const breakfastTime = ref(BREAKFAST);
+
+  const { active, acknowledge } = useAlarms({
+    wilma,
+    now,
+    alarms: alarmsRef,
+    students,
+    breakfastTime,
+    storage: memoryStorage(),
+    soundPlayer: player,
+  });
+  await nextTick();
+
+  const ringInstants: string[] = [];
+  for (let t = start + 60_000; t <= Date.UTC(2026, 9, 25, 3, 0); t += 60_000) {
+    now.value = new Date(t);
+    await nextTick();
+    if (active.value) {
+      ringInstants.push(new Date(t).toISOString());
+      acknowledge(); // herännyt ihminen kuittaa heti
+    }
+  }
+  assert.deepEqual(ringInstants, [SYKSY_KOLME_PUOLI_ENSIN], "hälytyksen pitää soida tasan kerran toistuvan tunnin yli");
+  assert.deepEqual(
+    player.calls.filter((call) => call.startsWith("play:")),
+    ["play:chime"],
+    "ääni saa käynnistyä vain kerran — toinen 03.30 ei saa herättää uudestaan",
+  );
+  console.log("ok  syksy: moottori soittaa hälytyksen tasan kerran toistuvan tunnin yli");
+}
+
+// Sama tilanne sivun uudelleenlatauksen kanssa: "jo soinut" -muisti on
+// päiväavaimessa (`infonaytto.alarms.rung.v1`), ja toistuvan tunnin molemmat
+// esiintymät ovat samaa kalenteripäivää — joten kuittaus ensimmäisellä
+// esiintymällä estää soiton myös uudelleenladatussa sivussa jälkimmäisellä.
+async function testAutumnReloadDuringRepeatedHourDoesNotRingAgain(): Promise<void> {
+  const storage = memoryStorage(); // vastaa selaimen jaettua localStoragea
+
+  {
+    const now = ref(new Date(SYKSY_KOLME_PUOLI_ENSIN));
+    const { active, acknowledge } = useAlarms({
+      wilma: ref<WilmaData | null>(null),
+      now,
+      alarms: ref<Alarm[]>([fixedAt("03:30")]),
+      students: ref<WilmaStudent[]>([]),
+      breakfastTime: ref(BREAKFAST),
+      storage,
+    });
+    await nextTick();
+    assert.ok(active.value, "esiehto: hälytyksen pitää soida ensimmäisellä 03.30:llä");
+    acknowledge();
+  }
+
+  // Tunti myöhemmin kello näyttää taas 03.30:tä, ja sivu latautuu uudelleen.
+  {
+    const now = ref(new Date(SYKSY_KOLME_PUOLI_UUDELLEEN));
+    const { active } = useAlarms({
+      wilma: ref<WilmaData | null>(null),
+      now,
+      alarms: ref<Alarm[]>([fixedAt("03:30")]),
+      students: ref<WilmaStudent[]>([]),
+      breakfastTime: ref(BREAKFAST),
+      storage,
+    });
+    await nextTick();
+    assert.equal(active.value, null, "kuitattu hälytys ei saa soida uudestaan kun kello näyttää samaa aikaa toisen kerran");
+  }
+  console.log("ok  syksy: kuitattu hälytys ei palaa toistuvan tunnin jälkimmäisellä esiintymällä");
+}
+
 await testEngineWorksBeforeSettingsHaveLoaded();
 await testAcknowledgedAlarmDoesNotReturnWithinTheSameWindow();
 await testUnacknowledgedAlarmStaysVisibleAfterWindowCloses();
@@ -763,6 +1151,8 @@ await testReloadRestoresUnacknowledgedAlarmFromSharedStorage();
 await testAcknowledgeStopsSoundEvenWithNothingQueuedNext();
 await testAcknowledgeStopsCurrentAndStartsNextQueuedAlarm();
 await testRetrySoundUnlocksAndReplaysActiveAlarm();
+await testAutumnRepeatedHourRingsOnceThroughTheEngine();
+await testAutumnReloadDuringRepeatedHourDoesNotRingAgain();
 
 console.log("\nall alarm trigger tests passed");
 process.exit(0);
