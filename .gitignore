@@ -5,8 +5,13 @@ dist/
 .env
 .env.local
 
-# Runtime state: SQLite database, logs, debug HTML snapshots
-data/
+# Runtime state: SQLite database, logs, debug HTML snapshots.
+# KAUTTAVIIVA ALUSSA ON PAKOLLINEN: ilman sita `data/` osuu MIHIN TAHANSA
+# data-nimiseen hakemistoon, myos hakemistoon server/src/data jossa on
+# postinumeroaineisto (postinumerot.json). Se jai taman takia kokonaan pois
+# gitista, eika repon kloonanneella olisi ollut sita lainkaan — vaikka
+# julkaisuskripti vaatii sita pakollisena tiedostona.
+/data/
 
 # Editor / OS
 .DS_Store
