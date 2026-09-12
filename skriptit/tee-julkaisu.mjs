@@ -908,6 +908,13 @@ async function main() {
   for (const r of results) {
     existingSums.set(path.basename(r.file), r.archiveHash);
   }
+  // Yhdistaminen sailyttaa toisen alustan rivin, mutta EI rivia jonka tiedosto
+  // on poistettu: tarkistelista joka nimeaa olemattoman arkiston on huonompi
+  // kuin lyhyempi lista, koska `sha256sum -c` kaatuu siihen ja lukija ei tieda
+  // onko tiedosto kadonnut vai eiko sita koskaan koostettu.
+  for (const name of [...existingSums.keys()]) {
+    if (!fs.existsSync(path.join(outDir, name))) existingSums.delete(name);
+  }
   const sumsLines = [...existingSums.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([name, hash]) => `${hash}  ${name}`);
