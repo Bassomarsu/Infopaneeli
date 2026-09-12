@@ -1,7 +1,7 @@
 /**
  * Manuaalinen "Testaa yhteys" -painike (server/src/core/provider.ts:n
  * manualTest, ks. myös server/src/routes/api.ts:n POST /api/providers/:id/test
- * ja README:n "Tilin lukituksen esto"). Neljä asiaa täytyy pitää paikkansa:
+ * ja docs/wilma.md:n "Tilin lukituksen esto"). Neljä asiaa täytyy pitää paikkansa:
  *
  *  1. Onnistunut manuaalinen testi nollaa katkaisijan täysin, aivan kuten
  *     automaattinen koeyritys (ks. provider-transitions.ts).

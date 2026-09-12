@@ -12,6 +12,7 @@ import NotesCard from "./components/NotesCard.vue";
 import ScheduleCard from "./components/ScheduleCard.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import WeatherCard, { type WeatherData } from "./components/WeatherCard.vue";
+import { describeOccurrenceShort, nextUpcomingAlarm } from "./composables/useAlarms.ts";
 import { useBattery } from "./composables/useBattery.ts";
 import { useClock } from "./composables/useClock";
 import { useDashboard } from "./composables/useDashboard";
@@ -102,6 +103,46 @@ const paikkyConfigured = computed(() => paikky.value !== undefined);
 // käyttää visibleStudents-suodatettua listaa.
 const allStudents = computed(() => wilmaData.value?.students ?? []);
 const activeAlarmCount = computed(() => settings.value?.alarms.filter((a) => a.enabled).length ?? 0);
+
+// Sama oletus kuin AlarmsPanelissa — kattaa vain hetken ennen ensimmäistä
+// asetusvastausta, ks. server/src/core/settings.ts.
+const breakfastTime = computed(() => settings.value?.breakfastTime ?? "08:00");
+
+/**
+ * Yläpalkin keskellä näkyvä "seuraava hälytys" -banneri. Laskenta on kokonaan
+ * useAlarms.ts:n `nextUpcomingAlarm`issa eikä täällä: hälytysaikojen on
+ * tultava yhdestä lähteestä, samasta jota hälytyspaneelin esikatselu käyttää.
+ *
+ * Null = ei yhtään tulevaa soittoa (ei hälytyksiä, kaikki pois päältä, loma,
+ * tai tämä laite ei saa lukujärjestystä) → banneria ei renderöidä lainkaan,
+ * eikä se v-if:n takia jätä tyhjää tilaakaan. Ks. nextUpcomingAlarmin kommentti.
+ *
+ * Soivan hälytyksen aikana tämä osoittaa jo SEURAAVAAN soittoon: hetkellä jona
+ * hälytys laukeaa, `nextAlarmOccurrence` ei enää palauta juuri mennyttä
+ * ajankohtaa. Erikoiskäsittelyä ei siis tarvita — eikä sitä näkisikään, koska
+ * hälytysnäkymä on teleportattu <body>:n alle koko ruudun päälle.
+ */
+const nextAlarm = computed(() => {
+  // Vertailu nimenomaan `=== true`: mikä tahansa muu arvo (puuttuva avain
+  // vanhassa tallennetussa asetusoliossa, null) tarkoittaa "ei piiloteta",
+  // eli oletus säilyy päällä. Ks. hideNextAlarmin kommentti types.ts:ssä.
+  if (settings.value?.hideNextAlarm === true) return null;
+  return nextUpcomingAlarm(
+    settings.value?.alarms ?? [],
+    wilmaData.value,
+    allStudents.value,
+    now.value,
+    breakfastTime.value,
+  );
+});
+
+const nextAlarmTime = computed(() =>
+  nextAlarm.value === null ? "" : describeOccurrenceShort(nextAlarm.value.occurrence, now.value),
+);
+
+// Nimi on vapaaehtoinen kenttä ja voi olla tyhjä — silloin kellonaika yksinään
+// on koko banneri, ei tyhjää väliä erottimineen.
+const nextAlarmLabel = computed(() => nextAlarm.value?.alarm.label.trim() ?? "");
 
 // Koko composable annetaan kortille yhtenä oliona, jotta selauspainikkeet ja
 // automaattinen päivänvaihto asuvat samassa paikassa eikä App.vue joudu
@@ -253,7 +294,11 @@ const isNight = computed(() => {
         </button>
       </div>
     </header>
-    <header v-else class="topbar">
+    <!-- `topbar--with-next` rajaa keskisaraketta ja kapean ruudun rivitystä
+         koskevat säännöt VAIN tilaan jossa banneri on olemassa. Ilman sitä
+         asetuksista pois kytketty banneri jättäisi jälkeensä muuttuneen
+         palkin — kytkimen pitää palauttaa palkki täsmälleen ennalleen. -->
+    <header v-else class="topbar" :class="{ 'topbar--with-next': nextAlarm }">
       <div class="topbar__time">
         <span class="topbar__clock tnum">{{ timeLabel }}</span>
         <!-- topbar__date-wrap on position:relative vain siksi että
@@ -269,6 +314,28 @@ const isNight = computed(() => {
           <KioskExitHotspot @trigger="kioskExitOpen = true" />
         </span>
       </div>
+
+      <!-- Seuraava tuleva hälytys. Renderöidään vain kun sellainen on
+           (ks. nextAlarm) — ei tyhjää paikanvaraajaa. Ei painike eikä linkki:
+           tieto on passiivista, ja hälytyspaneeli aukeaa jo saman palkin
+           kellokuvakkeesta muutaman sentin päästä. Tärkeämpi syy on
+           `pointer-events: none` tyyleissä — se on ainoa tapa taata ettei
+           keskielementti voi napata kosketuksia KioskExitHotspotilta eikä
+           oikean laidan painikkeilta. -->
+      <div v-if="nextAlarm" class="topbar__next">
+        <span class="topbar__next-pill">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+            />
+          </svg>
+          <span class="topbar__next-caption">Seuraava hälytys</span>
+          <span class="topbar__next-time tnum">{{ nextAlarmTime }}</span>
+          <span v-if="nextAlarmLabel" class="topbar__next-label">{{ nextAlarmLabel }}</span>
+        </span>
+      </div>
+
       <div class="topbar__meta">
         <span v-if="dashboard?.place" class="topbar__place">{{ dashboard.place }}</span>
         <span v-if="!connected" class="badge badge--error">palvelin ei vastaa</span>
@@ -561,6 +628,154 @@ const isNight = computed(() => {
    ilman mitään näkyvää syytä. Oma pinoamiskonteksti hotspotin yläpuolelle
    takaa että painikkeet saavat kosketuksen aina; hotspot menettää vain sen
    osan alueestaan joka oikeasti jää alle. Ks. .topbar__meta alempana. */
+
+/*
+ * Seuraava hälytys, yläpalkin keskellä.
+ *
+ * ASEMOINTI ON FLEX-VIRTAUSTA, EI absolute-keskitystä. Absoluuttinen elementti
+ * ei varaa tilaa, joten se voi mennä naapuriensa päälle pelkän `max-width`in
+ * varassa — ja kun oikeaan laitaan tulee pitkä paikannimi tai "palvelin ei
+ * vastaa" -merkki, se oikeasti menee. Flex-virtauksessa törmäys on rakenteesta
+ * johtuen mahdoton: laatikot eivät voi olla päällekkäin, ja ahtaalla tila
+ * otetaan bannerin omasta tekstistä (`min-width: 0` + katkaisu, ks.
+ * .topbar__next-label).
+ *
+ * Kolme `flex: 1 1 0` -saraketta pitää KESKISARAKKEEN TARKALLEEN palkin
+ * keskellä, vaikka laidat ovat eri levyisiä — pelkkä `flex: 1` bannerille
+ * keskittäisi sen vain jäljelle jäävään tilaan, jolloin pilleri ajautuisi
+ * kymmeniä pikseleitä oikeasta keskilinjasta. Säännöt ovat
+ * `.topbar--with-next`-rajattuja, joten ilman banneria palkki on
+ * täsmälleen entisensä (space-between kahdella lapsella).
+ *
+ * `pointer-events: none` on yhä paikallaan vaikka päällekkäisyys ei enää ole
+ * mahdollinen: yläpalkissa on NÄKYMÄTÖN KioskExitHotspot, ja näkymättömän
+ * painikkeen nielaisema painallus ei näkyisi vikana vaan "kioskista ei enää
+ * pääse ulos" -mysteerinä. Banneri ei ota kosketuksia vastaan lainkaan, mikä
+ * on myös syy siihen ettei siitä tehty klikattavaa.
+ */
+.topbar--with-next .topbar__time,
+.topbar--with-next .topbar__meta {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.topbar--with-next .topbar__meta {
+  /* space-between hoiti tämän kun lapsia oli kaksi; kolmella yhtä leveällä
+     sarakkeella oikea laita on asemoitava sarakkeen sisällä. */
+  justify-content: flex-end;
+}
+
+.topbar__next {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.topbar__next-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* Sama hiljainen versaalityyli kuin .topbar__placella — kertoo mistä luvusta
+   on kyse, jottei kellonaikaa sekoita vasemman laidan nykyiseen kelloon. */
+.topbar__next-caption {
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* Bannerin varsinainen sisältö: kellonaika kirkkaimpana, koska juuri se on se
+   mitä ohi kulkeva vilkaisee. Ei koskaan katkaistava. */
+.topbar__next-time {
+  font-size: 1.05rem;
+  color: var(--text);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* Hälytyksen oma nimi on vapaamuotoista käyttäjän tekstiä (enintään 60
+   merkkiä) ja ainoa osa jonka saa katkaista: ahtaalla tila otetaan tästä eikä
+   naapurisarakkeista. */
+.topbar__next-label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/*
+ * Yötilassa banneri olisi pillerin kehyksineen palkin ainoa reunustettu,
+ * täytetty laatikko ja vetäisi katseen ennen kelloa. Yöllä ruudulta katsotaan
+ * kelloa, ja banneri on passiivista tietoa — kehys ja tausta pois, teksti jää.
+ */
+.app.night .topbar__next-pill {
+  background: none;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/*
+ * Kapealla ruudulla laitojen väliin ei mahdu mitään, joten banneri siirtyy
+ * palkin omalle riville ilman pillerin kehystä. Raja on sama 900 px jossa
+ * ruudukkokin vaihtuu yhteen sarakkeeseen (ks. .grid-mediakysely alempana).
+ * `flex: 0 0 100%` yksinään
+ * riittää rivitykseen — ei `order`ia, jolloin rivijärjestys tulee suoraan
+ * templaatista: kello, seuraava hälytys, oikean laidan tiedot.
+ *
+ * `margin-top` EI ole koristelua. KioskExitHotspot ulottuu päivämäärän
+ * ympäriltä 0.9rem ALASPÄIN (ks. KioskExitHotspot.vue: top/bottom: -0.9rem),
+ * ja koska bannerissa on `pointer-events: none`, käärityn rivin päälle osunut
+ * painallus menisi SUORAAN hotspotille: kolmen sekunnin painallus bannerin
+ * vasemmassa päässä avaisi kioskin poistumisdialogin. Marginaali työntää
+ * käärityn rivin kokonaan hotspotin alapuolelle. Mitattu osumatestauksella
+ * 17 leveydellä välillä 320–1920 px — älä pienennä tätä mittaamatta uudelleen.
+ *
+ * Koko lohko on `.topbar--with-next`-rajattu, myös `flex-wrap`: ilman banneria
+ * palkki ei saa rivittyä toisin kuin ennen tätä muutosta.
+ */
+@media (max-width: 900px) {
+  .topbar--with-next {
+    flex-wrap: wrap;
+    row-gap: 0.4rem;
+  }
+
+  .topbar--with-next .topbar__time,
+  .topbar--with-next .topbar__meta {
+    flex: 0 1 auto;
+  }
+
+  .topbar--with-next .topbar__meta {
+    justify-content: flex-start;
+  }
+
+  .topbar__next {
+    flex: 0 0 100%;
+    /* 0.4rem row-gap + 1.1rem = 1.5rem, eli reilusti hotspotin 0.9rem:n yli. */
+    margin-top: 1.1rem;
+  }
+
+  .topbar__next-pill {
+    padding: 0;
+    border: none;
+    background: none;
+  }
+}
 
 .battery {
   display: inline-flex;

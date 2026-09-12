@@ -178,43 +178,54 @@ export function createPostalCodeLookup(
  */
 export interface CurrentWeatherLocation {
   place: string;
-  /** null = palvelin ei kertonut lähdettä, jolloin se päätellään asetuksesta. */
+  /**
+   * null = lähdettä EI tiedetä. Tällöin kutsuja ei saa väittää lähdettä
+   * lainkaan: pelkkä paikannimi on rehellinen, arvattu lähde ei. Näin käy kun
+   * palvelin on vanhempi eikä kerro lähdettä, tai kun sijainti on
+   * vanhentunut — tuntematon postinumero, jonka takia edellinen sijainti on yhä
+   * voimassa (palvelimen "retained").
+   */
   source: "settings" | "env" | null;
 }
 
 /**
  * Kysyy palvelimelta mikä sijainti on oikeasti käytössä.
  *
- * Ensisijaisesti `/api/weather-location`, joka kertoo myös lähteen. Jos sitä
- * ei ole, paluuarvo haetaan `/api/dashboard`:n `place`-kentästä ja lähde
- * jätetään `null`:ksi — kutsuja päättelee sen silloin asetuksen arvosta.
- * Selain ei voi päätellä lähdettä itse, koska `.env`:ssä voi olla joko
- * postinumero tai koordinaatit, eikä kumpikaan näy tänne.
+ * Tieto luetaan `/api/dashboard`:sta, joka kuljettaa sekä paikannimen
+ * (`place`) että lähteen (`placeSource`). Omaa päätepistettä ei ole: sijainti
+ * on tässä vastauksessa jo valmiiksi, joten erillinen haku olisi ylimääräinen
+ * pyyntö joka kerta kun asetuspaneeli avataan. (Sellaista yritettiin aiemmin,
+ * mutta reittiä ei ollut olemassa — haara vastasi aina 404 ja lähde jäi
+ * arvattavaksi.)
+ *
+ * Lähdettä ei päätellä selaimessa, koska sitä ei voi päätellä: `.env`:ssä voi
+ * olla joko postinumero tai koordinaatit, eikä kumpikaan näy tänne. Palvelin
+ * tietää totuuden, ja jos se ei kerro sitä, vastaus on `null` eikä arvaus.
  */
 export async function fetchCurrentWeatherLocation(
   fetchImpl: FetchLike = defaultFetch,
 ): Promise<CurrentWeatherLocation | null> {
-  const direct = await readPlace(fetchImpl, "/api/weather-location");
-  if (direct) return direct;
-  const fallback = await readPlace(fetchImpl, "/api/dashboard");
-  if (!fallback) return null;
-  return { place: fallback.place, source: null };
-}
-
-async function readPlace(fetchImpl: FetchLike, url: string): Promise<CurrentWeatherLocation | null> {
   try {
-    const response = await fetchImpl(url);
+    const response = await fetchImpl("/api/dashboard");
     if (!response.ok) return null;
     const body = (await response.json()) as Record<string, unknown> | null;
     const place = body?.["place"];
     if (typeof place !== "string" || place.trim() === "") return null;
-    const source = body?.["source"];
-    // Mikä tahansa muu lähde kuin asetus on käyttäjän kannalta ".env":
-    // env-postinumero, env-koordinaatit ja sisäänrakennettu oletus ovat
-    // kaikki "se mikä oli ennen kuin asetuksiin koskettiin".
-    if (typeof source !== "string") return { place, source: null };
-    return { place, source: source === "settings" ? "settings" : "env" };
+    return { place, source: readSource(body?.["placeSource"]) };
   } catch {
     return null;
   }
+}
+
+/**
+ * Palvelimen lähdetunnus käyttäjän kielelle. Mikä tahansa .env:stä ratkennut
+ * lähde — env-postinumero, env-koordinaatit ja sisäänrakennettu oletus — on
+ * käyttäjälle sama ".env": se mikä oli ennen kuin asetuksiin koskettiin.
+ * Kaikki muu, myös tuntemattoman numeron takia voimassa pidetty vanha sijainti
+ * ja puuttuva kenttä, on "ei tiedetä".
+ */
+function readSource(value: unknown): "settings" | "env" | null {
+  if (value === "settings") return "settings";
+  if (value === "env") return "env";
+  return null;
 }

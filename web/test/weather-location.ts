@@ -174,43 +174,45 @@ async function testDisposeCancelsPendingRequest(): Promise<void> {
   console.log("ok  dispose peruu odottavan haun");
 }
 
-async function testCurrentLocationPrefersDedicatedEndpoint(): Promise<void> {
-  const { fetchImpl, urls } = fakeFetch((url) => {
-    if (url === "/api/weather-location") {
-      return json(200, { place: "Karstula", source: "settings", postalCode: "43500" });
-    }
-    return json(200, { place: "Ei pitäisi käyttää" });
-  });
+/**
+ * Sijainti ja sen lähde tulevat dashboardista, yhdellä pyynnöllä. Aiemmin tästä
+ * yritettiin ensin `/api/weather-location`:ia, jota ei ole olemassa: jokainen
+ * paneelin avaus teki turhan 404-pyynnön, ja lähde jäi aina tuntemattomaksi.
+ */
+async function testCurrentLocationReadsDashboardOnce(): Promise<void> {
+  const { fetchImpl, urls } = fakeFetch(() => json(200, { place: "Karstula", placeSource: "settings" }));
 
   const result = await fetchCurrentWeatherLocation(fetchImpl);
   assert.deepEqual(result, { place: "Karstula", source: "settings" });
-  assert.deepEqual(urls, ["/api/weather-location"], "dashboardia ei haeta turhaan");
-  console.log("ok  nykyinen sijainti luetaan ensisijaisesti omasta päätepisteestä");
+  assert.deepEqual(urls, ["/api/dashboard"], "yksi pyyntö, eikä olemattomaan päätepisteeseen");
+  console.log("ok  nykyinen sijainti ja lähde luetaan yhdellä dashboard-haulla");
 }
 
-async function testCurrentLocationFallsBackToDashboard(): Promise<void> {
-  const { fetchImpl, urls } = fakeFetch((url) => {
-    if (url === "/api/weather-location") return json(404, { error: "ei reittiä" });
-    return json(200, { place: "Karstula", timezone: "Europe/Helsinki" });
-  });
-
+async function testCurrentLocationTrustsServerSource(): Promise<void> {
+  const { fetchImpl } = fakeFetch(() => json(200, { place: "Tampere", placeSource: "env" }));
   const result = await fetchCurrentWeatherLocation(fetchImpl);
-  assert.deepEqual(
-    result,
-    { place: "Karstula", source: null },
-    "ilman omaa päätepistettä lähde jää tuntemattomaksi mutta paikka saadaan",
-  );
-  assert.deepEqual(urls, ["/api/weather-location", "/api/dashboard"]);
-  console.log("ok  puuttuva päätepiste degradoituu dashboardin place-kenttään");
+  assert.deepEqual(result, { place: "Tampere", source: "env" }, "palvelin tietää lähteen, selain ei arvaa");
+  console.log("ok  palvelimen kertoma .env-lähde välittyy sellaisenaan");
 }
 
-async function testCurrentLocationMapsEveryEnvSourceToEnv(): Promise<void> {
-  for (const source of ["env-postal-code", "env-coordinates", "default"]) {
-    const { fetchImpl } = fakeFetch(() => json(200, { place: "Karstula", source }));
+/**
+ * Tuntematon lähde EI saa muuttua arvaukseksi. `retained` (tuntemattoman
+ * numeron takia voimassa pidetty vanha sijainti) ja puuttuva kenttä (vanhempi
+ * palvelin) ovat molemmat "ei tiedetä", ja paneeli näyttää silloin pelkän
+ * paikannimen ilman lähdeväitettä.
+ */
+async function testCurrentLocationClaimsNoSourceWhenUnknown(): Promise<void> {
+  for (const body of [
+    { place: "Karstula", placeSource: "retained" },
+    { place: "Karstula" },
+    { place: "Karstula", placeSource: 42 },
+    { place: "Karstula", placeSource: null },
+  ]) {
+    const { fetchImpl } = fakeFetch(() => json(200, body));
     const result = await fetchCurrentWeatherLocation(fetchImpl);
-    assert.equal(result?.source, "env", `${source} on käyttäjälle ".env"`);
+    assert.deepEqual(result, { place: "Karstula", source: null }, `${JSON.stringify(body)} ei kerro lähdettä`);
   }
-  console.log("ok  kaikki asetuksen ulkopuoliset lähteet näkyvät käyttäjälle .env:nä");
+  console.log("ok  tuntematon lähde jää null:ksi eikä muutu arvaukseksi");
 }
 
 async function testCurrentLocationSurvivesTotalFailure(): Promise<void> {
@@ -218,7 +220,13 @@ async function testCurrentLocationSurvivesTotalFailure(): Promise<void> {
     throw new Error("ei yhteyttä");
   };
   assert.equal(await fetchCurrentWeatherLocation(fetchImpl), null, "kaatuminen ei saa kaataa paneelia");
-  console.log("ok  molempien päätepisteiden kaatuminen palauttaa null eikä heitä");
+
+  const { fetchImpl: broken } = fakeFetch(() => json(500, { error: "rikki" }));
+  assert.equal(await fetchCurrentWeatherLocation(broken), null, "virhevastaus ei saa tuottaa paikkaa");
+
+  const { fetchImpl: placeless } = fakeFetch(() => json(200, { timezone: "Europe/Helsinki" }));
+  assert.equal(await fetchCurrentWeatherLocation(placeless), null, "ilman place-kenttää ei ole mitään näytettävää");
+  console.log("ok  kaatuminen, virhevastaus ja puuttuva paikka palauttavat null eivätkä heitä");
 }
 
 async function main(): Promise<void> {
@@ -230,9 +238,9 @@ async function main(): Promise<void> {
   await testStaleResponseIsIgnored();
   await testClearingReturnsToEmpty();
   await testDisposeCancelsPendingRequest();
-  await testCurrentLocationPrefersDedicatedEndpoint();
-  await testCurrentLocationFallsBackToDashboard();
-  await testCurrentLocationMapsEveryEnvSourceToEnv();
+  await testCurrentLocationReadsDashboardOnce();
+  await testCurrentLocationTrustsServerSource();
+  await testCurrentLocationClaimsNoSourceWhenUnknown();
   await testCurrentLocationSurvivesTotalFailure();
   console.log("\nkaikki sään sijainnin testit läpi");
 }

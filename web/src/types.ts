@@ -383,6 +383,12 @@ export interface Settings {
   scheduleLayout: "single" | "split";
   rolloverTime: string;
   hideMessagePreviews: boolean;
+  /**
+   * Piilota yläpalkin "seuraava hälytys" -banneri. Oletus `false` = banneri
+   * näkyy. `hide`-suunta on sama kuin yllä ja samasta syystä, ks.
+   * server/src/core/settings.ts.
+   */
+  hideNextAlarm: boolean;
   nightModeStart: string;
   nightModeEnd: string;
   /**

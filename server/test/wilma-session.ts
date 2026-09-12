@@ -12,7 +12,7 @@
  * tulokseksi — joten vanha "nollaa vain fataalista virheestä" -sääntö ei
  * osunut siihen koskaan.
  *
- * Korjauksen vastapaino on tilin lukituksen esto (README, "Tilin lukituksen
+ * Korjauksen vastapaino on tilin lukituksen esto (docs/wilma.md, "Tilin lukituksen
  * esto"): jokainen nollaus tarkoittaa uutta kirjautumista oppilaslistalle ja
  * yhtä per lapsi. Siksi puolet näistä testeistä laskee kirjautumisia eikä
  * dataa.

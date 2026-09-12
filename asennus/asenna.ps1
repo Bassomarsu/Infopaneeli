@@ -182,8 +182,8 @@ function Test-DesimaaliValidi {
 # Tyhjä on aina kelvollinen (FULL_PIN-taso ei silloin käytössä). Palauttaa
 # $false vain jos jotain annettiin mutta se on lyhyempi kuin vaadittu
 # vähimmäispituus — sama sääntö kuin server/src/routes/access.ts:n
-# FULL_PIN_MIN_LENGTH:ssä. Lyhyempää ei hyväksytä hiljaa (ks. README:n
-# Tietoturva-kohta): käyttäjälle kerrotaan aina eksplisiittisesti että taso
+# FULL_PIN_MIN_LENGTH:ssä. Lyhyempää ei hyväksytä hiljaa (ks. docs/tietoturva.md,
+# "Kaksi PIN-koodia"): käyttäjälle kerrotaan aina eksplisiittisesti että taso
 # jää pois päältä, eikä tätä funktiota käyttävä kutsuja saa jatkaa hiljaa.
 function Test-FullPinPituus {
     param([string]$Arvo)
@@ -454,9 +454,9 @@ function New-EnvLisaysSisalto {
 
 # Kirjoittaa .env:n UTF-8:na ilman BOMia (Noden --env-file-if-exists ei odota
 # BOMia) ja rajaa sen oikeudet asentavaan käyttäjään + Administrators-ryhmään.
-# .env sisältää Wilma-tilin salasanan selväkielisenä (README:n tunnistama
-# riski) — tämä ei poista riskiä mutta estää muita samalla koneella olevia
-# käyttäjätilejä lukemasta sitä.
+# .env sisältää Wilma-tilin salasanan selväkielisenä (docs/tietoturva.md:n
+# tunnistama riski) — tämä ei poista riskiä mutta estää muita samalla
+# koneella olevia käyttäjätilejä lukemasta sitä.
 function Write-EnvTiedosto {
     param([string]$Polku, [string]$Sisalto)
     $enkoodaus = [System.Text.UTF8Encoding]::new($false)

@@ -48,6 +48,19 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
 
 const draft = ref<Settings>({ ...props.settings });
+
+/**
+ * Tallennettu avain on `hideNextAlarm` (ks. types.ts), mutta valintaruutu
+ * luetaan luontevimmin myöntävänä — "näytä", ei "älä piilota". Kääntö tehdään
+ * siis tässä eikä datan puolella: avaimen suunta on yhteensopivuusasia,
+ * käyttöliittymän sanamuoto luettavuusasia, eikä kumpikaan saa sanella toista.
+ */
+const showNextAlarm = computed<boolean>({
+  get: () => !draft.value.hideNextAlarm,
+  set: (value) => {
+    draft.value.hideNextAlarm = !value;
+  },
+});
 const error = ref<string | null>(null);
 const saving = ref(false);
 
@@ -198,13 +211,23 @@ const currentLocationText = computed<string>(() => {
   const location = currentLocation.value;
   const saved = props.settings.weatherPostalCode ?? null;
   if (!location) {
-    // Paikkakunnan nimeä ei saatu, mutta lähteestä tiedetään yhä tämä verran.
+    // Paikkakunnan nimeä ei saatu palvelimelta. Jos asetuksissa EI ole
+    // numeroa, asetukset eivät ole voineet vaikuttaa mihinkään, joten .env on
+    // väistämättä lähde ja sen saa sanoa. Toisin päin ei: tallennettu numero
+    // voi olla tuntematon, jolloin voimassa on edellinen sijainti eikä tuo
+    // numero — siksi tallennetusta numerosta kerrotaan vain että se on
+    // kentässä, ei että se olisi käytössä.
     return saved !== null
-      ? `Nyt käytössä: postinumero ${saved} (asetuksista). Paikkakunnan nimeä ei saatu palvelimelta.`
+      ? `Asetuksiin tallennettu postinumero ${saved}. Paikkakunnan nimeä ei saatu palvelimelta.`
       : "Nyt käytössä: .env-tiedoston sijainti. Paikkakunnan nimeä ei saatu palvelimelta.";
   }
-  const fromSettings = location.source === null ? saved !== null : location.source === "settings";
-  if (!fromSettings) return `Nyt käytössä: ${location.place} — .env-tiedostosta.`;
+  // Lähdettä EI päätellä tallennetusta asetuksesta. Palvelin tietää sen, ja jos
+  // se ei kerro (tuntemattoman numeron takia voimassa pidetty vanha sijainti,
+  // tai vanha palvelin joka ei lähetä kenttää), lähdettä ei väitetä lainkaan:
+  // pelkkä paikannimi on rehellinen, arvattu lähde ei. Aiemmin tässä arvattiin,
+  // ja paneeli väitti .env:n sijaintia asetuksista tulleeksi.
+  if (location.source === null) return `Nyt käytössä: ${location.place}.`;
+  if (location.source === "env") return `Nyt käytössä: ${location.place} — .env-tiedostosta.`;
   return saved !== null
     ? `Nyt käytössä: ${location.place} — postinumerosta ${saved} (asetuksista).`
     : `Nyt käytössä: ${location.place} — asetuksista.`;
@@ -421,6 +444,20 @@ async function save(): Promise<void> {
           >
             Tyhjennä — käytä .env:n sijaintia
           </button>
+        </fieldset>
+
+        <!-- Oma ryhmänsä eikä yötilan tai yksityisyyden alla: banneri ei ole
+             kumpaakaan, vaan yläpalkin sisältöä. Yötilan vieressä siksi että
+             molemmat koskevat ruudun yläosaa ja passiivista tietoa. -->
+        <fieldset class="group">
+          <legend>Yläpalkki</legend>
+          <label class="check">
+            <input v-model="showNextAlarm" type="checkbox" />
+            <span>Näytä seuraava hälytys yläpalkissa</span>
+          </label>
+          <p class="group__hint">
+            Näkyy vain kun jokin hälytys oikeasti soi lähipäivinä.
+          </p>
         </fieldset>
 
         <fieldset class="group">

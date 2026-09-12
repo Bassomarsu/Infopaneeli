@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * "Testaa yhteys" -painike Wilman katkaisijan manuaaliseen avaamiseen (ks.
- * server/src/core/provider.ts:n manualTest ja README:n "Tilin lukituksen
+ * server/src/core/provider.ts:n manualTest ja docs/wilma.md:n "Tilin lukituksen
  * esto"). Katkaisijan automaattinen jäähdytys voi venyä neljään tuntiin —
  * tämä antaa käyttäjälle keinon yrittää heti sen sijaan että odottaisi tai
  * käynnistäisi palvelimen uudelleen. Uudelleenyhdistäminen on tällöin

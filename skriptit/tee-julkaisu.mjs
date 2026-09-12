@@ -391,7 +391,7 @@ function fixLinuxExecutableBits(archivePath, topFolderName, platform, extraTarge
 // epäluotettavaksi: joissakin ympäristöissä fs.rmSync palaa virheettä
 // poistamatta mitään, jolloin "siivottu" tiedosto matkaa hiljaa pakettiin.
 // Arkistoijan poissulku on todennettavissa valmiista arkistosta (ks.
-// verifyPackageContents), poisto ei ole.
+// verifyArchiveContents), poisto ei ole.
 //
 //  - juuren package.json / package-lock.json / web/package.json ovat vain
 //    npm ci:n työtilantunnistusta varten, eivät osa sitovaa pakettirakennetta
@@ -481,18 +481,26 @@ function createArchive(stagingParent, topFolderName, outFile) {
   );
 }
 
-// Vaatimus 6: salaisuudet eivät saa päätyä pakettiin. Tämä tarkistaa VALMIIN
-// arkiston sisällön (ei vain koontivaiheen lähdehakemistoa), koska
-// arkistointivaihe on juuri se paikka jossa jotain ylimääräistä voisi
-// vahingossa liukua mukaan.
+// Valmiin arkiston sisältötarkistus: mitä siellä EI saa olla ja mitä siellä ON
+// oltava. Kolme asiaa, ja kaikki kolme samasta syystä — vasta puretusta
+// arkistosta näkee mikä oikeasti lähtee laitteelle:
 //
-// Sisältötarkistus etsii MERKKIJONOA "WILMA_PASSWORD=<arvo>" (.env-tyylinen
+//   1. salaisuudet eivät saa päätyä pakettiin (vaatimus 6)
+//   2. sitovan pakettirakenteen pakolliset tiedostot ovat mukana
+//   3. ARCHIVE_EXCLUDESin kieltämät tiedostot eivät ole mukana
+//
+// Nimi kertoo kaikki kolme tarkoituksella: funktio oli ennen `verifyNoSecrets`,
+// ja kohdat 2 ja 3 asuivat sen sisällä nimeltä mainitsematta. Kommentit
+// viittasivat niihin olemattomalla nimellä `verifyPackageContents`, joten
+// koodista etsittiin tarkistusta jota ei ollut olemassa.
+//
+// Salaisuustarkistus etsii MERKKIJONOA "WILMA_PASSWORD=<arvo>" (.env-tyylinen
 // SIJOITUS), ei pelkkää sanaa "WILMA_PASSWORD" — server/src/core/config.ts
 // sisältää täysin laillisesti tekstin `str("WILMA_PASSWORD")` (ympäristö-
 // muuttujan NIMI, ei arvo), ja se tiedosto kuuluu pakettiin. Pelkkä sanahaku
 // olisi kaatanut jokaisen koonnin aina, myös silloin kun mitään salaista ei
 // ole vuotanut.
-function verifyNoSecrets(archivePath, topFolderName) {
+function verifyArchiveContents(archivePath, topFolderName) {
   const verifyDir = fs.mkdtempSync(path.join(workDir, "verify-"));
   run(TAR_CMD, ["-xf", archivePath, "-C", verifyDir], { shell: false });
   const root = path.join(verifyDir, topFolderName);
@@ -556,6 +564,11 @@ function verifyNoSecrets(archivePath, topFolderName) {
     "VERSIO.txt",
     path.join("asennus", "asenna.ps1"),
     path.join("asennus", "asenna.sh"),
+    // Asennusohjeet viittaavat naihin nimeltä. Puuttuva tiedosto ei kaada
+    // mitaan, mutta jattaa ohjeeseen kuolleen viittauksen — ja se huomattaisiin
+    // vasta laitteella, jossa perustelua juuri tarvitaan.
+    path.join("docs", "tietoturva.md"),
+    path.join("docs", "wilma.md"),
   ];
   for (const rel of required) {
     if (!fs.existsSync(path.join(root, rel))) offenders.push(`pakollinen puuttuu: ${rel}`);
@@ -633,7 +646,7 @@ function copyServerSrc(destDir) {
   // .json on tassa listassa siksi etta ILMAN SITA AINEISTO JAISI POIS
   // HILJAA: kehityksessa kaikki toimisi, mutta tuotannossa jokainen
   // postinumero olisi "ei loydy" eika mikaan kertoisi miksi. Sama tiedosto on
-  // myos verifyPackageContentsin pakollisten listalla, jotta puuttuminen
+  // myos verifyArchiveContentsin pakollisten listalla, jotta puuttuminen
   // pysayttaa koonnin sen sijaan etta se huomattaisiin kohdelaitteella.
   copyTree("server/src", path.join(repoRoot, "server", "src"), destDir, (f) => f.endsWith(".ts") || f.endsWith(".json"));
 }
@@ -784,6 +797,7 @@ async function main() {
 
   console.log("\n--- 5/5: Paketointi ---");
   const asennusDir = path.join(repoRoot, "asennus");
+  const docsDir = path.join(repoRoot, "docs");
 
   const results = [];
   for (const platform of platforms) {
@@ -814,6 +828,14 @@ async function main() {
     copyDir("web/dist", webDist, path.join(stagingRoot, "web", "dist"));
     step("asennus kopiointi");
     copyDir("asennus", asennusDir, path.join(stagingRoot, "asennus"), eiAsentimenTesti);
+
+    // docs/ on mukana koska ASENNUSOHJEET VIITTAAVAT SIIHEN. Perustelut
+    // (tilin lukituksen esto, PIN-tasot, kioskista poistuminen) siirrettiin
+    // README:sta docs/-kansioon, ja README ei ole paketissa — ilman tata
+    // jokainen "ks. docs/tietoturva.md" osoittaisi laitteella tyhjaan.
+    // Muutama kymmenen kilotavua tekstia, ei salaisuuksia.
+    step("docs kopiointi");
+    copyDir("docs", docsDir, path.join(stagingRoot, "docs"));
 
     step("LUEMINUT.txt");
     fs.writeFileSync(path.join(stagingRoot, "LUEMINUT.txt"), buildReadme({ appVersion, platform }));
@@ -855,8 +877,8 @@ async function main() {
       fixLinuxExecutableBits(outFile, topFolderName, platform, extraTargets);
     }
 
-    step("salaisuustarkistus");
-    verifyNoSecrets(outFile, topFolderName);
+    step("paketin sisällön tarkistus");
+    verifyArchiveContents(outFile, topFolderName);
 
     const size = fs.statSync(outFile).size;
     const archiveHash = sha256File(outFile);

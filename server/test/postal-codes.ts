@@ -225,6 +225,157 @@ function testUnknownSettingWarnsEvenWhenEnvPostalCodeResolves(): void {
   console.log("ok  asetusten tuntematon numero varoittaa kerran myös kelvollisen .env-numeron rinnalla");
 }
 
+/**
+ * Löydetty ajamalla, ei lukemalla: postinumerokentän TYHJENNYS ei palauttanut
+ * .env:n sijaintia. Asetuksista tallennettu numero jäi voimaan
+ * uudelleenkäynnistykseen asti, ilman varoitusta, koska "edellinen kelvollinen
+ * sijainti" palveli kahta eri tarkoitusta — ja vain toinen niistä on oikea.
+ *
+ * Käyttäjän tuotantoasennuksessa .env:ssä on vain WEATHER_LAT/LON/PLACE, joten
+ * juuri tämä tapaus oli se joka meni rikki:
+ *
+ *   1. ei mitään asetettu  → Tampere (.env)
+ *   2. asetetaan 20100     → Turku
+ *   3. kenttä tyhjennetään → Tampere, ei Turku
+ */
+function testClearingSettingReturnsToEnvCoordinates(): void {
+  const resolver = new WeatherLocationResolver();
+  const TAMPERE_ENV: WeatherLocation = { place: "Tampere", latitude: 61.4978, longitude: 23.761 };
+  const withEnv = (settingPostalCode: string | null) => ({
+    settingPostalCode,
+    envPostalCode: "",
+    envLocation: TAMPERE_ENV,
+  });
+
+  const before = resolver.resolve(withEnv(null));
+  assert.equal(before.location.place, "Tampere");
+  assert.equal(before.source, "env");
+
+  const set = resolver.resolve(withEnv("20100"));
+  assert.equal(set.location.place, "Turku", "asetettu postinumero vaihtaa sijainnin");
+  assert.equal(set.source, "settings");
+
+  const cleared = resolver.resolve(withEnv(null));
+  assert.deepEqual(cleared.location, TAMPERE_ENV, "tyhjennyksen on palautettava .env:n koordinaatit");
+  assert.equal(cleared.source, "env", "lähde on .env, ei asetukset");
+  assert.equal(cleared.warning, null, "tyhjennys on käyttäjän oma teko eikä siitä valiteta");
+
+  // Eikä vain kerran: seuraavakaan haku ei saa palauttaa Turkua muistista.
+  const again = resolver.resolve(withEnv(null));
+  assert.deepEqual(again.location, TAMPERE_ENV, "sijainti ei saa palata muistista seuraavalla haulla");
+
+  console.log("ok  postinumeron tyhjennys palauttaa .env:n koordinaatit");
+}
+
+/** Sama tyhjennys, mutta .env:ssä on postinumero — silloin se on oikea vastaus. */
+function testClearingSettingReturnsToEnvPostalCode(): void {
+  const resolver = new WeatherLocationResolver();
+  const sources = (settingPostalCode: string | null) => ({
+    settingPostalCode,
+    envPostalCode: "96100",
+    envLocation: KARSTULA_ENV,
+  });
+
+  assert.equal(resolver.resolve(sources(null)).location.place, "Rovaniemi");
+  assert.equal(resolver.resolve(sources("20100")).location.place, "Turku");
+
+  const cleared = resolver.resolve(sources(null));
+  assert.equal(cleared.location.place, "Rovaniemi", "tyhjennyksen on palautettava .env:n postinumero");
+  assert.equal(cleared.source, "env");
+  assert.notEqual(cleared.location.place, KARSTULA_ENV.place, "koordinaatit ovat postinumeroa alempana");
+  assert.equal(cleared.warning, null);
+
+  console.log("ok  postinumeron tyhjennys palauttaa .env:n postinumeron kun sellainen on");
+}
+
+/**
+ * Tyhjennyksen korjaus ei saa viedä sitä mitä varten muisti on olemassa:
+ * TUNTEMATON numero pitää yhä edellisen sijainnin. Erona on se, onko numeroa
+ * annettu lainkaan — "ei numeroa" ja "numero jota ei tunneta" ovat eri tiloja.
+ */
+function testUnknownCodeStillKeepsLocationAfterClearing(): void {
+  const resolver = new WeatherLocationResolver();
+  const TAMPERE_ENV: WeatherLocation = { place: "Tampere", latitude: 61.4978, longitude: 23.761 };
+  const sources = (settingPostalCode: string | null) => ({
+    settingPostalCode,
+    envPostalCode: "",
+    envLocation: TAMPERE_ENV,
+  });
+
+  resolver.resolve(sources("20100"));
+  assert.deepEqual(resolver.resolve(sources(null)).location, TAMPERE_ENV);
+
+  // Tyhjennyksen jälkeen voimassa on .env:n Tampere — ja juuri se on nyt se
+  // "edellinen sijainti" jonka tuntematon numero pitää. Ei Turku, ei oletus.
+  const typo = resolver.resolve(sources("00199"));
+  assert.deepEqual(typo.location, TAMPERE_ENV, "tuntematon numero ei saa pudottaa sijaintia");
+  assert.equal(typo.source, "retained", "vanhentunutta sijaintia ei esitetä asetuksena eikä .env:nä");
+  assert.ok(typo.warning, "tuntemattomasta numerosta on varoitettava");
+
+  // Ja asetetun numeron jälkeen tuntematon pitää sen, ei .env:ää.
+  assert.equal(resolver.resolve(sources("00100")).location.place, "Helsinki");
+  const typoAfterSet = resolver.resolve(sources("00199"));
+  assert.equal(typoAfterSet.location.place, "Helsinki", "edellinen kelvollinen on nyt Helsinki");
+  assert.equal(typoAfterSet.source, "retained");
+
+  console.log("ok  tuntematon numero pitää edellisen sijainnin myös tyhjennyksen jälkeen");
+}
+
+/**
+ * Varoitus tasan kerran, pitkällä sarjalla. Tämän tiedoston varoituslogiikka on
+ * mennyt rikki kahdesti eri suuntiin — kerran varoitus heilahteli päälle joka
+ * toisella haulla, kerran se nieltiin kokonaan — eikä kumpikaan olisi jäänyt
+ * kiinni kahden kierroksen testistä. Kahdeksan kierrosta ja laskettu summa
+ * näkee molemmat.
+ */
+function testWarningIsGivenExactlyOncePerMistake(): void {
+  const countWarnings = (sources: Parameters<WeatherLocationResolver["resolve"]>[0], rounds: number): string[] => {
+    const resolver = new WeatherLocationResolver();
+    const warnings: string[] = [];
+    for (let i = 0; i < rounds; i += 1) {
+      const warning = resolver.resolve(sources).warning;
+      if (warning) warnings.push(warning);
+    }
+    return warnings;
+  };
+
+  const settingOnly = countWarnings({ settingPostalCode: "00199", envPostalCode: "", envLocation: KARSTULA_ENV }, 8);
+  assert.equal(settingOnly.length, 1, `varoitus kahdeksalla kierroksella: ${settingOnly.length} kpl`);
+  assert.ok(settingOnly[0]?.includes("00199"));
+
+  // Kelvollinen .env-numero asetusten virheellisen rinnalla: tämä yhdistelmä
+  // heilautti varoituksen aiemmin päälle joka toisella haulla.
+  const withEnvPostal = countWarnings(
+    { settingPostalCode: "00199", envPostalCode: "00100", envLocation: KARSTULA_ENV },
+    8,
+  );
+  assert.equal(withEnvPostal.length, 1, `varoitus .env-numeron rinnalla: ${withEnvPostal.length} kpl`);
+  assert.ok(withEnvPostal[0]?.includes("asetuksissa"));
+
+  // Molemmat tuntemattomia: valitetaan yhdestä numerosta, ei vuorotellen
+  // kahdesta. Vuorottelu näkyisi tässä kahdeksana varoituksena.
+  const bothUnknown = countWarnings(
+    { settingPostalCode: "00199", envPostalCode: "00000", envLocation: KARSTULA_ENV },
+    8,
+  );
+  assert.equal(bothUnknown.length, 1, `varoitus kun molemmat tuntemattomia: ${bothUnknown.length} kpl`);
+  assert.ok(bothUnknown[0]?.includes("00199"), "asetusten numero on se jonka käyttäjä voi korjata");
+
+  // Tyhjennys ei saa jättää valitusmuistiin arvoa, joka vaimentaisi saman
+  // virheen kun se kirjoitetaan myöhemmin uudestaan.
+  const resolver = new WeatherLocationResolver();
+  const sources = (settingPostalCode: string | null) => ({
+    settingPostalCode,
+    envPostalCode: "",
+    envLocation: KARSTULA_ENV,
+  });
+  assert.ok(resolver.resolve(sources("00199")).warning, "ensimmäinen virhe varoittaa");
+  assert.equal(resolver.resolve(sources(null)).warning, null, "tyhjennys ei valita");
+  assert.ok(resolver.resolve(sources("00199")).warning, "tyhjennyksen jälkeen sama virhe on taas uusi");
+
+  console.log("ok  tuntemattomasta numerosta varoitetaan kerran — ei joka kierroksella eikä joka toisella");
+}
+
 testKnownPostalCodeResolves();
 testUnknownPostalCodeIsNotFound();
 testMalformedInputIsRejected();
@@ -236,5 +387,9 @@ testUnknownEnvPostalCodeFallsBackToCoordinatesLoudly();
 testSettingAcceptsAndNormalizes();
 testLoadTimeIsReported();
 testUnknownSettingWarnsEvenWhenEnvPostalCodeResolves();
+testClearingSettingReturnsToEnvCoordinates();
+testClearingSettingReturnsToEnvPostalCode();
+testUnknownCodeStillKeepsLocationAfterClearing();
+testWarningIsGivenExactlyOncePerMistake();
 
 console.log("\nKaikki postinumerotestit läpi.");

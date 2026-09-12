@@ -135,6 +135,18 @@ export interface Settings {
   rolloverTime: string;
   /** Hide message bodies on the wall display; sender and unread count remain. */
   hideMessagePreviews: boolean;
+  /**
+   * Piilota yläpalkin "seuraava hälytys" -banneri. Oletus on `false` eli
+   * banneri näkyy — käyttäjä pyysi ominaisuuden ja sille katkaisijan, ei
+   * toisin päin.
+   *
+   * Nimi on `hide...` eikä `show...` tarkoituksella, samoin kuin
+   * `hideMessagePreviews` yllä: `getSettings()` levittää tallennetun olion
+   * oletusten päälle, ja eksplisiittinen `undefined` menisi oletuksen yli.
+   * Falsy-arvo tarkoittaa silloin "ei piiloteta" eli oletus säilyy oikein
+   * päin; `show...`-suunnassa sama vahinko kääntäisi oletuksen nurin.
+   */
+  hideNextAlarm: boolean;
   nightModeStart: string;
   nightModeEnd: string;
   /**
@@ -163,6 +175,7 @@ export const defaultSettings: Settings = {
   scheduleLayout: "split",
   rolloverTime: "12:00",
   hideMessagePreviews: false,
+  hideNextAlarm: false,
   nightModeStart: "21:30",
   nightModeEnd: "06:00",
   breakfastTime: "08:00",
@@ -242,6 +255,21 @@ export function updateSettings(patch: unknown): Settings {
       throw new SettingsValidationError("hideMessagePreviews: true tai false");
     }
     next.hideMessagePreviews = value;
+  }
+
+  // Oma lohkonsa eikä jaettua boolean-silmukkaa hideMessagePreviewsin kanssa:
+  // asetukset tulevat kotiverkon puhelimelta, ja virheviestin pitää nimetä
+  // juuri se kenttä joka oli väärin.
+  //
+  // `typeof value !== "boolean"` on tahallisen tiukka eikä tyyppipakotusta
+  // (`Boolean(value)`, `value === "true"`): merkkijono "false" on
+  // JavaScriptissä tosi, joten pakotus kääntäisi juuri sen tapauksen väärin.
+  if ("hideNextAlarm" in input) {
+    const value = input["hideNextAlarm"];
+    if (typeof value !== "boolean") {
+      throw new SettingsValidationError("hideNextAlarm: true tai false");
+    }
+    next.hideNextAlarm = value;
   }
 
   setSetting(KEY, next);

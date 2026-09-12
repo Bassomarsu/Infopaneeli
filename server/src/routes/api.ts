@@ -217,14 +217,26 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       snapshots.calendar = { ...calendar, data: trimToDashboardWindow(calendar.data) };
     }
 
+    // Ratkaistu sijainti, ei config.weather.place: postinumero voi tulla
+    // asetuksista, jolloin .env:n paikannimi on väärä. Sama lähde kuin
+    // sääproviderilla, jotta otsikko ja haettu sää eivät voi olla eri
+    // paikkakunnilta.
+    //
+    // `placeSource` on mukana, koska asetuspaneeli kertoo käyttäjälle mistä
+    // sijainti tulee eikä selain voi päätellä sitä: .env:ssä voi olla joko
+    // postinumero tai koordinaatit. Kun paneeli aiemmin arvasi lähteen
+    // tallennetusta asetuksesta, se väitti .env:n sijaintia asetuksista
+    // tulleeksi. Kenttä on dashboardin juuressa `place`:n vieressä eikä oman
+    // reitin takana: sijainti kulkee tässä vastauksessa jo nyt, eikä paneelin
+    // tarvitse tehdä avautuessaan ylimääräistä hakua. Kumpaakaan ei suodateta
+    // puhelimelta — paikkakunnan nimi ei ole SENSITIVE_PROVIDERS-tietoa.
+    const weatherLocation = currentWeatherLocation();
+
     return {
       generatedAt: new Date().toISOString(),
       timezone: config.timezone,
-      // Ratkaistu sijainti, ei config.weather.place: postinumero voi tulla
-      // asetuksista, jolloin .env:n paikannimi on väärä. Sama lähde kuin
-      // sääproviderilla, jotta otsikko ja haettu sää eivät voi olla eri
-      // paikkakunnilta.
-      place: currentWeatherLocation().place,
+      place: weatherLocation.location.place,
+      placeSource: weatherLocation.source,
       settings: getSettings(),
       notes: listNotes(),
       providers: snapshots,

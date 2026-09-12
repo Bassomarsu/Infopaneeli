@@ -30,8 +30,22 @@ export interface WeatherLocationSources {
   envLocation: WeatherLocation;
 }
 
+/**
+ * Mistä käytössä oleva sijainti tuli. Asetuspaneeli kertoo tämän käyttäjälle,
+ * eikä selain voi päätellä sitä itse: `.env`:ssä voi olla joko postinumero tai
+ * koordinaatit, eikä kumpikaan näy selaimeen asti.
+ *
+ *   settings  asetusten postinumero ratkaisi sijainnin
+ *   env       .env ratkaisi sijainnin (postinumero, koordinaatit tai oletus)
+ *   retained  annettua postinumeroa ei tunneta, joten EDELLINEN sijainti on yhä
+ *             voimassa. Se ei ole "asetuksista" eikä ".env-tiedostosta" vaan
+ *             vanhentunut arvo, eikä sitä siksi saa esittää kumpanakaan.
+ */
+export type WeatherLocationSource = "settings" | "env" | "retained";
+
 export interface WeatherLocationResult {
   location: WeatherLocation;
+  source: WeatherLocationSource;
   /**
    * Teksti lokiin, tai null jos mitään huomautettavaa ei ole. Sama varoitus ei
    * toistu peräkkäisillä hauilla (ks. WeatherLocationResolver) — sääproviderilla
@@ -39,6 +53,38 @@ export interface WeatherLocationResult {
    * ei kerro mitään uutta.
    */
   warning: string | null;
+}
+
+/** Postinumero koordinaateiksi, tai null jos numeroa ei ole tai sitä ei tunneta. */
+function lookup(code: string): WeatherLocation | null {
+  if (code === "") return null;
+  const found = lookupPostalCode(code);
+  if (!found) return null;
+  return { place: found.place, latitude: found.latitude, longitude: found.longitude };
+}
+
+/**
+ * Se yksi numero josta tällä haulla valitetaan, tai "" jos valitettavaa ei ole.
+ *
+ * Asetuksen numero voittaa .env:n myös valituksessa, koska se on se jonka
+ * käyttäjä juuri kirjoitti ja siis se jota hän odottaa korjaavansa. .env:n
+ * numerosta valitetaan vain kun asetuksissa ei ole numeroa lainkaan eikä .env:n
+ * oma numero ratkennut — ja kun asetusten numero ratkesi, .env:n numero on
+ * ohitettu eikä siitä ole mitään sanottavaa.
+ *
+ * Enintään yksi numero per haku on tarkoituksellista: valitusmuistia on yksi,
+ * joten kahdesta vuorottelevasta numerosta valittaminen saisi varoituksen
+ * heilahtelemaan päälle joka toisella haulla.
+ */
+function offendingCode(
+  settingCode: string,
+  envCode: string,
+  fromSetting: WeatherLocation | null,
+  fromEnv: WeatherLocation | null,
+): string {
+  if (fromSetting) return "";
+  if (settingCode !== "") return settingCode;
+  return fromEnv ? "" : envCode;
 }
 
 /**
@@ -51,88 +97,87 @@ export interface WeatherLocationResult {
  * ilman että mikään kertoo miksi — ja kortin otsikko vaihtuisi niin
  * huomaamattomasti ettei sitä välttämättä huomaa. Edellinen sijainti pysyy siis
  * voimassa, ja loki kertoo mikä meni pieleen.
+ *
+ * Muisti koskee VAIN tuota tapausta. "Postinumeroa ei ole annettu" ja
+ * "postinumero on annettu mutta sitä ei tunneta" ovat eri tiloja, ja vain
+ * jälkimmäinen saa käyttää muistia — ks. resolve().
  */
 export class WeatherLocationResolver {
+  /** Nyt voimassa oleva sijainti, jotta tuntematon numero ei pudota sitä. */
   private lastGood: WeatherLocation | null = null;
+  /** Viimeksi valitettu numero, jotta sama varoitus ei toistu 20 min välein. */
   private lastWarnedCode: string | null = null;
 
   resolve(sources: WeatherLocationSources): WeatherLocationResult {
-    // Asetus ennen .env:ää: se on se jonka käyttäjä juuri vaihtoi, ja vain sen
-    // muuttaminen vaikuttaa ilman uudelleenkäynnistystä.
-    const fromSetting = this.tryPostalCode(sources.settingPostalCode);
-    if (fromSetting) return fromSetting;
-
-    // Asetuksiin tallennettu numero, jota ei löydy, on käyttäjän oma
-    // kirjoitusvirhe, ja siitä on varoitettava VAIKKA .env tarjoaisi
-    // kelvollisen numeron. Aiemmin varoitus annettiin vasta kun kumpikin lähde
-    // epäonnistui, joten näppäilyvirhe asetuksissa vaihtoi kortin
-    // paikkakunnan .env:n mukaiseksi täysin hiljaa — juuri se, minkä
-    // estämiseksi tämä luokka on olemassa.
     const settingCode = sources.settingPostalCode?.trim() ?? "";
-    const settingWarning = settingCode === "" ? null : this.pendingWarning(sources);
-    const warnMemory = this.lastWarnedCode;
-
     // Tyhjä .env-arvo ei ole postinumero vaan "ei asetettu", eikä siitä siis
     // varoiteta — muuten jokainen asennus jossa muuttujaa ei ole valittaisi.
     const envCode = sources.envPostalCode.trim();
-    const fromEnv = envCode === "" ? null : this.tryPostalCode(envCode);
+
+    // Asetus ennen .env:ää: se on se jonka käyttäjä juuri vaihtoi, ja vain sen
+    // muuttaminen vaikuttaa ilman uudelleenkäynnistystä.
+    const fromSetting = lookup(settingCode);
+    const fromEnv = fromSetting ? null : lookup(envCode);
+
+    // Varoitus muodostetaan TÄSMÄLLEEN KERRAN per haku ja TÄSMÄLLEEN YHDESTÄ
+    // numerosta. Kumpikin ehto on maksettu vialla:
+    //
+    //  • Kerran: aiemmin varoitus laskettiin kahdessa eri haarassa, ja
+    //    jälkimmäinen kutsu näki muistista oman äskeisen merkintänsä ja palautti
+    //    null — varoitus nieltiin kokonaan.
+    //  • Yhdestä numerosta: jos molemmat lähteet ovat tuntemattomia, valitetaan
+    //    vain asetusten numerosta. Kahden vuorottelevan numeron muistaminen
+    //    yhdessä muuttujassa saisi varoituksen heilahtelemaan (varoitus, ei
+    //    varoitusta, varoitus) — mitattu. Ks. offendingCode().
+    const offending = offendingCode(settingCode, envCode, fromSetting, fromEnv);
+    const where = settingCode !== "" ? "asetuksissa" : "WEATHER_POSTAL_CODE-muuttujassa";
+    const warning = this.warnOnce(offending, where);
+
+    if (fromSetting) {
+      this.lastGood = fromSetting;
+      return { location: fromSetting, source: "settings", warning };
+    }
     if (fromEnv) {
-      // tryPostalCode nollaa valitusmuistin onnistuessaan, mutta kelvollinen
-      // .env-numero ei tee asetusten virheellisestä numerosta yhtään
-      // oikeampaa. Palautus tehdään aina kun asetuksissa on numero — EI vain
-      // silloin kun varoitus juuri syntyi: vaimennetulla kierroksella muisti
-      // jäisi muuten nollatuksi, ja varoitus heilahtelisi päälle joka toisella
-      // haulla. Mitattu: varoitus, ei varoitusta, varoitus.
-      if (settingCode !== "") this.lastWarnedCode = warnMemory;
-      return { location: fromEnv.location, warning: settingWarning };
+      this.lastGood = fromEnv;
+      return { location: fromEnv, source: "env", warning };
     }
 
-    // Kumpikin postinumerolähde tyhjä tai tuntematon. Jos jokin sijainti on jo
-    // kerran ratkennut, pidetään se; muuten koordinaatit (tai niiden oletus)
-    // ovat ainoa jäljellä oleva tieto. Varoitus on tällöin jo annettu yllä,
-    // joten pudotus ei ole hiljainen.
-    const fallback = this.lastGood ?? sources.envLocation;
-    this.lastGood = fallback;
-    // Varoitus on voitu jo laskea asetusten numerolle yllä. pendingWarning
-    // muistaa mistä on valitettu, joten toinen kutsu samalla numerolla
-    // palauttaisi null ja nielaisisi varoituksen kokonaan — mitattu: testi
-    // "tuntemattomasta postinumerosta on varoitettava" kaatui juuri tähän.
-    const warning = settingWarning ?? this.pendingWarning(sources);
-    return { location: fallback, warning };
-  }
-
-  /**
-   * Postinumeron muuntoyritys. Palauttaa tuloksen vain jos numero on tunnettu;
-   * tuntematon numero jättää päätöksen kutsujalle, joka jatkaa
-   * etusijajärjestyksessä eteenpäin.
-   */
-  private tryPostalCode(code: string | null): WeatherLocationResult | null {
-    if (code === null || code.trim() === "") return null;
-    const found = lookupPostalCode(code);
-    if (!found) return null;
-
-    const location = { place: found.place, latitude: found.latitude, longitude: found.longitude };
+    // Kumpikaan lähde ei tuottanut tunnettua postinumeroa. Tässä on KAKSI ERI
+    // TILANNETTA, ja niiden sekoittaminen oli oma vikansa:
+    //
+    //  a) postinumeroa ei ole annettu lainkaan → .env:n koordinaatit ovat ainoa
+    //     oikea vastaus. Aiemmin tässäkin käytettiin `lastGood`ia, joten
+    //     postinumerokentän tyhjennys EI palauttanut .env:n sijaintia: äsken
+    //     asetettu kaupunki jäi voimaan uudelleenkäynnistykseen asti, hiljaa.
+    //  b) postinumero on annettu mutta sitä ei tunneta → edellinen kelvollinen
+    //     sijainti pidetään. Tämä on koko luokan olemassaolon syy, ja varoitus
+    //     on jo annettu yllä, joten pudotus ei jää hiljaiseksi.
+    const retained = settingCode !== "" || envCode !== "" ? this.lastGood : null;
+    const location = retained ?? sources.envLocation;
+    // Myös tyhjennyksen jälkeinen .env-sijainti on "edellinen kelvollinen":
+    // seuraava tuntematon numero pitää sen, ei jotain sitä vanhempaa.
     this.lastGood = location;
-    // Kun numero taas kelpaa, unohdetaan aiempi valitus: jos sama virheellinen
-    // numero kirjoitetaan myöhemmin uudelleen, siitä kuuluu varoittaa uudestaan.
-    this.lastWarnedCode = null;
-    return { location, warning: null };
+    return { location, source: retained ? "retained" : "env", warning };
   }
 
   /**
    * Varoitusteksti tuntemattomasta postinumerosta — kerran per numero, ei kerran
-   * per haku. Asetuksen numero voittaa .env:n myös valituksessa, koska se on se
-   * jonka käyttäjä juuri kirjoitti ja siis se jota hän odottaa korjaavansa.
+   * per haku. AINOA paikka joka koskee valitusmuistiin, ja se kutsutaan
+   * täsmälleen kerran jokaisella resolve-kutsulla.
+   *
+   * Tyhjä `offending` tarkoittaa ettei valitettavaa ole, jolloin muisti
+   * nollataan: jos sama virheellinen numero kirjoitetaan myöhemmin uudelleen,
+   * siitä kuuluu varoittaa uudestaan. Muisti EI nollaudu silloin kun asetuksissa
+   * on tuntematon numero mutta .env tarjoaa kelvollisen — kelvollinen
+   * .env-numero ei tee asetusten virheellisestä numerosta yhtään oikeampaa.
    */
-  private pendingWarning(sources: WeatherLocationSources): string | null {
-    const settingCode = sources.settingPostalCode?.trim() ?? "";
-    const envCode = sources.envPostalCode.trim();
-    const offending = settingCode !== "" ? settingCode : envCode;
-    if (offending === "") return null;
+  private warnOnce(offending: string, where: string): string | null {
+    if (offending === "") {
+      this.lastWarnedCode = null;
+      return null;
+    }
     if (offending === this.lastWarnedCode) return null;
     this.lastWarnedCode = offending;
-
-    const where = settingCode !== "" ? "asetuksissa" : "WEATHER_POSTAL_CODE-muuttujassa";
     return `Postinumeroa ${offending} (${where}) ei löydy postinumeroaineistosta — sään sijainti pidetään ennallaan.`;
   }
 }

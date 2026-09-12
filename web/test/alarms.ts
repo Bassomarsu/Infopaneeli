@@ -13,7 +13,9 @@ import {
   alarmsDueNow,
   alarmTargetForDate,
   describeOccurrence,
+  describeOccurrenceShort,
   nextAlarmOccurrence,
+  nextUpcomingAlarm,
   useAlarms,
   type AlarmSoundPlayer,
   type StorageLike,
@@ -351,6 +353,172 @@ const neverRung = () => false;
   const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
   assert.equal(nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST), null);
   console.log("ok  ei tunteja lähipäivinä -> esikatselu on null");
+}
+
+// --- nextUpcomingAlarm: yläpalkin "seuraava hälytys" -banneri ---
+//
+// Banneri näkyy TÄSMÄLLEEN silloin kun tämä palauttaa muun kuin nullin, joten
+// jokainen "ei näy" -vaatimus on tässä yksi null-tulos.
+
+// Aikaisin soitto voittaa — ei listajärjestys eikä viimeisin.
+{
+  const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const myohainen = alarm({ id: "myohainen", label: "Lähtö", trigger: { mode: "fixed", time: "07:45", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+  const aikainen = alarm({ id: "aikainen", label: "Herätys", trigger: { mode: "fixed", time: "07:10", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+
+  const next = nextUpcomingAlarm([myohainen, aikainen], wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST);
+  assert.ok(next, "tulevan soiton pitää löytyä");
+  assert.equal(next.alarm.id, "aikainen", "aikaisimman soiton hälytys voittaa, vaikka se on listassa jäljempänä");
+  assert.equal(next.occurrence.time.getHours(), 7);
+  assert.equal(next.occurrence.time.getMinutes(), 10);
+
+  // Sama lista toisin päin: tulos ei saa riippua järjestyksestä.
+  const sameBackwards = nextUpcomingAlarm([aikainen, myohainen], wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST);
+  assert.equal(sameBackwards?.alarm.id, "aikainen", "järjestys ei saa vaikuttaa tulokseen");
+  console.log("ok  banneri valitsee aikaisimman tulevan hälytyksen listajärjestyksestä riippumatta");
+}
+
+// Jo ohi mennyt aikaisempi hälytys ei voita — vertailu on SEURAAVASTA
+// soitosta, ei kellonajasta sinänsä.
+{
+  const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00"), lesson("2026-08-12", "08:00")] });
+  const aamu = alarm({ id: "aamu", label: "Aamu", trigger: { mode: "fixed", time: "07:10", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+  const ilta = alarm({ id: "ilta", label: "Ilta", trigger: { mode: "fixed", time: "20:00", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+
+  const next = nextUpcomingAlarm([aamu, ilta], wilma, wilma.students, at(2026, 8, 11, 12, 0), BREAKFAST);
+  assert.equal(next?.alarm.id, "ilta", "tänään jo mennyt 7.10 siirtyy huomiseen, joten tämän illan 20.00 on lähempänä");
+  assert.equal(next?.occurrence.dateKey, "2026-08-11");
+  console.log("ok  banneri vertaa seuraavia soittoja, ei pelkkiä kellonaikoja");
+}
+
+// Käytöstä poistettu hälytys ei näy bannerissa, vaikka se olisi aikaisin.
+{
+  const wilma = wilmaFor({ "1": [lesson("2026-08-11", "08:00")] });
+  const poissa = alarm({ id: "poissa", label: "Pois", enabled: false, trigger: { mode: "fixed", time: "06:00", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+  const paalla = alarm({ id: "paalla", label: "Päällä", trigger: { mode: "fixed", time: "07:30", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+
+  const next = nextUpcomingAlarm([poissa, paalla], wilma, wilma.students, at(2026, 8, 11, 5, 0), BREAKFAST);
+  assert.equal(next?.alarm.id, "paalla", "käytöstä poistettua ei lasketa mukaan vaikka se olisi aikaisin");
+
+  assert.equal(
+    nextUpcomingAlarm([poissa], wilma, wilma.students, at(2026, 8, 11, 5, 0), BREAKFAST),
+    null,
+    "pelkkä käytöstä poistettu hälytys ei tuota banneria",
+  );
+  console.log("ok  käytöstä poistettu hälytys ei näy bannerissa");
+}
+
+// Ei banneria ilman soittoja: tyhjä lista, ja hälytys jolle nextAlarmOccurrence
+// palauttaa nullin (loma — ei tunteja lähipäivinä, viikonpäivät valittuina).
+{
+  const wilma = wilmaFor({ "1": [] });
+  assert.equal(nextUpcomingAlarm([], wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST), null, "tyhjä hälytyslista");
+
+  const koulu = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
+  assert.equal(nextAlarmOccurrence(koulu, wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST), null, "esiehto: yksittäinen soitto on null");
+  assert.equal(
+    nextUpcomingAlarm([koulu], wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST),
+    null,
+    "lomalla lukujärjestykseen sidottu hälytys ei tuota banneria",
+  );
+
+  const eiPaivia = alarm({ id: "eipaivia", trigger: { mode: "fixed", time: "07:00", weekdays: [] } });
+  assert.equal(
+    nextUpcomingAlarm([eiPaivia], wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST),
+    null,
+    "hälytys ilman valittuja viikonpäiviä ei tuota banneria",
+  );
+  console.log("ok  banneri jää kokonaan pois kun yksikään hälytys ei tuota soittoa");
+}
+
+// Puhelin (wilma === null) ei saa nähdä koulun alkamisaikaa: lukujärjestykseen
+// sidottu hälytys katoaa bannerista itsestään, kiinteä kellonaika ei ole
+// koulutietoa ja jää näkyviin.
+{
+  const koulu = alarm({ id: "koulu", label: "Kouluun", trigger: { mode: "relative", minutesBefore: 30, studentNumber: null, weekdays: allWeekdays() } });
+  const aamupala = alarm({ id: "aamupala", label: "Aamupala", trigger: { mode: "relative", minutesBefore: 10, studentNumber: null, weekdays: allWeekdays("breakfast") } });
+  const kiintea = alarm({ id: "kiintea", label: "Kiinteä", trigger: { mode: "fixed", time: "07:45", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+
+  assert.equal(
+    nextUpcomingAlarm([koulu, aamupala], null, [], at(2026, 8, 11, 6, 0), BREAKFAST),
+    null,
+    "ilman Wilma-dataa kumpikaan ankkuri ei tuota soittoa — banneri ei voi paljastaa koulun alkamisaikaa",
+  );
+
+  const next = nextUpcomingAlarm([koulu, aamupala, kiintea], null, [], at(2026, 8, 11, 6, 0), BREAKFAST);
+  assert.equal(next?.alarm.id, "kiintea", "kiinteä kellonaika näkyy puhelimessakin");
+  assert.equal(describeOccurrenceShort(next!.occurrence, at(2026, 8, 11, 6, 0)), "7.45");
+  console.log("ok  puhelimella banneri näyttää vain kiinteät ajat, ei lukujärjestyksestä johdettuja");
+}
+
+// Tiivis muoto yläpalkkiin: tänään pelkkä kello, huomenna sanana, muuten
+// kaksikirjaiminen viikonpäivä. Sama kello kuin pitkässä muodossa.
+{
+  const wilma = wilmaFor({
+    "1": [lesson("2026-08-11", "08:00"), lesson("2026-08-12", "09:00"), lesson("2026-08-14", "10:25")],
+  });
+  const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
+
+  const today = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 6, 0), BREAKFAST);
+  assert.equal(describeOccurrenceShort(today!, at(2026, 8, 11, 6, 0)), "7.30");
+  assert.equal(describeOccurrence(today!, at(2026, 8, 11, 6, 0)), "tänään klo 7.30", "pitkä muoto kertoo saman kellonajan");
+
+  const tomorrow = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 11, 8, 0), BREAKFAST);
+  assert.equal(describeOccurrenceShort(tomorrow!, at(2026, 8, 11, 8, 0)), "huomenna 8.30");
+
+  // 2026-08-14 on perjantai — kahden päivän päässä, joten viikonpäivä lyhenteenä.
+  const friday = nextAlarmOccurrence(a, wilma, wilma.students, at(2026, 8, 12, 10, 0), BREAKFAST);
+  assert.equal(friday?.dateKey, "2026-08-14");
+  assert.equal(describeOccurrenceShort(friday!, at(2026, 8, 12, 10, 0)), "pe 9.55");
+  assert.equal(describeOccurrence(friday!, at(2026, 8, 12, 10, 0)), "perjantaina klo 9.55", "pitkä muoto kertoo saman päivän ja kellonajan");
+  console.log("ok  tiivis muoto: tänään pelkkä kello, huomenna sanana, muuten viikonpäivän lyhenne");
+}
+
+// Syysloman aatto: pelkkä viikonpäivän lyhenne ei kelpaa kun soitto on yli
+// viikon päässä, koska "ma" tarkoittaisi yhtä hyvin kolmen kuin kymmenen
+// päivän päässä olevaa hälytystä. Sama teksti ei saa tarkoittaa kahta eri
+// päivää.
+{
+  // pe 9.10.2026, lomaviikko 42, tunnit jatkuvat ma 19.10. (10 päivän päässä).
+  const loma = wilmaFor({ "1": [lesson("2026-10-19", "09:15")] });
+  const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
+  const perjantaiIltapaiva = at(2026, 10, 9, 18, 0);
+
+  const occ = nextAlarmOccurrence(a, loma, loma.students, perjantaiIltapaiva, BREAKFAST);
+  assert.equal(occ?.dateKey, "2026-10-19", "esiehto: seuraava soitto on loman jälkeisenä maanantaina");
+  assert.equal(
+    describeOccurrenceShort(occ!, perjantaiIltapaiva),
+    "ma 19.10. klo 8.45",
+    "yli viikon päässä oleva soitto tarvitsee päiväyksen — pelkkä \"ma\" olisi kahdeksi eri päiväksi luettavissa",
+  );
+
+  // Tavallinen perjantai: sama viikonpäivä, sama kellonaika, mutta kolmen
+  // päivän päässä -> lyhyt muoto riittää ja sen PITÄÄ erota lomatapauksesta.
+  const arki = wilmaFor({ "1": [lesson("2026-10-12", "09:15")] });
+  const arkiOcc = nextAlarmOccurrence(a, arki, arki.students, perjantaiIltapaiva, BREAKFAST);
+  assert.equal(arkiOcc?.dateKey, "2026-10-12");
+  assert.equal(describeOccurrenceShort(arkiOcc!, perjantaiIltapaiva), "ma 8.45");
+  console.log("ok  yli viikon päässä oleva soitto saa päiväyksen, lähempi pelkän viikonpäivän");
+}
+
+// Lyhyen muodon raja on tasan kuusi päivää: kuudes päivä on vielä
+// yksiselitteinen viikonpäivä, seitsemäs on jo sama viikonpäivä kuin tänään.
+{
+  const kuudes = wilmaFor({ "1": [lesson("2026-10-15", "08:30")] }); // to, 6 pv
+  const seitsemas = wilmaFor({ "1": [lesson("2026-10-16", "08:30")] }); // pe, 7 pv
+  const a = alarm({ trigger: { mode: "relative", minutesBefore: 30, studentNumber: "1", weekdays: allWeekdays() } });
+  const perjantai = at(2026, 10, 9, 18, 0);
+
+  const o6 = nextAlarmOccurrence(a, kuudes, kuudes.students, perjantai, BREAKFAST);
+  assert.equal(describeOccurrenceShort(o6!, perjantai), "to 8.00", "kuuden päivän päässä viikonpäivä riittää");
+
+  const o7 = nextAlarmOccurrence(a, seitsemas, seitsemas.students, perjantai, BREAKFAST);
+  assert.equal(
+    describeOccurrenceShort(o7!, perjantai),
+    "pe 16.10. klo 8.00",
+    "seitsemän päivän päässä viikonpäivä on sama kuin tänään — päiväys pakollinen",
+  );
+  console.log("ok  lyhyen muodon raja on tasan kuusi päivää");
 }
 
 /**

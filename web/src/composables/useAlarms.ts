@@ -155,6 +155,17 @@ export function alarmsDueNow(
   return due;
 }
 
+/**
+ * Kuinka monta päivää eteenpäin seuraavaa soittoa etsitään.
+ *
+ * ÄLÄ NOSTA TÄTÄ saadaksesi hälytyksen näkymään pitkien lomien yli. Raja ei
+ * ole se mikä siellä loppuu: lukujärjestykseen sidottu hälytys nojaa Wilman
+ * tuntitietoihin, eikä Wilma tiedä tammikuun tunteja joulukuussa. Suuremmalla
+ * luvulla haku vain kävisi läpi enemmän päiviä joista yhdelläkään ei ole
+ * tunteja ja palauttaisi silti nullin — tai, jos jostain löytyisi yksittäinen
+ * tunti, näyttäisi arvatun ajan varmana. Piilossa oleva banneri on rehellinen;
+ * arvattu aika ei olisi.
+ */
 const MAX_LOOKAHEAD_DAYS = 10;
 
 export interface AlarmOccurrence {
@@ -188,6 +199,54 @@ export function nextAlarmOccurrence(
   return null;
 }
 
+export interface UpcomingAlarm {
+  alarm: Alarm;
+  occurrence: AlarmOccurrence;
+}
+
+/**
+ * Aikaisin seuraava soitto KAIKKIEN hälytysten joukosta, tai null jos yksikään
+ * ei soi lähipäivinä. Yläpalkin "seuraava hälytys" -banneri lukee tämän, jotta
+ * hälytysaikoja ei laskettaisi kahdessa paikassa eri tavoin — sama peruste
+ * jolla `nextAlarmOccurrence` on jo hälytyspaneelin esikatselun ainoa lähde.
+ *
+ * Kolme tapausta joissa hälytystä EI oteta mukaan, ja ne kaikki päätyvät
+ * samaan lopputulokseen (null = ei banneria lainkaan):
+ *  - käytöstä poistettu (`enabled === false`) — sama sääntö kuin
+ *    `alarmsDueNow`illa, hälytys joka ei soi ei myöskään lupaa soittoa;
+ *  - `nextAlarmOccurrence` palauttaa nullin — esim. lukujärjestykseen sidottu
+ *    hälytys kun edessä ei ole yhtään koulupäivää (loma), tai kun viikonpäiviä
+ *    ei ole valittu ollenkaan;
+ *  - Wilma-data puuttuu (`wilma === null`): puhelin ei saa lukujärjestystä
+ *    palvelimelta (ks. server/src/routes/api.ts), jolloin relative-hälytysten
+ *    ankkuriaikaa ei voi laskea eikä banneri siis voi vahingossa paljastaa
+ *    koulun alkamisaikaa kotiverkon laitteelle. Tämä seuraa suoraan
+ *    `alarmTargetForDate`n olemassa olevasta logiikasta — sitä ei tarvitse
+ *    erikseen estää täällä. Kiinteä kellonaika (`fixed`) ei ole koulutietoa ja
+ *    näkyy myös puhelimessa.
+ *
+ * Tasatilanteessa (kaksi hälytystä samalle hetkelle) listan ensimmäinen
+ * voittaa — vain toinen mahtuu palkkiin, ja kumpi tahansa kertoo saman ajan.
+ */
+export function nextUpcomingAlarm(
+  alarms: Alarm[],
+  wilma: WilmaData | null,
+  allStudents: WilmaStudent[],
+  now: Date,
+  breakfastTime: string,
+): UpcomingAlarm | null {
+  let best: UpcomingAlarm | null = null;
+  for (const alarm of alarms) {
+    if (!alarm.enabled) continue;
+    const occurrence = nextAlarmOccurrence(alarm, wilma, allStudents, now, breakfastTime);
+    if (occurrence === null) continue;
+    if (best === null || occurrence.time.getTime() < best.occurrence.time.getTime()) {
+      best = { alarm, occurrence };
+    }
+  }
+  return best;
+}
+
 const WEEKDAYS = [
   "sunnuntaina",
   "maanantaina",
@@ -210,6 +269,50 @@ export function describeOccurrence(occurrence: AlarmOccurrence, now: Date): stri
   if (occurrence.dateKey === shiftDateKey(todayKey, 1)) return `huomenna klo ${time}`;
   const weekday = WEEKDAYS[occurrence.time.getDay()] ?? "";
   return `${weekday} klo ${time}`;
+}
+
+const WEEKDAYS_SHORT = ["su", "ma", "ti", "ke", "to", "pe", "la"];
+
+/**
+ * Kuinka kauas pelkkä viikonpäivän lyhenne riittää yksilöimään päivän.
+ *
+ * Tästä eteenpäin lyhenne alkaa toistua (offset 7 on sama viikonpäivä kuin
+ * tänään), joten "ma" tarkoittaisi yhtä hyvin kolmen kuin kymmenen päivän
+ * päässä olevaa soittoa. Juuri niin käy syys- ja talviloman aattona:
+ * perjantaina ennen lomaviikkoa seuraava tunti on vasta 10 päivän päässä,
+ * mutta banneri näyttäisi täsmälleen saman "ma 8.45" -tekstin kuin tavallisena
+ * perjantaina jolloin soitto on kolmen päivän päässä. Sitä pidemmälle
+ * menevään soittoon otetaan siis päiväys mukaan.
+ */
+const SHORT_WEEKDAY_HORIZON_DAYS = 6;
+
+/** "19.10." — päiväys ilman vuotta, sama muoto kuin korteilla. */
+function formatShortDate(date: Date): string {
+  return `${date.getDate()}.${date.getMonth() + 1}.`;
+}
+
+/**
+ * `describeOccurrence`n tiivis muoto: "7.55", "huomenna 7.55", "ke 7.55" tai
+ * — yli viikon päässä — "ma 19.10. klo 8.45".
+ *
+ * Yläpalkissa on tilaa vain muutamalle sanalle, ja "tänään klo" on siellä
+ * pelkkää täytettä: banneri näkyy vain kun soitto on tulossa, joten päiväys
+ * kannattaa mainita vasta kun se EI ole tämä päivä. Lyhyt muoto on kuitenkin
+ * oikea vain niin kauan kuin viikonpäivä on yksiselitteinen, ks.
+ * SHORT_WEEKDAY_HORIZON_DAYS. Sama `formatClock`, sama päiväraja
+ * (`shiftDateKey`) ja sama `occurrence.time.getDay()` kuin pitkässä muodossa,
+ * jottei kaksi esitystapaa voi antaa eri kellonaikaa tai eri päivää.
+ */
+export function describeOccurrenceShort(occurrence: AlarmOccurrence, now: Date): string {
+  const time = formatClock(occurrence.time);
+  const todayKey = toDateKey(now);
+  if (occurrence.dateKey === todayKey) return time;
+  if (occurrence.dateKey === shiftDateKey(todayKey, 1)) return `huomenna ${time}`;
+  const weekday = WEEKDAYS_SHORT[occurrence.time.getDay()] ?? "";
+  for (let offset = 2; offset <= SHORT_WEEKDAY_HORIZON_DAYS; offset += 1) {
+    if (occurrence.dateKey === shiftDateKey(todayKey, offset)) return `${weekday} ${time}`;
+  }
+  return `${weekday} ${formatShortDate(occurrence.time)} klo ${time}`;
 }
 
 // --- Vue-composable: reaktiivinen laukaisu, localStorage-kirjanpito ja ääni ---

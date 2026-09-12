@@ -1,6 +1,6 @@
 {
   "name": "infonaytto",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Kodin infonäyttö — Wilma, sää, pörssisähkö, kalenteri ja muistilista yhdellä ruudulla",
   "type": "module",

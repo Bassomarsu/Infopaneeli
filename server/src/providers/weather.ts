@@ -2,7 +2,11 @@ import { Provider } from "../core/provider.ts";
 import { config } from "../core/config.ts";
 import { logger } from "../core/logging.ts";
 import { getSettings } from "../core/settings.ts";
-import { WeatherLocationResolver, type WeatherLocation } from "../core/weather-location.ts";
+import {
+  WeatherLocationResolver,
+  type WeatherLocation,
+  type WeatherLocationSource,
+} from "../core/weather-location.ts";
 import { localDateKey, localParts } from "../core/time.ts";
 
 const API_URL = "https://api.open-meteo.com/v1/forecast";
@@ -218,6 +222,17 @@ function dailyForecast(daily: OpenMeteoDaily, hourly: OpenMeteoHourly): WeatherD
 const locationResolver = new WeatherLocationResolver();
 
 /**
+ * Nyt käytössä oleva sijainti ja se, mistä se tuli. Lähde kulkee mukana siksi,
+ * että asetuspaneeli näyttää sen käyttäjälle — selain ei voi päätellä sitä itse
+ * (ks. core/weather-location.ts), ja kun se aiemmin arvattiin tallennetusta
+ * asetuksesta, paneeli väitti .env-sijaintia asetuksista tulleeksi.
+ */
+export interface CurrentWeatherLocation {
+  location: WeatherLocation;
+  source: WeatherLocationSource;
+}
+
+/**
  * Sijainti HAKUHETKELLÄ, ei moduulin latautuessa: asetuksista vaihdettu
  * postinumero vaihtaa paikkakunnan ilman palvelimen uudelleenkäynnistystä, ja
  * se on koko muutoksen tarkoitus.
@@ -226,8 +241,8 @@ const locationResolver = new WeatherLocationResolver();
  * tuntematon postinumero on nimenomaan se tapaus jonka käyttäjän pitää nähdä
  * lokista ilman että hän ensin arvaa säätävänsä LOG_LEVELiä.
  */
-export function currentWeatherLocation(): WeatherLocation {
-  const { location, warning } = locationResolver.resolve({
+export function currentWeatherLocation(): CurrentWeatherLocation {
+  const { location, source, warning } = locationResolver.resolve({
     settingPostalCode: getSettings().weatherPostalCode,
     envPostalCode: config.weather.postalCode,
     envLocation: {
@@ -239,11 +254,11 @@ export function currentWeatherLocation(): WeatherLocation {
   if (warning) {
     logger.warn({ event: "weather_postal_code_unknown", place: location.place }, warning);
   }
-  return location;
+  return { location, source };
 }
 
 async function fetchWeather(): Promise<WeatherData> {
-  const location = currentWeatherLocation();
+  const { location } = currentWeatherLocation();
   const params = new URLSearchParams({
     latitude: String(location.latitude),
     longitude: String(location.longitude),

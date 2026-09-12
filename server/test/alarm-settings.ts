@@ -396,6 +396,71 @@ function testBreakfastTimeDefaultsAndValidates(): void {
   console.log("ok  breakfastTime oletusarvo on 08:00 ja validoidaan kellonaikana");
 }
 
+// --- Yläpalkin "seuraava hälytys" -banneri (Settings.hideNextAlarm) ---
+
+/**
+ * Katkaisin ominaisuudelle jonka käyttäjä pyysi, joten OLETUS ON PÄÄLLÄ:
+ * `hideNextAlarm: false`. Nimen `hide`-suunta on tahallinen — ks. kentän
+ * kommentti settings.ts:ssä — eikä sitä saa kääntää `show`-muotoon.
+ */
+function testHideNextAlarmDefaultsToShowingTheBanner(): void {
+  assert.equal(getSettings().hideNextAlarm, false, "oletus: banneri näkyy");
+  assert.equal(updateSettings({ hideNextAlarm: true }).hideNextAlarm, true);
+  assert.equal(updateSettings({ hideNextAlarm: false }).hideNextAlarm, false);
+
+  // Muita asetuksia ei saa koskea kun patch sisältää vain tämän kentän.
+  assert.equal(updateSettings({ hideNextAlarm: true }).hideMessagePreviews, false);
+  console.log("ok  hideNextAlarm oletus on false eli banneri näkyy, ja kytkin kulkee molempiin suuntiin");
+}
+
+/**
+ * Päivitystilanne: tietokannassa on jo asetusolio jossa uutta avainta ei ole.
+ * `getSettings()` levittää sen oletusten päälle, joten puuttuva avain saa
+ * oletuksen eikä `undefined`ia — muuten päivitys piilottaisi ominaisuuden
+ * kaikilta joilla on olemassa oleva asennus. Sama tilanne on tuotannossa jo
+ * nyt `weatherPostalCode`illa, joka puuttuu tallennetusta rivistä.
+ */
+function testStoredSettingsWithoutTheKeyStillShowTheBanner(): void {
+  setSetting("settings", {
+    visibleStudents: null,
+    scheduleLayout: "split",
+    rolloverTime: "12:00",
+    hideMessagePreviews: true,
+    nightModeStart: "21:30",
+    nightModeEnd: "06:00",
+    breakfastTime: "08:00",
+    panelLayout: null,
+    alarms: [],
+  });
+  const settings = getSettings();
+  assert.equal(settings.hideNextAlarm, false, "puuttuva avain saa oletuksen, ei undefinedia");
+  assert.equal(typeof settings.hideNextAlarm, "boolean", "arvo on boolean eikä undefined");
+  assert.equal(settings.hideMessagePreviews, true, "tallennetut arvot säilyvät ennallaan");
+  console.log("ok  vanha tallennettu asetusolio ilman uutta avainta näyttää bannerin oletuksena");
+}
+
+/**
+ * Asetukset tulevat kotiverkon puhelimelta, joten tyyppi tarkistetaan.
+ * Tiukkuus on tahallista: merkkijono "false" on JavaScriptissä tosi, joten
+ * tyyppipakotus kääntäisi juuri sen tapauksen väärin päin.
+ */
+function testHideNextAlarmRejectsNonBoolean(): void {
+  for (const bad of ["false", "true", 0, 1, null, "1", [], {}]) {
+    assert.throws(
+      () => updateSettings({ hideNextAlarm: bad }),
+      SettingsValidationError,
+      `${JSON.stringify(bad)} ei ole boolean`,
+    );
+  }
+  // Virheviesti nimeää oikean kentän — oma lohkonsa, ei jaettua boolean-silmukkaa.
+  assert.throws(
+    () => updateSettings({ hideNextAlarm: "kyllä" }),
+    (err: unknown) => err instanceof SettingsValidationError && err.message.includes("hideNextAlarm"),
+  );
+  assert.equal(getSettings().hideNextAlarm, false, "hylätty päivitys ei saa jättää jälkiä");
+  console.log("ok  hideNextAlarm hylkää ei-boolean arvot ja virheviesti nimeää kentän");
+}
+
 // --- Näytettävät lapset (Settings.visibleStudents / visiblePaikkyChildren) ---
 
 /**
@@ -448,6 +513,9 @@ testUpdateSettingsRoundTripsThroughAlarmsKey();
 testUpdateSettingsRejectsInvalidAlarms();
 testBreakfastTimeDefaultsAndValidates();
 testVisiblePaikkyChildrenDefaultsAndValidates();
+testHideNextAlarmDefaultsToShowingTheBanner();
+testStoredSettingsWithoutTheKeyStillShowTheBanner();
+testHideNextAlarmRejectsNonBoolean();
 
 console.log("\nall alarm settings tests passed");
 process.exit(0);
