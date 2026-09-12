@@ -264,6 +264,32 @@ export interface Note {
   createdAt: string;
 }
 
+/**
+ * Yksi Ylen uutinen. Kenttiä EI muokata selaimessa: Ylen käyttöehdot
+ * (https://yle.fi/aihe/a/20-10008076) sallivat otsikoiden näyttämisen mutta
+ * kieltävät sisällön muokkaamisen. Otsikon saa katkaista näyttötilan takia —
+ * se tehdään CSS:llä (`-webkit-line-clamp`), ei merkkijonoa leikkaamalla,
+ * jottei katkaistu teksti voi päätyä mihinkään muualle kuin ruudulle.
+ */
+export interface NewsItem {
+  id: string;
+  title: string;
+  /**
+   * Ylen oma osoite kyseiseen juttuun. Käytetään SELLAISENAAN — ehdot
+   * vaativat, että linkki vie suoraan vastaavaan juttuun Ylen sivustolla.
+   * Ei omaa osoitteenrakennusta, ei välisivua, ei hakua.
+   */
+  link: string;
+  /** ISO-hetki. */
+  publishedAt: string;
+  /** Null jos syöte ei anna ingressiä. */
+  summary: string | null;
+}
+
+export interface NewsData {
+  items: NewsItem[];
+}
+
 /** Pidettävä samana kuin server/src/core/settings.ts. */
 export const GRID_COLUMNS = 6;
 export const GRID_ROWS = 8;
@@ -282,6 +308,7 @@ export const PANEL_IDS = [
   "electricity",
   "calendar",
   "notes",
+  "news",
 ] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
@@ -303,16 +330,95 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   electricity: "Pörssisähkö",
   calendar: "Kalenteri",
   notes: "Muistilista",
+  news: "Uutiset",
 };
 
+/**
+ * Oletusasettelu täyttää ruudukon tasan (6x8 = 48 solua), joten uusi paneeli
+ * ei mahdu siihen ilman että jokin vanha kutistuu. Uutiset sai tilansa
+ * kalenterilta: kalenteri kaventui 4x2 -> 2x2 ja uutiset asettui sen viereen
+ * alariville. Kalenteri kestää sen parhaiten, koska sen oma kuukausinäkymä
+ * aukeaa silti otsikosta koko ruudun kokoisena.
+ *
+ * Pidettävä täsmälleen samana kuin server/src/core/settings.ts. Eri oletus
+ * puolin ja toisin tarkoittaisi, että palvelin ja selain ovat eri mieltä
+ * paneelin paikasta aina kun tallennettu asettelu puuttuu tai on kelvoton
+ * (ks. mergeWithDefaults usePanelLayout.ts:ssä).
+ */
 export const defaultPanelLayout: PanelLayout = {
   schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
   messages: { col: 1, row: 4, colSpan: 4, rowSpan: 3 },
-  calendar: { col: 1, row: 7, colSpan: 4, rowSpan: 2 },
+  calendar: { col: 1, row: 7, colSpan: 2, rowSpan: 2 },
+  news: { col: 3, row: 7, colSpan: 2, rowSpan: 2 },
   weather: { col: 5, row: 1, colSpan: 2, rowSpan: 3 },
   electricity: { col: 5, row: 4, colSpan: 2, rowSpan: 3 },
   notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
 };
+
+const PANEL_ID_SET: ReadonlySet<string> = new Set<string>(PANEL_IDS);
+
+export function isPanelId(value: unknown): value is PanelId {
+  return typeof value === "string" && PANEL_ID_SET.has(value);
+}
+
+/**
+ * Siivoaa tallennetun `hiddenPanels`-listan: tuntemattomat tunnisteet ja
+ * kaksoiskappaleet pois, järjestys aina PANEL_IDS:n mukainen.
+ *
+ * Tuntematon tunniste ei ole virhe eikä saa kaataa mitään — se voi olla
+ * jäänne paneelista joka on poistettu, tai käsin muokattu asetustiedosto.
+ * Se jätetään huomiotta, ei tulkita "piilota jotain".
+ */
+export function sanitizeHiddenPanels(stored: readonly unknown[] | null | undefined): PanelId[] {
+  if (!Array.isArray(stored)) return [];
+  const chosen = new Set(stored.filter(isPanelId));
+  return PANEL_IDS.filter((id) => chosen.has(id));
+}
+
+/**
+ * Renderöidäänkö paneeli. Sama vastaus myös muokkaustilassa: pois kytketty
+ * paneeli EI ole ruudukossa lainkaan, vaan muokkaustilan yläpalkin
+ * parkkirivissä (ks. App.vue). Ruudukkoon jätettynä se olisi väistämättä
+ * toisen kortin päällä aina kun asettelu on täynnä, ja kaksi päällekkäistä
+ * korttia on luettavuudeltaan pahempi kuin nimilaatta palkissa.
+ *
+ * KAKSI ERI SYYTÄ PIILOON, JOTKA EIVÄT SAA SEKOITTUA TOISIINSA:
+ *
+ *   1. Palvelin piilottaa arkaluontoisen datan laitteelta jolla ei ole
+ *      täyttä luottamusta (ProviderStatus "hidden", ks.
+ *      server/src/routes/api.ts SENSITIVE_PROVIDERS). Silloin paneeli
+ *      RENDERÖITYY yhä ja kertoo itse miksi se on tyhjä ("Vain
+ *      infonäytöllä", ks. CardShell.vue). Se on tieto käyttäjälle, ei
+ *      paneelin poisto.
+ *
+ *   2. Käyttäjä on kytkenyt paneelin pois näkymän muokkauksessa. Silloin
+ *      paneelia EI renderöidä lainkaan — ei korttia, ei selitystä.
+ *
+ * Tämä funktio vastaa VAIN kohdasta 2, eikä se siksi ota providerin tilaa
+ * parametrikseen lainkaan. Älä lisää sitä tähän: jos arkaluontoisuus
+ * valuisi `hiddenPanels`iin, puhelimella piilotettu lukujärjestys
+ * tallentuisi käyttäjän omaksi valinnaksi ja katoaisi myös seinänäytöltä.
+ */
+export function shouldRenderPanel(id: PanelId, hiddenPanels: readonly unknown[] | null | undefined): boolean {
+  return !isPanelHidden(id, hiddenPanels);
+}
+
+/** Onko paneeli käyttäjän piilottama. Tuntemattomat tunnisteet listassa jätetään huomiotta. */
+export function isPanelHidden(id: PanelId, hiddenPanels: readonly unknown[] | null | undefined): boolean {
+  if (!Array.isArray(hiddenPanels)) return false;
+  return hiddenPanels.some((entry) => entry === id);
+}
+
+/**
+ * Asetuspaneelin ja muokkaustilan lista: JOKAINEN paneeli, myös piilotetut.
+ * Tämä on se mikä tekee piilotuksesta peruutettavan — lista josta piilotetut
+ * on karsittu ei koskaan voisi palauttaa niitä.
+ */
+export function panelVisibilityRows(
+  hiddenPanels: readonly unknown[] | null | undefined,
+): Array<{ id: PanelId; title: string; hidden: boolean }> {
+  return PANEL_IDS.map((id) => ({ id, title: PANEL_TITLES[id], hidden: isPanelHidden(id, hiddenPanels) }));
+}
 
 /**
  * Ankkuri jota vasten "minuuttia ennen" lasketaan relative-tilan
@@ -398,6 +504,28 @@ export interface Settings {
   breakfastTime: string;
   /** Null = ei koskaan muokattu, käytetään oletusasettelua. */
   panelLayout: PanelLayout | null;
+  /**
+   * Paneelit jotka käyttäjä on kytkenyt pois näkyvistä. Oletus `[]` = kaikki
+   * näkyy.
+   *
+   * Suunta on `hidden` eikä `visible` samasta syystä kuin
+   * `hideMessagePreviews` ja `hideNextAlarm`: puuttuva avain ja tyhjä lista
+   * tarkoittavat molemmat "kaikki näkyy", joten oletus ei voi kääntyä
+   * vahingossa vanhalla tallennetulla asetusoliolla. `visible`-suunnalla
+   * tyhjä lista tarkoittaisi "ei mitään näkyvissä", eli yksikin puuttuva
+   * avain pimentäisi koko näytön.
+   *
+   * HUOM: uusi paneeli syntyy silti piilotettuna sellaiseen asennukseen,
+   * jossa on jo käyttäjän oma tallennettu asettelu — palvelin lisää sen
+   * `hiddenPanels`iin, koska ruudukko on täynnä eikä vapaata paikkaa ole
+   * (ks. server/src/core/settings.ts, `adoptNewPanels`). Se on tietoinen
+   * päätös eikä tämän avaimen suunnan seuraus: käyttäjä ottaa kortin
+   * käyttöön asetusten paneelilistasta, joka näyttää AINA myös piilotetut.
+   *
+   * EI ole sama asia kuin palvelimen arkaluontoisuussuodatus — ks.
+   * `shouldRenderPanel`.
+   */
+  hiddenPanels: PanelId[];
   alarms: Alarm[];
   /**
    * Sään sijainti postinumerona. null = käytetään .env:n arvoja.
@@ -416,12 +544,40 @@ export interface Dashboard {
   place: string;
   settings: Settings;
   notes: Note[];
+  /**
+   * SAAKO tämä asiakas nähdä arkaluontoista dataa. Tosi näyttölaitteelle,
+   * TRUSTED_HOSTS-laitteelle JA FULL_PIN:n syöttäneelle puhelimelle.
+   * Oikeuskysymys — ohjaa SENSITIVE_PROVIDERS-suodatusta ja muokkausoikeutta.
+   */
   localClient: boolean;
+  /**
+   * ONKO tämä se seinällä oleva laite. Tosi VAIN loopback-osoitteesta:
+   * kioski avataan aina http://localhost:PORTTI (asennus/kaynnista-kioski.ps1
+   * ja asennus/asenna-kioski.sh), eikä puhelin voi olla loopbackissa.
+   * Laitekysymys, ei oikeuskysymys.
+   *
+   * NÄMÄ KAKSI LIPPUA ON HELPPO SEKOITTAA, JOTEN PIDÄ ERO MIELESSÄ: ne
+   * eroavat toisistaan täsmälleen silloin kun puhelimella on FULL_PIN
+   * (localClient tosi, displayDevice epätosi) — ja juuri se tapaus on syy
+   * siihen että kenttiä on kaksi.
+   *
+   * EI OLE KÄYTTÖOIKEUS EIKÄ SITÄ SAA KÄYTTÄÄ SELLAISENA: loopback on
+   * väärennettävissä välityspalvelimella, joten tämä kelpaa vain
+   * ulkoasupäätöksiin (ks. App.vuen newsLinksAllowed). Jos tarvitset portin
+   * arkaluontoisen eteen, se on `localClient` — sen takana on PIN ja
+   * isäntälista.
+   */
+  displayDevice: boolean;
   providers: {
     electricity?: ProviderSnapshot<ElectricityData>;
     wilma?: ProviderSnapshot<WilmaData>;
     /** Puuttuu kokonaan jos Päikkyä ei ole konfiguroitu — kortit piilottavat välilehdet silloin. */
     paikky?: ProviderSnapshot<PaikkyData>;
+    /**
+     * Ylen uutisotsikot. EI SENSITIVE_PROVIDERS-listalla — julkiset otsikot
+     * eivät ole perheen tietoja, joten ne näkyvät myös puhelimella.
+     */
+    news?: ProviderSnapshot<NewsData>;
     [key: string]: ProviderSnapshot<unknown> | undefined;
   };
 }

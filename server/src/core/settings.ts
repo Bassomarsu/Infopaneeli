@@ -27,9 +27,16 @@ export const PANEL_IDS = [
   "electricity",
   "calendar",
   "notes",
+  "news",
 ] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
+
+const PANEL_ID_SET: ReadonlySet<string> = new Set(PANEL_IDS);
+
+export function isPanelId(value: unknown): value is PanelId {
+  return typeof value === "string" && PANEL_ID_SET.has(value);
+}
 
 export interface PanelPlacement {
   /** 1-based, inclusive. */
@@ -41,11 +48,28 @@ export interface PanelPlacement {
 
 export type PanelLayout = Record<PanelId, PanelPlacement>;
 
-/** Reproduces the layout the display shipped with, expressed on the grid. */
+/**
+ * Reproduces the layout the display shipped with, expressed on the grid.
+ *
+ * Ruudukko on täynnä: 6 × 8 = 48 solua, ja paneelit kattavat ne ilman aukkoja
+ * ja ilman päällekkäisyyttä (tarkistettu testissä, ks. test/panel-settings.ts —
+ * `parsePanelLayout` ei huomaisi päällekkäisyyttä). Uudelle paneelille on siis
+ * aina otettava tila joltakin toiselta.
+ *
+ * Uutiskortti sai tilansa KALENTERILTA, joka kapeni neljästä sarakkeesta
+ * kahteen. Vaihtoehto olisi ollut madaltaa jotakin — mutta 8 riviä jakautuu
+ * vähimmäiskorkeuden (MIN_PANEL_SPAN) takia enintään neljään paneeliin
+ * pystysuunnassa, joten uusi rivi olisi pakottanut lukujärjestyksen tai
+ * viestit kolmesta rivistä kahteen. Ne ovat näytön kaksi tärkeintä korttia.
+ * Leveyden ottaminen kalenterilta koskee vain yhtä korttia eikä lyhennä
+ * yhtäkään: alarivistä tulee kolme samankokoista 2 × 2 -korttia
+ * (kalenteri | uutiset | muistilista).
+ */
 export const defaultPanelLayout: PanelLayout = {
   schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
   messages: { col: 1, row: 4, colSpan: 4, rowSpan: 3 },
-  calendar: { col: 1, row: 7, colSpan: 4, rowSpan: 2 },
+  calendar: { col: 1, row: 7, colSpan: 2, rowSpan: 2 },
+  news: { col: 3, row: 7, colSpan: 2, rowSpan: 2 },
   weather: { col: 5, row: 1, colSpan: 2, rowSpan: 3 },
   electricity: { col: 5, row: 4, colSpan: 2, rowSpan: 3 },
   notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
@@ -166,6 +190,17 @@ export interface Settings {
   weatherPostalCode: string | null;
   /** Where each panel sits. Null means "never edited", so the default is used. */
   panelLayout: PanelLayout | null;
+  /**
+   * Paneelit jotka on kytketty pois näytöltä. Tyhjä lista = kaikki näkyvät.
+   *
+   * Suunta on `hidden` eikä `visible` samasta syystä kuin
+   * `hideMessagePreviews` ja `hideNextAlarm` yllä: `getSettings()` levittää
+   * tallennetun olion oletusten päälle, ja puuttuva avain tarkoittaa silloin
+   * tyhjää listaa eli "kaikki näkyy". `visiblePanels`-suunnassa sama puuttuva
+   * avain tai tyhjä lista tarkoittaisi tyhjää ruutua, ja jokainen myöhemmin
+   * lisättävä paneeli olisi oletuksena piilossa.
+   */
+  hiddenPanels: PanelId[];
   alarms: Alarm[];
 }
 
@@ -181,6 +216,7 @@ export const defaultSettings: Settings = {
   breakfastTime: "08:00",
   weatherPostalCode: null,
   panelLayout: null,
+  hiddenPanels: [],
   alarms: [],
 };
 
@@ -190,7 +226,132 @@ export function getSettings(): Settings {
   const stored = getSetting<Partial<Settings>>(KEY);
   const merged = { ...defaultSettings, ...(stored ?? {}) };
   merged.alarms = normalizeStoredAlarms(merged.alarms);
+  merged.hiddenPanels = normalizeStoredHiddenPanels(merged.hiddenPanels);
+  adoptNewPanels(merged);
   return merged;
+}
+
+/** Kelpaako tallennettu sijoittelu muodoltaan? Rajat tarkistaa parsePanelLayout. */
+function isStoredPlacement(value: unknown): value is PanelPlacement {
+  if (typeof value !== "object" || value === null) return false;
+  const p = value as Record<string, unknown>;
+  return (["col", "row", "colSpan", "rowSpan"] as const).every((k) => typeof p[k] === "number");
+}
+
+/**
+ * Päivityspolku: mitä tehdään paneelille, joka on lisättävään ohjelmistoon
+ * mutta jota ei ole käyttäjän tallennetussa asettelussa.
+ *
+ * UUSI PANEELI MENEE `hiddenPanels`iin, EI ASETTELUUN. Käyttäjän asettelu on
+ * käsin tehtyä työtä, eikä päivitys saa muuttaa sitä. Asettelu täyttää
+ * ruudukon kokonaan (ks. defaultPanelLayout), joten vapaata paikkaa ei ole
+ * MISSÄÄN — mikä tahansa automaattinen sijoitus menisi jonkin olemassa
+ * olevan kortin päälle. Piilotettu uusi kortti ei riko mitään, näkyy
+ * asetuksissa kytkimenä ja odottaa että käyttäjä tekee sille tilaa.
+ *
+ * KERTALUONTEISUUS ILMAN MERKKIÄ. Ehto luetaan datasta itsestään —
+ * "tunniste puuttuu tallennetusta asettelusta" — eikä erillisestä
+ * "migraatio tehty" -lipusta, samasta syystä kuin migrateMessageReads
+ * tunnistaa kohteensa taulun sarakkeista eikä versionumerosta
+ * (ks. core/store.ts): erillinen lippu voi ajautua eri mieleen kuin tila
+ * jota se kuvaa, ehto datasta ei voi.
+ *
+ * Ehto myös NOLLAUTUU ITSESTÄÄN eikä voi palautua: `parsePanelLayout` vaatii
+ * JOKAISEN paneelin, joten mikä tahansa asettelun tallennus kirjoittaa
+ * levylle täyden seitsemän paneelin asettelun. Heti kun käyttäjä ottaa
+ * uutiset käyttöön ja tallentaa, tunniste on asettelussa eikä tämä enää
+ * laukea — ei myöskään seuraavalla käynnistyksellä. Ja jos hän piilottaa
+ * kortin myöhemmin itse, se on hänen valintansa eikä tämä koske siihen.
+ *
+ * EI KIRJOITA LEVYLLE. Sama ratkaisu kuin normalizeStoredAlarmsilla: luetaan
+ * läpinäkyvästi, ei tallenneta normalisoitua muotoa takaisin. Tämä on myös
+ * vahvin mahdollinen vastaus siihen ettei puolittaista tilaa saa syntyä —
+ * migrateMessageReads tarvitsee transaktion ja varmuuskopion koska se
+ * kirjoittaa, tässä ei ole kirjoitusta jonka voisi keskeyttää. Kutsu on
+ * idempotentti ja kestää keskeytyksen määritelmällisesti.
+ *
+ * UUTTA ASENNUSTA EI KOSKETA: `panelLayout === null` tarkoittaa "ei koskaan
+ * muokattu", jolloin käytössä on defaultPanelLayout — siinä uutiset ovat
+ * mukana ja näkyvät normaalisti.
+ */
+/**
+ * Ensimmäinen vapaa `colSpan × rowSpan` -kokoinen alue, tai null jos
+ * ruudukko on täynnä.
+ *
+ * Läpikäynti on rivi kerrallaan ylhäältä alas ja vasemmalta oikealle, ja
+ * DETERMINISTISYYS ON TÄSSÄ VAATIMUS EIKÄ SATTUMA: `adoptNewPanels` ajetaan
+ * joka `getSettings()`-kutsulla eikä se kirjoita tulosta levylle, joten
+ * saman kannan on tuotettava sama sijoitus joka kerta. Muuten paneelin
+ * paikka hyppisi pyynnöstä toiseen.
+ */
+function findFreeSpot(
+  layout: PanelLayout,
+  occupants: readonly PanelId[],
+  size: PanelPlacement,
+): PanelPlacement | null {
+  const occupied = new Set<string>();
+  for (const id of occupants) {
+    const p = layout[id];
+    for (let c = p.col; c < p.col + p.colSpan; c++) {
+      for (let r = p.row; r < p.row + p.rowSpan; r++) occupied.add(`${c},${r}`);
+    }
+  }
+
+  for (let row = 1; row + size.rowSpan - 1 <= GRID_ROWS; row++) {
+    for (let col = 1; col + size.colSpan - 1 <= GRID_COLUMNS; col++) {
+      let fits = true;
+      for (let c = col; c < col + size.colSpan && fits; c++) {
+        for (let r = row; r < row + size.rowSpan && fits; r++) {
+          if (occupied.has(`${c},${r}`)) fits = false;
+        }
+      }
+      if (fits) return { col, row, colSpan: size.colSpan, rowSpan: size.rowSpan };
+    }
+  }
+  return null;
+}
+
+function adoptNewPanels(settings: Settings): void {
+  const stored = settings.panelLayout;
+  if (stored === null || typeof stored !== "object") return;
+
+  const layout = stored as unknown as Record<string, unknown>;
+  const absent = PANEL_IDS.filter((id) => !(id in layout));
+  const unusable = PANEL_IDS.filter((id) => !isStoredPlacement(layout[id]));
+  if (unusable.length === 0) return;
+
+  // Sijoittelu täydennetään KAIKILLE kelvottomille, myös rikkinäisille:
+  // muuten getSettings palauttaisi vajaan asettelun, jonka asetuspaneeli
+  // lähettää sellaisenaan takaisin (se levittää koko settings-olion
+  // PUT:iin) ja parsePanelLayout torjuisi sen 400:lla. Päivitetyn
+  // asennuksen asetuspaneeli olisi siis käyttökelvoton.
+  //
+  // Paikaksi etsitään ensisijaisesti VAPAA alue käyttäjän omasta
+  // asettelusta, ja vasta jos sellaista ei ole, tyydytään oletuspaikkaan.
+  // Ero näkyy vain asettelussa johon käyttäjä on jättänyt tilaa: siellä uusi
+  // kortti on käyttökelpoinen heti kytkimen kääntämisen jälkeen, kun taas
+  // oletuspaikka olisi todennäköisesti jonkin päällä. Täydessä ruudukossa
+  // vapaata ei ole eikä tulos muutu — se on tavallisin tapaus, koska
+  // defaultPanelLayout täyttää ruudukon kokonaan.
+  //
+  // Oletuspaikka jää siis varasijaksi, ja se saa olla päällekkäinen:
+  // piilotetun paneelin sijoitus on parkkipaikka eikä piirtopaikka
+  // (ks. assertNoVisibleOverlap).
+  const completed = { ...(stored as PanelLayout) };
+  const occupants = PANEL_IDS.filter((id) => !unusable.includes(id));
+  for (const id of unusable) {
+    completed[id] = findFreeSpot(completed, occupants, defaultPanelLayout[id]) ?? { ...defaultPanelLayout[id] };
+    // Seuraava täydennettävä ei saa mennä juuri sijoitetun päälle.
+    occupants.push(id);
+  }
+  settings.panelLayout = completed;
+
+  // Piilotetaan vain AIDOSTI UUDET, ei rikkinäisiä: rikkinäinen sijoittelu
+  // on käyttäjän olemassa oleva kortti, jota ei saa kytkeä pois hänen
+  // selkänsä takana.
+  for (const id of absent) {
+    if (!settings.hiddenPanels.includes(id)) settings.hiddenPanels.push(id);
+  }
 }
 
 export class SettingsValidationError extends Error {}
@@ -241,8 +402,20 @@ export function updateSettings(patch: unknown): Settings {
     next.weatherPostalCode = parseWeatherPostalCode(input["weatherPostalCode"]);
   }
 
+  // Oma lohkonsa, ei osa panelLayoutia: kortin piilottaminen ei saa vaatia
+  // koko asettelun lähettämistä, eikä piilotettu kortti menetä paikkaansa
+  // ruudukolla. Näin käyttöön palautettu kortti ilmestyy sinne mistä se
+  // otettiin pois.
+  //
+  // ENNEN panelLayoutia, koska asettelun päällekkäisyystarkistus tarvitsee
+  // tietää mitkä paneelit ovat näkyvissä — ja sama pyyntö voi muuttaa
+  // molempia (muokkaustilan "Valmis" lähettää ne parina).
+  if ("hiddenPanels" in input) {
+    next.hiddenPanels = parseHiddenPanels(input["hiddenPanels"]);
+  }
+
   if ("panelLayout" in input) {
-    next.panelLayout = parsePanelLayout(input["panelLayout"]);
+    next.panelLayout = parsePanelLayout(input["panelLayout"], next.hiddenPanels);
   }
 
   if ("alarms" in input) {
@@ -312,6 +485,56 @@ function parseWeatherPostalCode(value: unknown): string | null {
   return trimmed;
 }
 
+/**
+ * Lista piilotettavista paneeleista. Tuntematon tunniste on virhe: se
+ * tarkoittaa että selain ja palvelin ovat eri mieltä siitä mitä paneeleja on
+ * olemassa, ja hiljainen hylkäys jättäisi käyttäjän luulemaan että kortti
+ * piilotettiin. Virheteksti nimeää kentän ja indeksin.
+ *
+ * DUPLIKAATIT SIISTITÄÄN, EI HYLÄTÄ. Tämä poikkeaa hälytysten
+ * viikonpäivälistoista (parseRelativeWeekdays), joissa sama päivä kahdesti
+ * hylätään — ja ero on tarkoituksellinen: siellä kaksi alkiota voi olla eri
+ * mieltä (sama päivä, eri ankkuri), joten päällekkäisyys on aito
+ * ristiriita. Tässä alkiolla ei ole muuta sisältöä kuin tunniste, joten
+ * "piilota sää" kahdesti tarkoittaa täsmälleen samaa kuin kerran. Nopea
+ * kaksoisnapautus puhelimessa ei ansaitse 400:aa, jonka jälkeen paneeli olisi
+ * jumissa kunnes joku tyhjentää listan käsin. Järjestys säilyy ensimmäisen
+ * esiintymän mukaan.
+ *
+ * Kaikkien paneelien piilottamista ei estetä: tyhjä ruutu on outo mutta
+ * käyttäjän oma valinta, ja asetuspaneeli ei ole paneeli — sitä kautta
+ * pääsee aina takaisin.
+ */
+export function parseHiddenPanels(value: unknown): PanelId[] {
+  if (!Array.isArray(value)) {
+    throw new SettingsValidationError("hiddenPanels: lista paneelitunnisteita");
+  }
+  const out: PanelId[] = [];
+  value.forEach((raw, index) => {
+    if (!isPanelId(raw)) {
+      throw new SettingsValidationError(`hiddenPanels[${index}]: tuntematon paneelitunniste`);
+    }
+    if (!out.includes(raw)) out.push(raw);
+  });
+  return out;
+}
+
+/**
+ * Sama siivous lukua varten: ei koskaan heitä. Tallennettu lista on
+ * normaalisti aina parseHiddenPanelsin kirjoittamaa, mutta tunniste voi jäädä
+ * roikkumaan jos paneeli joskus poistetaan tai jos laitteella on ajettu
+ * uudempi versio ja palattu vanhempaan. Tuntematon tunniste ei saa kaataa
+ * asetusten lukua eikä vuotaa dashboardiin.
+ */
+function normalizeStoredHiddenPanels(value: unknown): PanelId[] {
+  if (!Array.isArray(value)) return [];
+  const out: PanelId[] = [];
+  for (const raw of value) {
+    if (isPanelId(raw) && !out.includes(raw)) out.push(raw);
+  }
+  return out;
+}
+
 function positiveInt(value: unknown, label: string, max: number): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) {
     throw new SettingsValidationError(`panelLayout.${label}: kokonaisluku väliltä 1–${max}`);
@@ -325,7 +548,53 @@ function positiveInt(value: unknown, label: string, max: number): number {
  * trusted from the client. Every panel must be present: a partial layout would
  * silently drop a card.
  */
-export function parsePanelLayout(value: unknown): PanelLayout | null {
+function placementsOverlap(a: PanelPlacement, b: PanelPlacement): boolean {
+  return (
+    a.col <= b.col + b.colSpan - 1 &&
+    a.col + a.colSpan - 1 >= b.col &&
+    a.row <= b.row + b.rowSpan - 1 &&
+    a.row + a.rowSpan - 1 >= b.row
+  );
+}
+
+/**
+ * Kaksi paneelia ei saa olla päällekkäin — MUTTA VAIN NÄKYVIEN KESKEN.
+ *
+ * Rajoista huolimatta mikään ei aiemmin estänyt lähettämästä kaikkia
+ * seitsemää paneelia samaan 2×2-soluun: jokainen mahtuu ruudukkoon
+ * erikseen, ja vain sitä tarkistettiin. Päällekkäisyys tallentui ensimmäisellä
+ * tallennuksella, ja siitä tuli pysyvä tila.
+ *
+ * PIILOTETUN PANEELIN SIJOITUS ON PARKKIPAIKKA, EI PIIRTOPAIKKA. Sitä ei
+ * renderöidä, joten se ei voi mennä minkään päälle. Ero on välttämätön eikä
+ * hienosäätöä: päivityspolku (ks. adoptNewPanels) parkkeeraa uuden paneelin
+ * oletuspaikkaansa, joka menee käyttäjän kortin päälle aina kun hänen
+ * asettelunsa on täynnä — eikä se voi olla muualla, koska vapaata solua ei
+ * ole. Jos tämä tarkistus koskisi myös piilotettuja, päivitetyn asennuksen
+ * asetuspaneeli palauttaisi 400:n heti ensimmäisestä tallennuksesta ja olisi
+ * käyttökelvoton.
+ *
+ * ÄLÄ siis "yhtenäistä" tätä koskemaan kaikkia paneeleita.
+ */
+function assertNoVisibleOverlap(layout: PanelLayout, hiddenPanels: readonly PanelId[]): void {
+  const visible = PANEL_IDS.filter((id) => !hiddenPanels.includes(id));
+  for (let i = 0; i < visible.length; i++) {
+    for (let j = i + 1; j < visible.length; j++) {
+      const a = visible[i] as PanelId;
+      const b = visible[j] as PanelId;
+      if (placementsOverlap(layout[a], layout[b])) {
+        throw new SettingsValidationError(`panelLayout: ${a} ja ${b} ovat päällekkäin`);
+      }
+    }
+  }
+}
+
+/**
+ * `hiddenPanels` kertoo mitkä paneelit ovat näkyvissä päällekkäisyys-
+ * tarkistusta varten (ks. assertNoVisibleOverlap). Ilman sitä kaikkia
+ * käsitellään näkyvinä, mikä on tiukin tulkinta ja siksi turvallinen oletus.
+ */
+export function parsePanelLayout(value: unknown, hiddenPanels: readonly PanelId[] = []): PanelLayout | null {
   if (value === null) return null;
   if (typeof value !== "object") {
     throw new SettingsValidationError("panelLayout: objekti tai null");
@@ -358,6 +627,8 @@ export function parsePanelLayout(value: unknown): PanelLayout | null {
     }
     layout[id] = { col, row, colSpan, rowSpan };
   }
+
+  assertNoVisibleOverlap(layout, hiddenPanels);
 
   return layout;
 }

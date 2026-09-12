@@ -8,6 +8,7 @@ import KioskExitDialog from "./components/KioskExitDialog.vue";
 import KioskExitHotspot from "./components/KioskExitHotspot.vue";
 import LayoutEditor from "./components/LayoutEditor.vue";
 import MessagesCard from "./components/MessagesCard.vue";
+import NewsCard from "./components/NewsCard.vue";
 import NotesCard from "./components/NotesCard.vue";
 import ScheduleCard from "./components/ScheduleCard.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -19,8 +20,10 @@ import { useDashboard } from "./composables/useDashboard";
 import { useEditAccess } from "./composables/useEditAccess.ts";
 import { panelGridKey, usePanelLayout } from "./composables/usePanelLayout";
 import { useScheduleDay } from "./composables/useScheduleDay";
+import { PANEL_IDS, panelVisibilityRows, shouldRenderPanel, type PanelId } from "./types";
 import type {
   ElectricityData,
+  NewsData,
   PaikkyData,
   PanelLayout,
   ProviderSnapshot,
@@ -81,6 +84,7 @@ const wilma = computed(() => provider<WilmaData>("wilma"));
 // Undefined = Päikkyä ei ole konfiguroitu. Kortit tulkitsevat sen niin, ettei
 // välilehtiä näytetä lainkaan, joten tata EI saa korvata tyhjällä oletuksella.
 const paikky = computed(() => provider<PaikkyData>("paikky"));
+const news = computed(() => provider<NewsData>("news"));
 
 const settings = computed<Settings | null>(() => dashboard.value?.settings ?? null);
 const wilmaData = computed(() => wilma.value?.data ?? null);
@@ -167,6 +171,17 @@ const currentHour = computed(() => now.value.getHours());
 // isTrustedClient-tilaa — Wilma-data pysyy palvelimen päättämänä
 // piilotettuna siltä, riippumatta tästä.
 const isTrustedClient = computed(() => dashboard.value?.localClient ?? false);
+
+/**
+ * Onko tämä se seinällä oleva kioskinäyttö (ks. displayDevice types.ts:ssä).
+ * ERI KYSYMYS kuin `isTrustedClient`: liput eroavat täsmälleen silloin kun
+ * puhelimella on FULL_PIN. Oletus `false` on turvallinen suunta vain tälle
+ * käyttötarkoitukselle — ennen ensimmäistä vastausta ei renderöidä vielä
+ * mitään uutisia, joten linkkejäkään ei ehdi syntyä.
+ *
+ * VAIN ULKOASUUN. Tämä ei ole käyttöoikeus eikä sitä saa käyttää sellaisena.
+ */
+const isDisplayDevice = computed(() => dashboard.value?.displayDevice ?? false);
 const canEdit = computed(() => isTrustedClient.value || editAccess.hasStoredPin.value);
 
 // Puhelin jolla ei ole täyttä luottamusta ei näe Wilma-dataa (palvelin
@@ -175,6 +190,38 @@ const canEdit = computed(() => isTrustedClient.value || editAccess.hasStoredPin.
 // AlarmsPanel/SettingsPanel käyttävät tätä erottaakseen "ei tunteja
 // lähipäivinä" -tilan "tätä laitetta ei ole luotettu" -tilasta.
 const canPreviewSchedule = computed(() => isTrustedClient.value);
+
+/*
+ * ── Saako uutisotsikosta olla linkki yle.fi:hin ──────────────────────────────
+ *
+ * Kioskiselaimessa ulos navigointi on peruuttamatonta: tavallinen linkki vie
+ * dashboardin pois ja `KioskExitHotspot` tuhoutuu sen mukana, ja
+ * `target="_blank"` avaa toisen koko ruudun ikkunan dashboardin päälle ilman
+ * otsikkopalkkia. Kummastakaan ei pääse takaisin ilman näppäimistöä. Ylen
+ * ehdot vaativat, että JOS linkitetään, linkki vie suoraan juttuun — ne
+ * eivät vaadi linkittämistä.
+ *
+ * EHTO ON `displayDevice`, EI `localClient` EIKÄ RUUDUN LEVEYS. Kioski
+ * avataan aina http://localhost:PORTTI, joten loopback on täsmälleen se
+ * kysymys johon tässä tarvitaan vastaus (ks. displayDevicen kommentti
+ * types.ts:ssä).
+ *
+ * Tässä ehtona oli kahdesti jotain muuta, ja molemmat olivat väärin:
+ *
+ *   - `!isTrustedClient` olisi vienyt linkit myös TRUSTED_HOSTS-puhelimelta
+ *     ja FULL_PIN:n syöttäneeltä puhelimelta. Wilman takia koodin syöttänyt
+ *     vanhempi menettäisi linkit juuri siltä laitteelta jolla ne ovat koko
+ *     pointti. `localClient` on oikeuskysymys, tämä on laitekysymys.
+ *
+ *   - `!isTrustedClient || kapea ruutu` rikkoi kioskin: oikealla
+ *     kioskiselaimella sama localhost antoi 3840 px:llä nolla linkkiä mutta
+ *     800x1280:llä kaksitoista. Raspberry Pi:n virallinen paneeli on
+ *     800x480 ja asennus/KAYTTOONOTTO.md lupaa Pi-tuen, joten kapea
+ *     seinänäyttö on tuettu kokoonpano eikä reunatapaus. LEVEYS EI KERRO
+ *     MITÄÄN KIOSKIUDESTA — se korreloi puhelimen kanssa, eikä korrelaatio
+ *     riitä kun väärä arvaus rikkoo laitteen jolta ei pääse ulos.
+ */
+const newsLinksAllowed = computed(() => !isDisplayDevice.value);
 
 /**
  * Mitä tallennettu koodi TÄLLÄ HETKELLÄ avaa — aina johdettu tuoreimmasta
@@ -237,7 +284,32 @@ const gridEl = ref<HTMLElement | null>(null);
 provide(panelGridKey, gridEl);
 
 const panelLayoutSetting = computed<PanelLayout | null>(() => settings.value?.panelLayout ?? null);
-const panelLayout = usePanelLayout(panelLayoutSetting, canEdit, refresh);
+// Puuttuva avain vanhassa tallennetussa asetusoliossa tarkoittaa "kaikki
+// näkyy" — ks. hiddenPanelsin kommentti types.ts:ssä.
+const hiddenPanelsSetting = computed<readonly unknown[] | null>(() => settings.value?.hiddenPanels ?? null);
+const panelLayout = usePanelLayout(panelLayoutSetting, hiddenPanelsSetting, canEdit, refresh);
+
+/**
+ * Renderöidäänkö paneeli ruudukossa. Sama vastaus myös muokkaustilassa: pois
+ * kytketty paneeli on yläpalkin parkkirivissä, ei ruudukossa. Sääntö on
+ * kokonaan types.ts:n `shouldRenderPanel`issa, jotta se on testattavissa
+ * ilman selainta ja jotta arkaluontoisuussuodatus ei voi vuotaa siihen (ks.
+ * sen kommentti).
+ */
+function renders(id: PanelId): boolean {
+  return shouldRenderPanel(id, panelLayout.hiddenPanels.value);
+}
+
+const allPanelsHidden = computed(() => !panelLayout.editing.value && !PANEL_IDS.some((id) => renders(id)));
+
+/**
+ * Pois kytketyt paneelit muokkaustilan yläpalkkiin. Tämä on ainoa paikka
+ * josta ne saa takaisin muokkaustilassa, joten listan on sisällettävä ne
+ * kaikki — ks. panelVisibilityRows.
+ */
+const parkedPanels = computed(() =>
+  panelVisibilityRows(panelLayout.hiddenPanels.value).filter((row) => row.hidden),
+);
 
 function minutesOfDay(value: string): number {
   const [h, m] = value.split(":").map(Number);
@@ -261,12 +333,46 @@ const isNight = computed(() => {
 <template>
   <div class="app" :class="{ night: isNight }">
     <header v-if="panelLayout.editing.value" class="topbar topbar--editing">
-      <span class="topbar__editing-label" :class="{ 'topbar__editing-label--notice': panelLayout.notice.value }">
-        {{
-          panelLayout.notice.value ??
-          "Muokkaa asettelua — raahaa paneeleja, kahva oikeassa alakulmassa muuttaa kokoa"
-        }}
-      </span>
+      <div class="topbar__editing-main">
+        <span class="topbar__editing-label" :class="{ 'topbar__editing-label--notice': panelLayout.notice.value }">
+          {{
+            panelLayout.notice.value ??
+            "Muokkaa asettelua — raahaa paneeleja, kahva oikeassa alakulmassa muuttaa kokoa"
+          }}
+        </span>
+
+        <!--
+          Parkkirivi: pois kytketyt paneelit. Nämä EIVÄT ole ruudukossa —
+          ruudukkoon jätettynä ne olisivat väistämättä toisen kortin päällä
+          aina kun asettelu on täynnä (ks. shouldRenderPanel types.ts:ssä), ja
+          kahden päällekkäisen kortin sekamelska on luettavuudeltaan pahempi
+          kuin nimi palkissa. Samalla tämä tekee näkyväksi sen, että pois
+          kytketty paneeli ei varaa ruutuja: ruudukkoon jää aito aukko jonka
+          naapurin voi heti kasvattaa täyttämään.
+
+          Painallus yrittää ottaa paneelin takaisin. Se voi epäonnistua
+          tilanpuutteeseen, jolloin syy tulee yllä olevaan selitteeseen
+          (panelLayout.notice) — nappia ei siis kytketä pois käytöstä, koska
+          harmaa nappi ilman syytä ei kerro mitä pitäisi tehdä.
+        -->
+        <div v-if="parkedPanels.length > 0" class="parked">
+          <span class="parked__caption">Pois käytöstä:</span>
+          <button
+            v-for="row in parkedPanels"
+            :key="row.id"
+            type="button"
+            class="parked__chip"
+            :title="`Ota paneeli ${row.title} takaisin käyttöön`"
+            @click="panelLayout.showPanel(row.id)"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            </svg>
+            {{ row.title }}
+          </button>
+        </div>
+      </div>
+
       <div class="topbar__editing-actions">
         <button
           type="button"
@@ -443,12 +549,14 @@ const isNight = computed(() => {
 
     <main ref="gridEl" class="grid" :class="{ 'grid--editing': panelLayout.editing.value }">
       <LayoutEditor
+        v-if="renders('schedule')"
         class="grid__slot--schedule"
         panel-id="schedule"
         :placement="panelLayout.layout.value.schedule"
         :editing="panelLayout.editing.value"
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('schedule', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('schedule', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('schedule')"
       >
         <ScheduleCard
           :snapshot="wilma"
@@ -461,23 +569,27 @@ const isNight = computed(() => {
       </LayoutEditor>
 
       <LayoutEditor
+        v-if="renders('weather')"
         class="grid__slot--weather"
         panel-id="weather"
         :placement="panelLayout.layout.value.weather"
         :editing="panelLayout.editing.value"
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('weather', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('weather', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('weather')"
       >
         <WeatherCard :snapshot="weather" :place="dashboard?.place" />
       </LayoutEditor>
 
       <LayoutEditor
+        v-if="renders('messages')"
         class="grid__slot--messages"
         panel-id="messages"
         :placement="panelLayout.layout.value.messages"
         :editing="panelLayout.editing.value"
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('messages', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('messages', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('messages')"
       >
         <MessagesCard
           :snapshot="wilma"
@@ -487,37 +599,69 @@ const isNight = computed(() => {
       </LayoutEditor>
 
       <LayoutEditor
+        v-if="renders('electricity')"
         class="grid__slot--power"
         panel-id="electricity"
         :placement="panelLayout.layout.value.electricity"
         :editing="panelLayout.editing.value"
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('electricity', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('electricity', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('electricity')"
       >
         <ElectricityCard :snapshot="electricity" :current-hour="currentHour" />
       </LayoutEditor>
 
       <LayoutEditor
+        v-if="renders('calendar')"
         class="grid__slot--calendar"
         panel-id="calendar"
         :placement="panelLayout.layout.value.calendar"
         :editing="panelLayout.editing.value"
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('calendar', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('calendar', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('calendar')"
       >
         <CalendarCard :snapshot="calendar" />
       </LayoutEditor>
 
       <LayoutEditor
+        v-if="renders('notes')"
         class="grid__slot--notes"
         panel-id="notes"
         :placement="panelLayout.layout.value.notes"
         :editing="panelLayout.editing.value"
         @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('notes', col, row, pointerCol, pointerRow)"
         @resize="(colSpan, rowSpan) => panelLayout.resizePanel('notes', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('notes')"
       >
         <NotesCard :notes="dashboard?.notes ?? []" :can-edit="canEdit" @refresh="refresh" />
       </LayoutEditor>
+
+      <LayoutEditor
+        v-if="renders('news')"
+        class="grid__slot--news"
+        panel-id="news"
+        :placement="panelLayout.layout.value.news"
+        :editing="panelLayout.editing.value"
+        @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel('news', col, row, pointerCol, pointerRow)"
+        @resize="(colSpan, rowSpan) => panelLayout.resizePanel('news', colSpan, rowSpan)"
+        @hide="panelLayout.hidePanel('news')"
+      >
+        <NewsCard :snapshot="news" :linkable="newsLinksAllowed" />
+      </LayoutEditor>
+
+      <!--
+        Kaikki paneelit voi kytkeä pois — sitä ei estetä, koska estäminen
+        tarkoittaisi että jokin paneeli olisi pakko pitää näkyvissä, eikä
+        mikään niistä ansaitse sitä asemaa. Tyhjä ruutu ei kuitenkaan saa
+        olla umpikuja: yläpalkki hammasrattaineen on `.grid`in ULKOPUOLELLA
+        eikä katoa mihinkään, ja tämä teksti kertoo mistä paneelit saa
+        takaisin. Ilman sitä ruutu näyttäisi rikkinäiseltä.
+      -->
+      <p v-if="allPanelsHidden" class="grid__empty">
+        Kaikki paneelit on kytketty pois näkyvistä. Avaa asetukset yläpalkin
+        hammasrattaasta ja valitse näytettävät paneelit.
+      </p>
     </main>
 
     <!--
@@ -1015,9 +1159,52 @@ const isNight = computed(() => {
   padding: 0.7rem 1rem;
 }
 
+.topbar__editing-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
 .topbar__editing-label {
   font-size: 0.9rem;
   color: var(--text-dim);
+}
+
+.parked {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.parked__caption {
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Kosketusalue sormelle: 44 px korkea kuten muutkin muokkaustilan painikkeet. */
+.parked__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  border: 1px dashed var(--text-faint);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.parked__chip:hover,
+.parked__chip:focus-visible {
+  border-style: solid;
+  border-color: var(--accent-school);
+  color: var(--text);
 }
 
 /* Hylätyn siirron/koon muutoksen selite — huomiota herättävämpi väri, mutta
@@ -1089,6 +1276,39 @@ const isNight = computed(() => {
   grid-template-rows: repeat(8, minmax(0, 1fr));
 }
 
+/*
+ * Pois kytketty paneeli jättää jälkeensä AUKON eikä tiivistä muita.
+ *
+ * Tiivistäminen — muiden paneelien siirtäminen tyhjän tilalle — olisi
+ * näyttävämpää, mutta se kirjoittaisi käyttäjän itse raahaaman asettelun
+ * uusiksi. Silloin paneelin takaisin kytkeminen ei palauttaisi mitään
+ * entiselleen: paneeli tulisi takaisin johonkin, ja kaikki muut olisivat jo
+ * muualla. Kokeilemisesta tulisi peruuttamaton teko, ja käyttäjä menettäisi
+ * asettelunsa juuri sillä että kokeili miltä näyttää ilman jotain paneelia.
+ *
+ * Aukko taas on täysin peruutettavissa: `hiddenPanels` ei kosketa
+ * `panelLayout`iin lainkaan (ks. usePanelLayoutin `togglePanelHidden`), joten
+ * paneeli palaa aina täsmälleen samaan ruutuun josta se katosi. Jos aukko
+ * häiritsee, käyttäjä siirtää paneelit itse muokkaustilassa — se on hänen
+ * valintansa eikä meidän tekemämme.
+ *
+ * Kapealla ruudulla (mediakysely alempana) ruudukko on pinottu flex-sarake,
+ * joten siellä aukkoa ei synny lainkaan: piilotettu paneeli vain puuttuu
+ * pinosta.
+ */
+.grid__empty {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  align-self: center;
+  justify-self: center;
+  max-width: 26rem;
+  margin: 0;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 .grid--editing {
   outline: 1px dashed var(--border);
   outline-offset: 0.4rem;
@@ -1116,20 +1336,25 @@ const isNight = computed(() => {
   .grid__slot--notes {
     order: 1;
   }
-  .grid__slot--calendar {
+  .grid__slot--news {
+    /* Uutiset heti muistilistan jälkeen: puhelimessa ne ovat kortti jota
+       oikeasti selataan, ja siellä otsikot ovat myös linkkejä. */
     order: 2;
   }
-  .grid__slot--weather {
+  .grid__slot--calendar {
     order: 3;
   }
-  .grid__slot--power {
+  .grid__slot--weather {
     order: 4;
   }
-  .grid__slot--schedule {
+  .grid__slot--power {
     order: 5;
   }
-  .grid__slot--messages {
+  .grid__slot--schedule {
     order: 6;
+  }
+  .grid__slot--messages {
+    order: 7;
   }
 }
 </style>

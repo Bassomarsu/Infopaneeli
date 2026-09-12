@@ -6,6 +6,8 @@ import {
   MIN_PANEL_SPAN,
   PANEL_IDS,
   defaultPanelLayout,
+  isPanelHidden,
+  sanitizeHiddenPanels,
   type PanelId,
   type PanelLayout,
   type PanelPlacement,
@@ -88,6 +90,47 @@ export function mergeWithDefaults(stored: PanelLayout | null): PanelLayout {
   return merged;
 }
 
+/**
+ * Ne NÄKYVÄT paneelit jotka menevät toistensa päälle annetulla asettelulla.
+ * Tyhjä lista = ruudukko on kunnossa.
+ *
+ * Tavallisessa käytössä tämä on aina tyhjä: resolveMove ja resolveResize
+ * eivät päästä päällekkäisyyttä syntymään. Yksi tilanne sen silti tuottaa,
+ * eikä se ole teoreettinen:
+ *
+ * Kun ohjelmistoon lisätään uusi paneeli, palvelin täydentää sen käyttäjän
+ * vanhaan tallennettuun asetteluun OLETUSPAIKALLEEN ja kytkee sen pois
+ * päältä (server/src/core/settings.ts, `adoptNewPanels`) — ruudukko on
+ * täynnä, joten vapaata paikkaa ei ole. Oletuspaikka on kuitenkin varattu
+ * sellaisessa asettelussa, jonka käyttäjä on itse tehnyt toisenlaiseksi.
+ * Sillä hetkellä kun hän kytkee uuden paneelin päälle, kaksi korttia on
+ * samoissa ruuduissa.
+ *
+ * Päällekkäisyyttä ei estetä eikä korjata automaattisesti: kumman pitäisi
+ * väistää, on käyttäjän päätös, ja automaattinen siirto kirjoittaisi hänen
+ * asetteluaan uusiksi. Sen sijaan tilanne KERROTAAN (ks. SettingsPanel.vue),
+ * jottei se jää ihmeteltäväksi ruudulle.
+ */
+export function overlappingVisiblePanels(
+  layout: PanelLayout,
+  hiddenPanels: readonly unknown[] | null | undefined,
+): PanelId[] {
+  const visible = PANEL_IDS.filter((id) => !isPanelHidden(id, hiddenPanels));
+  const clashing = new Set<PanelId>();
+  for (let i = 0; i < visible.length; i++) {
+    for (let j = i + 1; j < visible.length; j++) {
+      const a = visible[i];
+      const b = visible[j];
+      if (a === undefined || b === undefined) continue;
+      if (overlaps(layout[a], layout[b])) {
+        clashing.add(a);
+        clashing.add(b);
+      }
+    }
+  }
+  return PANEL_IDS.filter((id) => clashing.has(id));
+}
+
 /** Miksi paneelin siirto hylättiin — käytetään muokkaustilan yläpalkin selitteeseen. */
 export type MoveRejectionReason = "size-mismatch" | "occupied";
 
@@ -97,9 +140,29 @@ export interface MoveOutcome {
   rejected: MoveRejectionReason | null;
 }
 
-/** Mikä paneeli (jos mikään) omistaa annetun solun. Ruudukon invariantin ansiosta enintään yksi voi omistaa sen. */
-function cellOwner(layout: PanelLayout, excludeId: PanelId, col: number, row: number): PanelId | null {
-  for (const otherId of PANEL_IDS) {
+/**
+ * Ne paneelit jotka ovat oikeasti ruudulla. Piilotetun paneelin sijoitus on
+ * PARKKIPAIKKA eikä piirtopaikka: sitä ei renderöidä, joten se ei voi peittää
+ * mitään eikä se saa varata ruutuja muilta. Ilman tätä eroa paneelin pois
+ * kytkeminen ei vapauttaisi yhtään tilaa — käyttäjä piilottaisi sähkökortin
+ * eikä silti voisi kasvattaa säätä sen paikalle.
+ *
+ * Sama raja kuin palvelimen validoinnissa: se hylkää päällekkäisyyden vain
+ * näkyvien paneelien kesken (ks. server/src/core/settings.ts).
+ */
+function visibleIds(hiddenPanels: readonly unknown[] | null | undefined): PanelId[] {
+  return PANEL_IDS.filter((id) => !isPanelHidden(id, hiddenPanels));
+}
+
+/** Mikä NÄKYVÄ paneeli (jos mikään) omistaa annetun solun. Ruudukon invariantin ansiosta enintään yksi voi omistaa sen. */
+function cellOwner(
+  layout: PanelLayout,
+  excludeId: PanelId,
+  col: number,
+  row: number,
+  hiddenPanels: readonly unknown[] | null | undefined,
+): PanelId | null {
+  for (const otherId of visibleIds(hiddenPanels)) {
     if (otherId === excludeId) continue;
     const p = layout[otherId];
     if (col >= p.col && col <= p.col + p.colSpan - 1 && row >= p.row && row <= p.row + p.rowSpan - 1) {
@@ -149,10 +212,12 @@ export function resolveMove(
   targetRow: number,
   pointerCol: number,
   pointerRow: number,
+  /** Piilotetut paneelit eivät ole ruudulla eivätkä siksi tiellä — ks. visibleIds. */
+  hiddenPanels: readonly unknown[] | null | undefined = [],
 ): MoveOutcome {
   const current = layout[id];
 
-  const ownerId = cellOwner(layout, id, clamp(pointerCol, 1, GRID_COLUMNS), clamp(pointerRow, 1, GRID_ROWS));
+  const ownerId = cellOwner(layout, id, clamp(pointerCol, 1, GRID_COLUMNS), clamp(pointerRow, 1, GRID_ROWS), hiddenPanels);
   if (ownerId !== null) {
     const owner = layout[ownerId];
     if (!sameSize(owner, current)) {
@@ -169,7 +234,7 @@ export function resolveMove(
   if (col === current.col && row === current.row) return { layout, rejected: null };
 
   const candidate: PanelPlacement = { ...current, col, row };
-  const blocked = PANEL_IDS.some((otherId) => otherId !== id && overlaps(candidate, layout[otherId]));
+  const blocked = visibleIds(hiddenPanels).some((otherId) => otherId !== id && overlaps(candidate, layout[otherId]));
   if (blocked) return { layout, rejected: "occupied" };
   return { layout: { ...layout, [id]: candidate }, rejected: null };
 }
@@ -193,12 +258,16 @@ export function resolveResize(
   id: PanelId,
   targetColSpan: number,
   targetRowSpan: number,
+  /** Piilotetut paneelit eivät ole ruudulla eivätkä siksi tiellä — ks. visibleIds. */
+  hiddenPanels: readonly unknown[] | null | undefined = [],
 ): PanelLayout {
   const current = layout[id];
   let colSpan = clamp(targetColSpan, MIN_PANEL_SPAN, GRID_COLUMNS - current.col + 1);
   let rowSpan = clamp(targetRowSpan, MIN_PANEL_SPAN, GRID_ROWS - current.row + 1);
 
-  const others = PANEL_IDS.filter((otherId) => otherId !== id).map((otherId) => layout[otherId]);
+  const others = visibleIds(hiddenPanels)
+    .filter((otherId) => otherId !== id)
+    .map((otherId) => layout[otherId]);
   const fits = (cs: number, rs: number): boolean =>
     !others.some((other) => overlaps({ ...current, colSpan: cs, rowSpan: rs }, other));
 
@@ -222,6 +291,102 @@ export function resolveResize(
   return { ...layout, [id]: { ...current, colSpan, rowSpan } };
 }
 
+/**
+ * Ensimmäinen vapaa paikka annetun kokoiselle paneelille, näkyvien paneelien
+ * väleistä. Null = ei mahdu mihinkään.
+ *
+ * Haku käy ruudukon läpi ylhäältä alas ja vasemmalta oikealle, joten tulos on
+ * sama joka kerta eikä riipu paneelien järjestyksestä — sattumanvarainen
+ * sijoituspaikka olisi juuri se mitä käyttäjä ei voi ennakoida.
+ */
+export function findFreeSpot(
+  layout: PanelLayout,
+  hiddenPanels: readonly unknown[] | null | undefined,
+  id: PanelId,
+  colSpan: number,
+  rowSpan: number,
+): PanelPlacement | null {
+  const others = visibleIds(hiddenPanels)
+    .filter((otherId) => otherId !== id)
+    .map((otherId) => layout[otherId]);
+  for (let row = 1; row <= GRID_ROWS - rowSpan + 1; row++) {
+    for (let col = 1; col <= GRID_COLUMNS - colSpan + 1; col++) {
+      const candidate: PanelPlacement = { col, row, colSpan, rowSpan };
+      if (!others.some((other) => overlaps(candidate, other))) return candidate;
+    }
+  }
+  return null;
+}
+
+/** Miksi paneelin käyttöönotto ei onnistunut. null = onnistui. */
+export type EnableRejectionReason = "no-room";
+
+export interface EnableOutcome {
+  layout: PanelLayout;
+  hiddenPanels: PanelId[];
+  rejected: EnableRejectionReason | null;
+  /** true = paneeli ei mahtunut entiselle paikalleen ja se sijoitettiin muualle. */
+  relocated: boolean;
+}
+
+/**
+ * Paneelin ottaminen takaisin käyttöön.
+ *
+ * TÄMÄ EI OLE PELKKÄ LISTASTA POISTO, koska piilotetun paneelin sijoitus on
+ * parkkipaikka eikä piirtopaikka (ks. visibleIds). Parkkipaikka voi olla
+ * toisen paneelin päällä — päivityksen mukana tullut uusi paneeli saa
+ * oletuspaikkansa käyttäjän omaan asetteluun, ja jos se asettelu on täynnä,
+ * oletuspaikka on väistämättä jonkin päällä. Pelkkä listasta poisto laittaisi
+ * silloin kaksi korttia samoihin ruutuihin, ja palvelin torjuisi tallennuksen
+ * 400:lla (ks. server/src/core/settings.ts).
+ *
+ * Kolme tapausta, tässä järjestyksessä:
+ *
+ *   1. Parkkipaikka on vapaa → paneeli palaa TÄSMÄLLEEN siihen. Tämä on
+ *      tavallinen tapaus: käyttäjä kytki kortin pois ja takaisin eikä muuta
+ *      ehtinyt liikkua. Juuri tämä tekee kytkimestä peruutettavan.
+ *   2. Parkkipaikka on varattu, mutta samankokoinen paikka löytyy muualta →
+ *      paneeli sijoitetaan sinne. Siirretään VAIN käyttöön otettavaa
+ *      paneelia, ei koskaan naapuria: käyttäjän näkyvä asettelu pysyy
+ *      koskemattomana.
+ *   3. Mikään ei mahdu → EI OTETA KÄYTTÖÖN. Ei kutisteta ketään
+ *      automaattisesti tilan tekemiseksi; kumpi kortti väistää, on käyttäjän
+ *      päätös. Kutsuja kertoo syyn (ks. ENABLE_REJECTION_MESSAGES).
+ *
+ * Koko on aina paneelin oma tallennettu koko. Sitä ei pienennetä
+ * mahtumisen vuoksi — se olisi hiljainen muutos käyttäjän asetteluun, ja
+ * pienennetty kortti palaisi väärän kokoisena.
+ */
+export function enablePanel(
+  layout: PanelLayout,
+  hiddenPanels: readonly unknown[] | null | undefined,
+  id: PanelId,
+): EnableOutcome {
+  const stored = sanitizeHiddenPanels(hiddenPanels);
+  const remaining = stored.filter((entry) => entry !== id);
+  if (!stored.includes(id)) return { layout, hiddenPanels: stored, rejected: null, relocated: false };
+
+  const parked = layout[id];
+  const others = visibleIds(remaining)
+    .filter((otherId) => otherId !== id)
+    .map((otherId) => layout[otherId]);
+
+  if (!others.some((other) => overlaps(parked, other))) {
+    return { layout, hiddenPanels: remaining, rejected: null, relocated: false };
+  }
+
+  const spot = findFreeSpot(layout, remaining, id, parked.colSpan, parked.rowSpan);
+  if (spot === null) {
+    return { layout, hiddenPanels: stored, rejected: "no-room", relocated: false };
+  }
+  return {
+    layout: { ...layout, [id]: spot },
+    hiddenPanels: remaining,
+    rejected: null,
+    relocated: true,
+  };
+}
+
 /** Suomenkieliset selitteet hylätylle siirrolle — näytetään muokkaustilan yläpalkissa. */
 const MOVE_REJECTION_MESSAGES: Record<MoveRejectionReason, string> = {
   "size-mismatch": "Eri kokoiset paneelit eivät vaihda paikkaa — muuta ensin kokoa.",
@@ -229,9 +394,26 @@ const MOVE_REJECTION_MESSAGES: Record<MoveRejectionReason, string> = {
 };
 
 const RESIZE_BLOCKED_MESSAGE = "Ei mahdu tähän — toinen paneeli tiellä.";
+const ENABLE_NO_ROOM_MESSAGE =
+  "Ruudukossa ei ole tilaa. Pienennä tai siirrä jotakin korttia, niin paneeli mahtuu.";
+const ENABLE_RELOCATED_MESSAGE = "Entinen paikka oli varattu — paneeli sijoitettiin lähimpään vapaaseen kohtaan.";
+const OVERLAP_SAVE_MESSAGE = "Kaksi paneelia on päällekkäin — siirrä toinen ennen tallennusta.";
 const MIN_SPAN_MESSAGE = `Pienin koko on ${MIN_PANEL_SPAN}×${MIN_PANEL_SPAN} solua.`;
 
-export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit: Ref<boolean>, onSaved?: () => void) {
+export function usePanelLayout(
+  settingsLayout: Ref<PanelLayout | null>,
+  /**
+   * Tallennettu `hiddenPanels`. Samassa composablessa asettelun kanssa eikä
+   * omassaan, koska ne ovat saman luonnoksen kaksi puolta: "Valmis"
+   * tallentaa molemmat yhdellä pyynnöllä ja "Peruuta" hylkää molemmat.
+   * Erillisinä käyttäjä voisi perua paneelin siirron mutta ei sen
+   * piilotusta, mikä on juuri se puolittainen tila jota muokkaustilassa ei
+   * saa olla.
+   */
+  settingsHidden: Ref<readonly unknown[] | null | undefined>,
+  canEdit: Ref<boolean>,
+  onSaved?: () => void,
+) {
   const editAccess = useEditAccess();
   const editing = ref(false);
   const saving = ref(false);
@@ -263,6 +445,9 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
   const baseLayout = computed<PanelLayout>(() => mergeWithDefaults(settingsLayout.value));
   const draft = ref<PanelLayout>(cloneLayout(baseLayout.value));
 
+  const baseHidden = computed<PanelId[]>(() => sanitizeHiddenPanels(settingsHidden.value));
+  const hiddenDraft = ref<PanelId[]>([...baseHidden.value]);
+
   // Palvelimelta tuleva uusi asettelu (esim. toinen selain tallensi) korvaa
   // luonnoksen vain silloin kun ei olla parhaillaan muokkaamassa — muuten
   // kesken oleva raahaus hyppäisi alta pois.
@@ -270,7 +455,19 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
     if (!editing.value) draft.value = cloneLayout(next);
   });
 
+  watch(baseHidden, (next) => {
+    if (!editing.value) hiddenDraft.value = [...next];
+  });
+
   const layout = computed<PanelLayout>(() => (editing.value ? draft.value : baseLayout.value));
+
+  /**
+   * Piilotetut paneelit. Muokkaustilassa luonnos, muuten tallennettu tila —
+   * täsmälleen sama kuvio kuin `layout`illa yllä ja samasta syystä: kesken
+   * oleva muokkaus ei saa hypähtää alta pois kun palvelin vastaa
+   * pollaukseen.
+   */
+  const hiddenPanels = computed<PanelId[]>(() => (editing.value ? hiddenDraft.value : baseHidden.value));
 
   function startEditing(): void {
     // Kapealla näytöllä paneelit on pinottu (ks. App.vuen mobiilimedia-
@@ -280,6 +477,7 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
     // tilan lisäksi, jos joku kutsuisi tätä suoraan.
     if (!canEdit.value || editing.value || isNarrowViewport()) return;
     draft.value = cloneLayout(baseLayout.value);
+    hiddenDraft.value = [...baseHidden.value];
     error.value = null;
     setNotice(null);
     editing.value = true;
@@ -291,14 +489,17 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
    * PUT (verkko poikki, palvelin torjui asettelun) ei saa hukata koko
    * raahaustyötä äänettömästi ilman uudelleenyrityksen mahdollisuutta.
    */
-  async function persist(next: PanelLayout | null): Promise<boolean> {
+  async function persist(next: PanelLayout | null, nextHidden: PanelId[]): Promise<boolean> {
     saving.value = true;
     error.value = null;
     try {
       const response = await editAccess.editFetch("/api/settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ panelLayout: next }),
+        // Osittainen PUT: vain nämä kaksi avainta. Muokkaustila ei tiedä
+        // mitään muista asetuksista eikä saa kirjoittaa niiden päälle —
+        // asetuspaneeli voi olla auki toisella laitteella samaan aikaan.
+        body: JSON.stringify({ panelLayout: next, hiddenPanels: nextHidden }),
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -334,16 +535,33 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
   // kokonaan ilman että käyttäjä pääsisi enää yrittämään uudelleen.
   async function finishEditing(): Promise<void> {
     if (!editing.value) return;
+    // Palvelin hylkää asettelun jossa kaksi NÄKYVÄÄ paneelia on päällekkäin
+    // (ks. server/src/core/settings.ts). Tavallisessa käytössä sitä ei voi
+    // syntyä — resolveMove, resolveResize ja enablePanel torjuvat sen
+    // kaikki — mutta tallennus ei saa lähteä siitä siltikään: palvelimen
+    // 400 kertoisi saman asian huonommin ja vasta verkkokäynnin jälkeen.
+    const clashing = overlappingVisiblePanels(draft.value, hiddenDraft.value);
+    if (clashing.length > 0) {
+      setNotice(OVERLAP_SAVE_MESSAGE);
+      return;
+    }
     setNotice(null);
-    const ok = await persist(draft.value);
+    const ok = await persist(draft.value, hiddenDraft.value);
     if (ok) editing.value = false;
   }
 
+  /**
+   * Palauttaa sekä paikat/koot ETTÄ näkyvyyden oletuksiin. Näkyvyys on
+   * mukana tarkoituksella: tämä on ainoa tie takaisin tunnettuun tilaan, ja
+   * juuri se jota tarvitaan silloin kun paneeleja on kytketty pois niin
+   * monta ettei näytöllä ole enää mitään.
+   */
   async function resetToDefault(): Promise<void> {
     if (!editing.value) return;
     draft.value = cloneLayout(defaultPanelLayout);
+    hiddenDraft.value = [];
     setNotice(null);
-    const ok = await persist(null);
+    const ok = await persist(null, []);
     if (ok) editing.value = false;
   }
 
@@ -351,6 +569,7 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
   function cancelEditing(): void {
     if (!editing.value) return;
     draft.value = cloneLayout(baseLayout.value);
+    hiddenDraft.value = [...baseHidden.value];
     error.value = null;
     setNotice(null);
     editing.value = false;
@@ -358,7 +577,7 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
 
   function movePanel(id: PanelId, col: number, row: number, pointerCol: number, pointerRow: number): void {
     if (!editing.value) return;
-    const outcome = resolveMove(draft.value, id, col, row, pointerCol, pointerRow);
+    const outcome = resolveMove(draft.value, id, col, row, pointerCol, pointerRow, hiddenDraft.value);
     draft.value = outcome.layout;
     setNotice(outcome.rejected !== null ? MOVE_REJECTION_MESSAGES[outcome.rejected] : null);
   }
@@ -366,7 +585,7 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
   function resizePanel(id: PanelId, colSpan: number, rowSpan: number): void {
     if (!editing.value) return;
     const before = draft.value[id];
-    const next = resolveResize(draft.value, id, colSpan, rowSpan);
+    const next = resolveResize(draft.value, id, colSpan, rowSpan, hiddenDraft.value);
     draft.value = next;
 
     // Kahva (LayoutEditor) päästää raa'an, typistämättömän pyynnön asti tänne
@@ -382,9 +601,48 @@ export function usePanelLayout(settingsLayout: Ref<PanelLayout | null>, canEdit:
     setNotice(blocked ? RESIZE_BLOCKED_MESSAGE : null);
   }
 
+  /**
+   * Kytkee paneelin pois näkyvistä. EI KOSKE `draft`iin eli paneelin paikkaan
+   * ja kokoon millään tavalla: sijoitus jää muistiin parkkipaikaksi, ja juuri
+   * siksi paneeli palaa takaisin entiselle paikalleen jos se on yhä vapaa.
+   * Pois kytkeminen VAPAUTTAA ruudut muille (ks. visibleIds), joten
+   * naapuria voi heti kasvattaa vapautuneeseen tilaan.
+   */
+  function hidePanel(id: PanelId): void {
+    if (!editing.value || hiddenDraft.value.includes(id)) return;
+    setNotice(null);
+    hiddenDraft.value = PANEL_IDS.filter((entry) => entry === id || hiddenDraft.value.includes(entry));
+  }
+
+  /**
+   * Ottaa paneelin takaisin käyttöön. Voi epäonnistua: jos ruudukossa ei ole
+   * tilaa, mitään ei tapahdu ja käyttäjälle kerrotaan mitä hänen pitää tehdä
+   * (ks. enablePanel — emme kutista naapuria hänen puolestaan).
+   */
+  function showPanel(id: PanelId): void {
+    if (!editing.value || !hiddenDraft.value.includes(id)) return;
+    const outcome = enablePanel(draft.value, hiddenDraft.value, id);
+    if (outcome.rejected !== null) {
+      setNotice(ENABLE_NO_ROOM_MESSAGE);
+      return;
+    }
+    draft.value = outcome.layout;
+    hiddenDraft.value = outcome.hiddenPanels;
+    setNotice(outcome.relocated ? ENABLE_RELOCATED_MESSAGE : null);
+  }
+
+  function togglePanelHidden(id: PanelId): void {
+    if (hiddenDraft.value.includes(id)) showPanel(id);
+    else hidePanel(id);
+  }
+
   return {
     editing,
     layout,
+    hiddenPanels,
+    togglePanelHidden,
+    hidePanel,
+    showPanel,
     saving,
     error,
     notice,

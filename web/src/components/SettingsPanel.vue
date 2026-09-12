@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { NARROW_LAYOUT_BREAKPOINT_PX } from "../composables/usePanelLayout";
+import {
+  NARROW_LAYOUT_BREAKPOINT_PX,
+  enablePanel,
+  mergeWithDefaults,
+  overlappingVisiblePanels,
+} from "../composables/usePanelLayout";
 import { useEditAccess, type PinLevel } from "../composables/useEditAccess.ts";
 import {
   createPostalCodeLookup,
@@ -8,6 +13,7 @@ import {
   type CurrentWeatherLocation,
 } from "../composables/useWeatherLocation.ts";
 import ConnectionTest from "./ConnectionTest.vue";
+import { PANEL_IDS, PANEL_TITLES, panelVisibilityRows, sanitizeHiddenPanels, type PanelId } from "../types";
 import type { PaikkyChild, Settings, WilmaStudent } from "../types";
 
 const editAccess = useEditAccess();
@@ -47,7 +53,20 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
 
-const draft = ref<Settings>({ ...props.settings });
+/**
+ * `hiddenPanels` kopioidaan omaksi taulukokseen eikä jaeta viitteenä
+ * `props.settings`in kanssa: luonnosta muokataan paikan päällä, ja jaettu
+ * viite kirjoittaisi suoraan dashboardin olioon — jolloin "Peruuta" ei
+ * peruisi mitään ja ruutu olisi jo ehtinyt muuttua.
+ *
+ * Samalla lista siivotaan (`sanitizeHiddenPanels`): tuntematon tunniste ei
+ * saa päätyä valintaruuduksi, jota ei ole olemassa.
+ */
+function draftFrom(settings: Settings): Settings {
+  return { ...settings, hiddenPanels: sanitizeHiddenPanels(settings.hiddenPanels) };
+}
+
+const draft = ref<Settings>(draftFrom(props.settings));
 
 /**
  * Tallennettu avain on `hideNextAlarm` (ks. types.ts), mutta valintaruutu
@@ -63,6 +82,92 @@ const showNextAlarm = computed<boolean>({
 });
 const error = ref<string | null>(null);
 const saving = ref(false);
+
+// ---- Näytettävät paneelit --------------------------------------------------
+//
+// Sama valinta on myös näkymän muokkaustilassa suoraan paneelin päällä, ja
+// se on siellä se luontevampi paikka. Lista on silti TÄSSÄ, ja se on
+// tarkoituksellista kahdesta syystä:
+//
+//   1. Muokkaustila ei aukea kapealla näytöllä (ks. isNarrow alla). Jos
+//      valinta olisi vain siellä, puhelimesta pois kytketyn paneelin saisi
+//      takaisin vain kävelemällä seinänäytölle.
+//   2. Jos KAIKKI paneelit on kytketty pois, ruudulla ei ole enää yhtään
+//      paneelia jonka päältä kytkin löytyisi. Asetuspaneeli aukeaa yhä
+//      yläpalkin hammasrattaasta, joten tämä lista on se tie takaisin.
+//
+// Lista sisältää AINA jokaisen paneelin, myös pois kytketyt — karsittu
+// lista ei voisi koskaan palauttaa niitä (ks. panelVisibilityRows).
+
+const panelRows = computed(() => panelVisibilityRows(draft.value.hiddenPanels));
+
+/**
+ * Miksi paneelia ei voitu ottaa käyttöön. Tyhjennetään heti kun jokin muu
+ * valinta onnistuu, jottei vanha syy jää roikkumaan väärän rivin viereen.
+ */
+const panelNotice = ref<string | null>(null);
+
+/**
+ * Valintaruudun `:checked` on sidottu tilaan, mutta HYLÄTTY käyttöönotto ei
+ * muuta tilaa — jolloin Vue ei kirjoita ruutua takaisin (vnodejen arvo on
+ * sama kuin ennen) ja selaimen oma napsautus jättäisi rastin näkyviin
+ * asetukseen jota ei ole. Siksi ruudun tila luetaan käsittelyn jälkeen
+ * suoraan tilasta. Ilman tätä käyttäjä luulisi ottaneensa paneelin käyttöön.
+ */
+function onPanelToggle(id: PanelId, event: Event): void {
+  togglePanelVisible(id);
+  const input = event.target as HTMLInputElement | null;
+  if (input) input.checked = !draft.value.hiddenPanels.includes(id);
+}
+
+function togglePanelVisible(id: PanelId): void {
+  panelNotice.value = null;
+
+  if (!draft.value.hiddenPanels.includes(id)) {
+    // Pois kytkeminen onnistuu aina: paneeli katoaa ruudulta ja sen sijoitus
+    // jää muistiin parkkipaikaksi. Järjestys aina PANEL_IDS:n mukainen,
+    // jottei tallennettu lista muutu pelkästä napsuttelujärjestyksestä.
+    draft.value.hiddenPanels = PANEL_IDS.filter(
+      (entry) => entry === id || draft.value.hiddenPanels.includes(entry),
+    );
+    return;
+  }
+
+  // Käyttöönotto voi epäonnistua tilanpuutteeseen — sama sääntö kuin
+  // muokkaustilassa, sama funktio (ks. enablePanel). Kaksi eri vastausta
+  // samaan kysymykseen olisi juuri se tapa jolla nämä kaksi näkymää ajautuvat
+  // eri mieltä siitä mitä kytkin tekee.
+  const layout = mergeWithDefaults(draft.value.panelLayout);
+  const outcome = enablePanel(layout, draft.value.hiddenPanels, id);
+  if (outcome.rejected !== null) {
+    panelNotice.value = `${PANEL_TITLES[id]} ei mahdu ruudukkoon. Pienennä tai siirrä jotakin korttia kohdassa “Muokkaa asettelua”, niin paneeli mahtuu.`;
+    return;
+  }
+  draft.value.hiddenPanels = outcome.hiddenPanels;
+  if (outcome.relocated) {
+    draft.value.panelLayout = outcome.layout;
+    panelNotice.value = `${PANEL_TITLES[id]} ei mahtunut entiselle paikalleen, joten se sijoitettiin lähimpään vapaaseen kohtaan.`;
+  }
+}
+
+// Ei estetä, vain kerrotaan. Mikään paneeli ei ansaitse asemaa "tätä ei saa
+// kytkeä pois", ja tyhjä ruutu on palautettavissa tästä samasta listasta.
+const allPanelsHidden = computed(() => draft.value.hiddenPanels.length === PANEL_IDS.length);
+
+/**
+ * Päällekkäin menevät paneelit. Käytännössä tämä syttyy yhdessä tilanteessa:
+ * päivityksen tuoma uusi paneeli on saanut oletuspaikkansa käyttäjän omaan
+ * asetteluun, jossa se paikka on jo varattu (ks. overlappingVisiblePanels).
+ * Kytkin ei siis riitä yksin, vaan paneelille pitää myös tehdä tilaa.
+ *
+ * Kerrotaan, ei estetä eikä korjata automaattisesti: kumpi kortti väistää,
+ * on käyttäjän päätös. Ilman tätä tekstiä ruudulle ilmestyisi kaksi korttia
+ * päällekkäin eikä mikään kertoisi miksi.
+ */
+const overlapping = computed(() =>
+  overlappingVisiblePanels(mergeWithDefaults(draft.value.panelLayout), draft.value.hiddenPanels),
+);
+const overlappingLabel = computed(() => overlapping.value.map((id) => PANEL_TITLES[id]).join(", "));
 
 // Asettelun muokkaus mittaa ruudukkoa pikseleinä; kapealla näytöllä paneelit
 // on pinottu (App.vuen mobiilimediakysely), jolloin mittaus osuisi väärään
@@ -89,7 +194,7 @@ watch(
   () => [props.open, props.settings] as const,
   ([open]) => {
     if (open) {
-      draft.value = { ...props.settings };
+      draft.value = draftFrom(props.settings);
       error.value = null;
     }
   },
@@ -363,6 +468,32 @@ async function save(): Promise<void> {
             />
             <span>{{ child.firstName }} {{ child.lastName }}</span>
           </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Näytettävät paneelit</legend>
+          <p class="group__hint">
+            Valitse mitkä paneelit näkyvät näytöllä. Pois kytketty paneeli
+            säilyttää paikkansa ja kokonsa, ja palaa takaisin täsmälleen
+            samaan kohtaan kun kytket sen uudelleen päälle.
+          </p>
+          <label v-for="row in panelRows" :key="row.id" class="check">
+            <!-- Valintaruutu luetaan myöntävänä ("näytä"), vaikka tallennettu
+                 avain on `hiddenPanels`. Sama kääntö ja sama syy kuin
+                 showNextAlarmilla yllä. -->
+            <input type="checkbox" :checked="!row.hidden" @change="onPanelToggle(row.id, $event)" />
+            <span>{{ row.title }}</span>
+          </label>
+          <p v-if="allPanelsHidden" class="group__hint">
+            Kaikki paneelit ovat pois käytöstä — näyttö on tyhjä. Valitse
+            vähintään yksi, niin ruutuun tulee taas sisältöä.
+          </p>
+          <p v-if="panelNotice" class="group__warning">{{ panelNotice }}</p>
+          <p v-if="overlapping.length > 0" class="group__warning">
+            Päällekkäin ruudukossa: {{ overlappingLabel }}. Tee toiselle tilaa
+            kohdasta “Muokkaa asettelua” — pienennä tai siirrä kortteja, kunnes
+            kumpikin mahtuu omaan kohtaansa.
+          </p>
         </fieldset>
 
         <fieldset class="group">
@@ -680,6 +811,15 @@ async function save(): Promise<void> {
   align-self: flex-start;
   font-size: 0.85rem;
   padding: 0.5rem 0.9rem;
+}
+
+/* Sama huomioväri kuin muillakin paneelin varoituksilla (ks. .panel__blocked
+   alla) — tämä ei ole virhe vaan asia joka on hoidettava itse. */
+.group__warning {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #f3c26b;
 }
 
 .panel__blocked {

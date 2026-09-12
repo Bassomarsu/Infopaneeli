@@ -89,9 +89,9 @@ function assertAllPanelsPresent(layout: PanelLayout, label: string): void {
 // Oletusasettelu täyttää koko ruudukon (48 solua, ei vapaata tilaa) eikä
 // mikään paneeli voi enää kutistua MIN_PANEL_SPANin (2) alle vapauttaakseen
 // tilaa, joten "vapaaseen tilaan siirto" -tapauksia varten käytetään omaa,
-// käsin rakennettua asettelua, jossa kaikki kuusi paneelia ovat 2x2 ja
-// vasemman puoliskon (sarakkeet 1-4) täyttäviä — sarakkeet 5-6 jäävät
-// kokonaan vapaiksi.
+// käsin rakennettua asettelua, jossa kaikki paneelit ovat 2x2 ja vasemman
+// puoliskon (sarakkeet 1-4) täyttäviä — sarakkeet 5-6 jäävät kokonaan
+// vapaiksi.
 const sparse: PanelLayout = {
   schedule: { col: 1, row: 1, colSpan: 2, rowSpan: 2 },
   messages: { col: 1, row: 3, colSpan: 2, rowSpan: 2 },
@@ -99,6 +99,7 @@ const sparse: PanelLayout = {
   electricity: { col: 1, row: 7, colSpan: 2, rowSpan: 2 },
   calendar: { col: 3, row: 1, colSpan: 2, rowSpan: 2 },
   notes: { col: 3, row: 3, colSpan: 2, rowSpan: 2 },
+  news: { col: 3, row: 5, colSpan: 2, rowSpan: 2 },
 };
 assertNoOverlaps(sparse, "sparse-fixture on itsessään virheellinen");
 assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
@@ -280,5 +281,35 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 {
   const merged = mergeWithDefaults(null);
   assert.deepEqual(merged, defaultPanelLayout);
-  console.log("ok  null palauttaa koko oletusasettelun");
+  // --- Piilotettu paneeli ei ole tiellä ---
+//
+// Piilotetun paneelin sijoitus on PARKKIPAIKKA eikä piirtopaikka: sitä ei
+// renderöidä, joten se ei saa varata ruutuja muilta. Ilman tätä eroa pois
+// kytkeminen ei vapauttaisi tilaa lainkaan — oletusasettelu täyttää ruudukon
+// tasan, joten naapuria ei voisi koskaan kasvattaa.
+{
+  // Sähkö piilossa: sää (5,1 2x3) voi kasvaa sen päälle riveille 4-6.
+  const next = resolveResize(defaultPanelLayout, "weather", 2, 6, ["electricity"]);
+  assert.equal(next.weather.rowSpan, 6, "piilotetun paneelin ruudut ovat vapaita kasvulle");
+
+  const blocked = resolveResize(defaultPanelLayout, "weather", 2, 6, []);
+  assert.equal(blocked.weather.rowSpan, 3, "näkyvä naapuri estää kasvun yhä");
+  console.log("ok  piilotettu paneeli ei estä naapurin kasvattamista, näkyvä estää");
+}
+
+{
+  // Sama siirrolle: pudotus piilotetun paneelin ruutuihin onnistuu, eikä sitä
+  // tulkita paikanvaihdoksi piilotetun kanssa.
+  const outcome = resolveMove(defaultPanelLayout, "notes", 1, 7, 1, 7, ["calendar"]);
+  assert.equal(outcome.rejected, null, "piilotetun paneelin ruutuun pudottaminen onnistuu");
+  assert.deepEqual(outcome.layout.notes, { col: 1, row: 7, colSpan: 2, rowSpan: 2 });
+  assert.deepEqual(
+    outcome.layout.calendar,
+    defaultPanelLayout.calendar,
+    "piilotettu paneeli ei vaihda paikkaa — se ei ole ruudulla",
+  );
+  console.log("ok  piilotetun paneelin ruutuun voi siirtää, eikä se johda paikanvaihtoon");
+}
+
+console.log("ok  null palauttaa koko oletusasettelun");
 }

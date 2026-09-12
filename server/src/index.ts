@@ -10,6 +10,7 @@ import { registerApiRoutes } from "./routes/api.ts";
 import { createElectricityProvider } from "./providers/electricity.ts";
 import { createWeatherProvider } from "./providers/weather.ts";
 import { createCalendarProvider } from "./providers/calendar.ts";
+import { createNewsProvider } from "./providers/news.ts";
 import { createWilmaProvider } from "./providers/wilma.ts";
 import { createPaikkyProvider } from "./providers/paikky.ts";
 
@@ -37,6 +38,9 @@ if (isPaikkyConfigured()) registry.register(createPaikkyProvider());
 registry.register(createElectricityProvider());
 registry.register(createWeatherProvider());
 registry.register(createCalendarProvider());
+// Uutiset ovat julkista tietoa eivätkä kuulu routes/api.ts:n
+// SENSITIVE_PROVIDERS-joukkoon — kortti näkyy myös puhelimessa.
+registry.register(createNewsProvider());
 
 // Resolves TRUSTED_HOSTS hostnames in the background and on a timer; never
 // blocks startup and never throws (see core/trusted-hosts.ts).

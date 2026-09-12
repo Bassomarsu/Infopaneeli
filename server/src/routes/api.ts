@@ -232,6 +232,34 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     // puhelimelta — paikkakunnan nimi ei ole SENSITIVE_PROVIDERS-tietoa.
     const weatherLocation = currentWeatherLocation();
 
+    // KAKSI SAMANNÄKÖISTÄ LIPPUA VIERETYSTEN — ne vastaavat eri kysymykseen,
+    // eikä toista saa käyttää toisen sijasta:
+    //
+    //   localClient   SAAKO tämä asiakas nähdä arkaluontoista? Tosi
+    //                 näyttölaitteelle, TRUSTED_HOSTS-laitteelle JA
+    //                 FULL_PINin syöttäneelle puhelimelle. Käyttöoikeus-
+    //                 kysymys, ja se ohjaa SENSITIVE_PROVIDERS-suodatusta
+    //                 sekä muokkausoikeutta yllä.
+    //
+    //   displayDevice ONKO tämä se seinällä oleva laite? Tosi vain
+    //                 loopbackista, eli käytännössä vain kioskiselaimelta:
+    //                 kioski avataan aina http://localhost:PORTTI
+    //                 (asennus/kaynnista-kioski.ps1 ja asenna-kioski.sh),
+    //                 eikä puhelin voi koskaan olla loopbackissa.
+    //                 Laitekysymys, ei oikeuskysymys.
+    //
+    // Ero on olemassa siksi, että ulkoasupäätös ja käyttöoikeus eivät ole
+    // sama asia. Esimerkki: uutisotsikoiden linkit kuuluu jättää pois
+    // seinänäytöltä (kosketus avaisi jutun kioskiin eikä siitä pääse pois),
+    // mutta puhelimessa ne ovat koko kortin pointti — myös sellaisessa
+    // puhelimessa jolla on FULL_PIN. `localClient`in varassa isä, joka
+    // syötti FULL_PINin nähdäkseen Wilman, menettäisi linkit juuri siltä
+    // laitteelta jolla ne toimivat.
+    //
+    // `displayDevice` EI OLE KÄYTTÖOIKEUS EIKÄ SITÄ SAA KÄYTTÄÄ SELLAISENA.
+    // Loopback-osoite on helppo väärentää välityspalvelimella, joten se
+    // kelpaa vain ulkoasupäätöksiin kuten yllä. Arkaluontoisen tiedon
+    // suodatus pysyy `localClient`issa, jonka takana on PIN ja isäntälista.
     return {
       generatedAt: new Date().toISOString(),
       timezone: config.timezone,
@@ -241,6 +269,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       notes: listNotes(),
       providers: snapshots,
       localClient: local,
+      displayDevice: isLocalRequest(request),
     };
   });
 

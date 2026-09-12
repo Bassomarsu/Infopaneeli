@@ -25,11 +25,19 @@ const emit = defineEmits<{
    */
   move: [col: number, row: number, pointerCol: number, pointerRow: number];
   resize: [colSpan: number, rowSpan: number];
+  /**
+   * Kytke tämä paneeli pois näkyvistä. Vain tähän suuntaan: pois kytkettyä
+   * paneelia ei renderöidä ruudukossa lainkaan, joten se otetaan takaisin
+   * muokkaustilan yläpalkin parkkirivistä (ks. App.vue).
+   */
+  hide: [];
 }>();
 
 const gridEl = inject(panelGridKey, ref(null));
 
 const title = computed(() => PANEL_TITLES[props.panelId]);
+
+const hideLabel = computed(() => `Kytke paneeli ${title.value} pois käytöstä`);
 
 const gridStyle = computed(() => ({
   gridColumn: `${props.placement.col} / span ${props.placement.colSpan}`,
@@ -168,7 +176,41 @@ function onResizeUp(event: PointerEvent): void {
       @pointerup="onDragUp"
       @pointercancel="onDragUp"
     >
-      <span class="panel-frame__title">{{ title }}</span>
+      <!--
+        Nimilaatta ja "kytke pois" -painike samassa pillerissä, keskellä
+        yläreunaa. Painike oli ensin paneelin vasemmassa yläkulmassa, mutta
+        se jäi kortin OMAN otsikon päälle jokaisessa kortissa (todennettu
+        kuvakaappauksesta). Ylälaidan pilleri on jo valmiiksi kortin päällä
+        leijuva elementti, joten se ei peitä mitään.
+
+        Pilleri on raahauskerroksen LAPSI, joten painikkeen pointerdown
+        kuplisi raahaukseen ja paneeli lähtisi liikkeelle sormen alta —
+        siksi `.stop`. Pilleri itse pysyy `pointer-events: none`:na, jotta
+        raahaus onnistuu myös sen kohdalta; vain painike ottaa kosketuksia.
+      -->
+      <span class="panel-frame__title">
+        <button
+          type="button"
+          class="panel-frame__toggle"
+          :aria-label="hideLabel"
+          :title="hideLabel"
+          @pointerdown.stop
+          @click.stop="emit('hide')"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <!-- Yliviivattu silmä = painallus vie paneelin pois näkyvistä. -->
+            <path d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <path
+              d="M10.6 6.2A9.6 9.6 0 0 1 12 6.1c4.8 0 8.2 3.6 9.2 5.9a12 12 0 0 1-2.8 3.6M6.4 7.9A12.4 12.4 0 0 0 2.8 12c1 2.3 4.4 5.9 9.2 5.9 1.3 0 2.5-.26 3.6-.7"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+        <span class="panel-frame__name">{{ title }}</span>
+      </span>
     </div>
 
     <button
@@ -240,15 +282,44 @@ function onResizeUp(event: PointerEvent): void {
 }
 
 .panel-frame__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text);
+  background: rgba(11, 13, 18, 0.82);
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.8rem 0.2rem 0.25rem;
+  border-radius: 999px;
+  /* Pilleri ei ota kosketuksia — raahauksen on onnistuttava myös sen
+     kohdalta. Vain kytkinpainike palauttaa ne itselleen. */
+  pointer-events: none;
+}
+
+.panel-frame__name {
   font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text);
-  background: rgba(11, 13, 18, 0.7);
-  padding: 0.3rem 0.75rem;
+}
+
+/* Kosketusalue on 44 px korkea, vaikka kuvake on pieni — pilleri kasvaa sen
+   mukaan. Pienempi alue ei osu sormella, ja tämä on ainoa keino kytkeä
+   paneeli takaisin päälle. */
+.panel-frame__toggle {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border-radius: 999px;
-  pointer-events: none;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--accent-school);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: none;
+  /* Ks. .panel-frame__title — pilleri luopuu kosketuksista, painike ottaa ne. */
+  pointer-events: auto;
 }
 
 .panel-frame__handle {
