@@ -585,11 +585,56 @@ const isNight = computed(() => {
   gap: 0.9rem;
 }
 
+/*
+ * `flex-wrap: wrap` EI ole kosmetiikkaa eikä rajattu mihinkään leveyteen.
+ *
+ * Palkin kaksi laitaa eivät mahdu puhelimen leveydelle samalle riville:
+ * vasen laita kutistuu vielä (kello + päivämäärä ~259 px), mutta oikea laita
+ * ei kutistu lainkaan — paikkakunta, akku ja 2–3 painiketta ovat yhteensä
+ * ~313 px, ja painikkeiden leveys on kuvakkeen kokoinen vakio. Flex-lapsi ei
+ * mene `min-width: auto`in alle, joten rivittämättömässä palkissa ylimääräinen
+ * työntyi ULOS oikeasta reunasta: 390 px:n ruudulla `.topbar__meta` ulottui
+ * x=531:een, eli kaikki kolme painiketta — myös asetusten hammasratas — jäivät
+ * kokonaan ruudun ulkopuolelle, ja päivämäärä puristui kolmelle riville.
+ *
+ * Rivitys oli jo olemassa mutta `.topbar--with-next`-rajattuna, joten palkki
+ * toimi kapealla VAIN kun hälytysbanneri sattui olemaan näkyvissä. Sääntö
+ * kuuluu tänne rajaamattomana: vika ei liity banneriin mitenkään.
+ *
+ * Tästä oppi joka kannattaa muistaa tätä palkkia muokatessa: OMINAISUUS-
+ * KOHTAINEN RAJAUS on vaarallinen silloin kun sääntö ei oikeasti koske vain
+ * sitä ominaisuutta. Rivitys kirjoitettiin bannerin yhteydessä ja rajattiin
+ * banneriin, jolloin kapean ruudun asettelu jäi riippumaan siitä onko
+ * hälytyksiä juuri nyt olemassa — eli vika näkyi vain puolet ajasta ja katosi
+ * testatessa. Rajaa sääntö siihen mitä se koskee, älä siihen mitä oltiin
+ * tekemässä silloin kun se kirjoitettiin.
+ *
+ * Rivitys on tarkoituksella ilman mediakyselyä — se laukeaa täsmälleen silloin
+ * kun sisältö ei mahdu, eikä kiinteä raja voi osua väärin, kun paikkakunnan
+ * pituus ja painikkeiden määrä vaihtelevat laitteittain. Leveällä näytöllä se
+ * ei voi laueta: silloin lapset mahtuvat riville, eikä `.topbar--with-next`in
+ * kolmen sarakkeen `flex: 1 1 0` (basis 0) voi ylittää säiliötä lainkaan.
+ * Mitattu 1920 px:ssä identtiseksi ennen ja jälkeen.
+ *
+ * `row-gap: 1.5rem` EI ole väljyyttä väljyyden vuoksi. KioskExitHotspot
+ * ulottuu päivämäärän ympäriltä 0.9rem ALASPÄIN (ks. KioskExitHotspot.vue), ja
+ * kääritty oikea laita nousee sen päälle: `.topbar__meta` on `z-index: 60`
+ * hotspotin yläpuolella, joten päällekkäinen kaistale EI avaisi kioskista
+ * väärää dialogia, mutta se söisi näkymättömän painikkeen alareunan pois.
+ * 0.4rem:n välillä mitattuna hotspotin alin kolmannes lakkasi osumasta (6/9
+ * pistettä), 1.5rem:llä kaikki 9 osuvat. Sama 1.5rem kuin banneririvillä
+ * (0.4rem + 1.1rem, ks. mediakysely alempana) — ÄLÄ pienennä mittaamatta.
+ *
+ * Pystyväli koskee VAIN käärittyä palkkia: yhden rivin leveällä näytöllä
+ * `row-gap` ei vaikuta mihinkään.
+ */
 .topbar {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
+  flex-wrap: wrap;
+  row-gap: 1.5rem;
   flex-shrink: 0;
   padding: 0 0.3rem;
 }
@@ -652,6 +697,34 @@ const isNight = computed(() => {
  * painikkeen nielaisema painallus ei näkyisi vikana vaan "kioskista ei enää
  * pääse ulos" -mysteerinä. Banneri ei ota kosketuksia vastaan lainkaan, mikä
  * on myös syy siihen ettei siitä tehty klikattavaa.
+ *
+ * SARAKEJAKO EI AIKANAAN RIITTÄNYT YKSIN, koska KioskExitHotspot ei ole
+ * laatikoiden virtauksessa mukana: se oli `position: absolute` ja ulottui
+ * päivämäärän oikeasta reunasta 3.5rem eteenpäin, eli ULOS omasta
+ * sarakkeestaan. 901 px:n ruudulla aikasarake loppui x=298:aan mutta hotspot
+ * jatkui x=341:een — 42 px keskisarakkeen puolelle, NÄKYVÄN pillerin alle, ja
+ * koska bannerissa on `pointer-events: none`, painallus valui pillerin läpi
+ * hotspotille. Mitattuna 901 px:ssä kolme eri NÄKYVÄÄ kohdetta (pillerin vasen
+ * reuna, kellokuvake, "SEURAAVA HÄLYTYS" -teksti) avasivat kioskin
+ * poistumisdialogin oikealla kolmen sekunnin painalluksella, välillä 901–975 px.
+ *
+ * SE ON KORJATTU HOTSPOTIN OMASSA GEOMETRIASSA (ks. KioskExitHotspot.vue):
+ * alue pysyy nyt päivämäärän kohdalla eikä ulotu sarakkeensa ulkopuolelle,
+ * joten päällekkäisyyttä ei voi syntyä. ÄLÄ siis lisää tänne pilleriin
+ * kiertoteitä — kaksi sellaista kokeiltiin ja molemmat MITATTIIN HUONOMMIKSI:
+ *
+ *  1. `pointer-events: auto` + `z-index` pillerille. Ei riitä yksinään:
+ *     hotspot on `z-index: 50` ja maalautuu virtauksessa olevan pillerin
+ *     PÄÄLLE, joten pelkkä `pointer-events` ei poistanut vuodosta yhtään
+ *     pistettä (192/192 ansapistettä jäljellä 905 px:ssä). Pinoamiskontekstin
+ *     kanssa vuoto katosi, mutta pilleri peitti hotspotin: käyttökelpoista
+ *     alaa jäi 56x28 px pisimmällä päiväyksellä, ja OIKEALLA 3,2 s
+ *     painalluksella hotspotin keskeltä dialogi EI AUENNUT LAINKAAN välillä
+ *     901–1010 px. Kioskista ei siis pääsisi ulos — pahempi kuin alkuperäinen.
+ *  2. `max-width: calc(100% - 5rem)` pillerille. Vapautti hotspotin, mutta
+ *     pillerin SISÄLTÖ ei kutistu mukana (selite ja kellonaika ovat
+ *     `flex-shrink: 0`): teksti valui ulos laatikostaan 30–65 px ja kellonaika
+ *     päätyi paikkakuntatekstin päälle, 25–95 px päällekkäin välillä 905–1010.
  */
 .topbar--with-next .topbar__time,
 .topbar--with-next .topbar__meta {
@@ -746,12 +819,16 @@ const isNight = computed(() => {
  * käärityn rivin kokonaan hotspotin alapuolelle. Mitattu osumatestauksella
  * 17 leveydellä välillä 320–1920 px — älä pienennä tätä mittaamatta uudelleen.
  *
- * Koko lohko on `.topbar--with-next`-rajattu, myös `flex-wrap`: ilman banneria
- * palkki ei saa rivittyä toisin kuin ennen tätä muutosta.
+ * Lohko on `.topbar--with-next`-rajattu: se purkaa keskisaraketta varten
+ * tehdyn kolmen sarakkeen jaon. Itse `flex-wrap`/`row-gap` EIVÄT ole enää
+ * täällä vaan perussäännössä `.topbar`issa — ilman banneria palkki kärsi
+ * samasta ylivuodosta, ks. sen perustelu.
  */
 @media (max-width: 900px) {
+  /* Banneririvi kantaa hotspotin vaatiman välin omassa `margin-top`issaan, ks.
+     alla — siksi tässä tilassa palkin oma pystyväli on pienempi kuin
+     perussäännön 1.5rem. Yhteensä sama 1.5rem, ja rivejä on yksi enemmän. */
   .topbar--with-next {
-    flex-wrap: wrap;
     row-gap: 0.4rem;
   }
 
@@ -774,6 +851,38 @@ const isNight = computed(() => {
     padding: 0;
     border: none;
     background: none;
+  }
+}
+
+/*
+ * Kaikkein kapein ruutu: banneri kahdelle riville.
+ *
+ * Pillerin sisällöstä VAIN hälytyksen nimi kutistuu; kuvake, selite ja
+ * kellonaika ovat `flex-shrink: 0`. Kun nimi on jo kutistunut nollaan eikä
+ * tila silti riitä, ylimääräinen ei katkea vaan valuu ulos — ja koska
+ * kellonaika on rivin viimeinen kutistumaton osa, juuri SE meni ruudun reunan
+ * yli. Mitattu kesäajan siirtopäivän pitkällä muodolla ("huomenna 3.30→4.00" /
+ * "su 29.3. klo 3.30→4.00"): 320 px:llä aika oli 36–39 px ruudun ulkopuolella,
+ * 340 px:llä 16–19 px, 360 px:stä ylöspäin 0. Se on kerran vuodessa toistuva
+ * tieto joka leikkautuisi juuri sinä yönä jolloin se on tärkein.
+ *
+ * Rivitys eikä selitteen pudotus: näin mitään ei menetetä. Nimelle jää oma
+ * rivi (mitattu 189–229 px sen sijaan että se katoaisi kokonaan), ja selite
+ * säilyy — ilman sitä bannerissa olisi kellonaika ilman selitystä aivan
+ * vasemman laidan ison kellon vieressä, ja ne sekoittuisivat keskenään.
+ *
+ * `white-space: nowrap` jätetään voimaan: rivitys koskee flex-lapsia, ei
+ * tekstiä, joten kellonaika ei voi katketa kahdelle riville.
+ */
+@media (max-width: 389px) {
+  .topbar__next-pill {
+    flex-wrap: wrap;
+    row-gap: 0.15rem;
+  }
+
+  /* Nimi omalle rivilleen; kuvake, selite ja aika jäävät ensimmäiselle. */
+  .topbar__next-label {
+    flex-basis: 100%;
   }
 }
 
@@ -819,6 +928,46 @@ const isNight = computed(() => {
   color: var(--text-faint);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/*
+ * Kapean ruudun varaventtiili. Rivitys yksinään riittää tavalliselle
+ * puhelimelle, mutta 320 px:llä oikea laita ei mahdu edes OMALLE rivilleen:
+ * sisältöä on ~313 px ja tilaa ~269 px. `min-width: 0` päästää laidan
+ * kutistumaan alle min-content-leveytensä, ja koko kutistuminen otetaan
+ * paikkakunnasta — painikkeet ja akku eivät kutistu lainkaan (`flex-shrink: 0`
+ * omissa säännöissään), joten kuvake ei voi leikkautua. Ilman tätä kolmas
+ * painike jäi 320 px:llä 19 px ruudun ulkopuolelle.
+ *
+ * KOKO LOHKO ON RAJATTU 900 px:iin tarkoituksella, vaikka itse rivitys ei ole.
+ * Bannerin kanssa `.topbar__meta` on `flex: 1 1 0` eli tasan kolmasosa
+ * palkista, ja noin 1024 px:n paikkeilla laidan sisältö on hiuksenverran sitä
+ * leveämpi. Rajaamattomina nämä säännöt muuttaisivat juuri sen leveyden
+ * ulkoasua: paikkakunta alkoi lyhentyä (mitattu 101 px → 87 px) ja akku
+ * siirtyi 14 px. Leveällä ruudulla laita mahtuu aina, joten venttiiliä ei
+ * siellä tarvita — mitattu identtiseksi HEADin kanssa kaikilla leveyksillä
+ * 1024–1920, molemmissa bannerin tiloissa.
+ */
+@media (max-width: 900px) {
+  .topbar__meta {
+    min-width: 0;
+  }
+
+  /* `white-space: nowrap` estää paikkakuntaa myös rivittymästä kahdelle
+     riville ja kasvattamasta palkin korkeutta. */
+  .topbar__place {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Painike on kuvakkeen kokoinen ja akku kuvake + prosenttiluku — kumpikaan
+     ei kutistu siististi, joten laidan koko jousto otetaan paikkakunnasta. */
+  .topbar__settings,
+  .battery {
+    flex-shrink: 0;
+  }
 }
 
 .topbar__settings {
