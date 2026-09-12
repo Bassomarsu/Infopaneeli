@@ -172,9 +172,10 @@ tiedostosta. Vähintään nämä kannattaa täyttää:
 | `WEATHER_POSTAL_CODE` | Sään sijainnin postinumero, esim. `43500`. Palvelin päättelee siitä koordinaatit ja paikkakunnan nimen |
 | `EDIT_PIN`, `FULL_PIN` | Vapaavalintaiset, ks. [Tietoturva](#tietoturva) |
 
-> **Käytä lainausmerkkejä salasanoissa:** `WILMA_PASSWORD="salasana#jossa on merkkejä"`.
-> Node katkaisee lainausmerkittömän arvon risuaidan (`#`) kohdalta äänettömästi,
-> ja palvelin yrittää kirjautua katkelmalla.
+> **Käytä lainausmerkkejä salasanoissa:** kirjoita `WILMA_PASSWORD=<salasana>`
+> aina muodossa `WILMA_PASSWORD="<salasana>"`. Node katkaisee lainausmerkittömän
+> arvon risuaidan (`#`) kohdalta äänettömästi, ja palvelin yrittää kirjautua
+> katkelmalla. Lainausmerkit ovat turvalliset myös silloin kun niitä ei tarvita.
 
 `.env` ei mene gitiin. Wilman ja Päikyn salasanat ovat siinä selväkielisenä —
 ks. [Tietoturva](#tietoturva).

@@ -159,9 +159,10 @@ npm run build
 kommentit kertovat jokaisesta avaimesta, ja tiiviimpi listaus on
 [Windows-ohjeen taulukossa](KAYTTOONOTTO.md#mitä-env-tiedostoon).
 
-> **Käytä lainausmerkkejä salasanoissa:** `WILMA_PASSWORD="salasana#jossa on merkkejä"`.
-> Node katkaisee lainausmerkittömän arvon risuaidan (`#`) kohdalta äänettömästi,
-> ja palvelin yrittää kirjautua katkelmalla.
+> **Käytä lainausmerkkejä salasanoissa:** kirjoita `WILMA_PASSWORD=<salasana>`
+> aina muodossa `WILMA_PASSWORD="<salasana>"`. Node katkaisee lainausmerkittömän
+> arvon risuaidan (`#`) kohdalta äänettömästi, ja palvelin yrittää kirjautua
+> katkelmalla. Lainausmerkit ovat turvalliset myös silloin kun niitä ei tarvita.
 
 Kokeile ensin käsin:
 
