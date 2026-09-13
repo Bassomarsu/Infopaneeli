@@ -560,6 +560,7 @@ function verifyArchiveContents(archivePath, topFolderName) {
     // eika pelkastaan kopiointisuodattimen varassa (ks. copyServerSrc).
     path.join("server", "src", "data", "postinumerot.json"),
     path.join("server", "src", "data", "namedays-2000.json"),
+    path.join("server", "src", "data", "waste-companies.json"),
     path.join("web", "dist", "index.html"),
     "node_modules",
     "VERSIO.txt",

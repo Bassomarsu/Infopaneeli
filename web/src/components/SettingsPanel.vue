@@ -14,6 +14,7 @@ import {
 } from "../composables/useWeatherLocation.ts";
 import ConnectionTest from "./ConnectionTest.vue";
 import MenuSchoolSettings from "./MenuSchoolSettings.vue";
+import WasteSettings from "./WasteSettings.vue";
 import { PANEL_IDS, PANEL_TITLES, panelVisibilityRows, sanitizeHiddenPanels, type PanelId } from "../types";
 import type { PaikkyChild, Settings, WilmaStudent } from "../types";
 
@@ -21,6 +22,7 @@ const editAccess = useEditAccess();
 
 const props = defineProps<{
   settings: Settings;
+  linkable?: boolean;
   students: WilmaStudent[];
   /**
    * Päikyn lapset samassa muodossa kuin `students` — provider-datasta
@@ -472,6 +474,7 @@ async function save(): Promise<void> {
         </fieldset>
 
         <MenuSchoolSettings v-model="draft.menuSchoolIds" />
+        <WasteSettings :allowed="canPreviewSchedule" :linkable="linkable" />
 
         <fieldset class="group">
           <legend>Näytettävät paneelit</legend>
@@ -686,7 +689,8 @@ async function save(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  /* Scroll-mode topbar is z-index 70; the dialog must cover it. */
+  z-index: 100;
   padding: 1.5rem;
 }
 

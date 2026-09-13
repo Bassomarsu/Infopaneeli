@@ -1,3 +1,5 @@
+import { registerWasteRoutes } from "./waste.ts";
+import { projectWasteSnapshot } from "../core/waste-service.ts";
 import { selectedMenuData } from "../providers/menu.ts";
 import { getMenuSchools } from "../core/menu-schools.ts";
 import { readHousehold } from "../core/household.ts";
@@ -32,7 +34,7 @@ import { fullPinEnabled, isLocalRequest, isTrustedRequest, requireEditAccess, ve
  * tänne siinä missä Wilmakin: lapsen läsnäolo- ja hoitoaikatieto kertoo
  * suoraan milloin kotona ei ole ketään.
  */
-const SENSITIVE_PROVIDERS = new Set(["wilma", "paikky"]);
+const SENSITIVE_PROVIDERS = new Set(["wilma", "paikky", "waste"]);
 
 /**
  * Providers the "Testaa yhteys" -painike saa herättää manuaalisesti. Erillinen
@@ -109,6 +111,7 @@ function withLocalReadState<T extends { id: string | number }>(
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   registerHouseholdRoutes(app);
+  registerWasteRoutes(app);
   app.get("/api/health", async () => ({ ok: true, time: new Date().toISOString() }));
 
   // Kertoo mitkä tasot on ylipäätään asetettu .env:ssä — ei koskaan itse
@@ -179,6 +182,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/dashboard", async (request) => {
     const snapshots = registry.snapshots();
+    if (snapshots.waste) snapshots.waste = projectWasteSnapshot(snapshots.waste);
     if (snapshots.menu) snapshots.menu = { ...snapshots.menu, data: selectedMenuData(snapshots.menu.data, getSettings().menuSchoolIds, snapshots.menu.fetchedAt) };
     const local = isTrustedRequest(request);
 

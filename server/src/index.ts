@@ -1,3 +1,4 @@
+import { createWasteProvider } from "./core/waste-service.ts";
 import { createMenuProvider } from "./providers/menu.ts";
 import fs from "node:fs";
 import Fastify from "fastify";
@@ -43,6 +44,7 @@ registry.register(createCalendarProvider());
 // SENSITIVE_PROVIDERS-joukkoon — kortti näkyy myös puhelimessa.
 registry.register(createNewsProvider());
 registry.register(createMenuProvider());
+registry.register(createWasteProvider());
 
 // Resolves TRUSTED_HOSTS hostnames in the background and on a timer; never
 // blocks startup and never throws (see core/trusted-hosts.ts).

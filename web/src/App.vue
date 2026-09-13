@@ -14,6 +14,7 @@ import ShoppingCard from "./components/ShoppingCard.vue";
 import SeasonalCard from "./components/SeasonalCard.vue";
 import MenuCard from "./components/MenuCard.vue";
 import NamedayCard from "./components/NamedayCard.vue";
+import type { WasteData } from "./waste.ts";
 import type { HouseholdData } from "./household.ts";
 import type { MenuCollection } from "./publicWidgets.ts";
 import NotesCard from "./components/NotesCard.vue";
@@ -95,6 +96,7 @@ const news = computed(() => provider<NewsData>("news"));
 
 const newPanels = ["waste", "menu", "shopping", "nameday", "seasonal"] as const;
 const household = computed<HouseholdData>(() => dashboard.value?.household ?? { waste: [], shopping: [], seasonal: [], anniversaries: [] });
+const waste = computed(() => provider<WasteData>("waste"));
 const menu = computed(() => provider<MenuCollection>("menu"));
 const settings = computed<Settings | null>(() => dashboard.value?.settings ?? null);
 const wilmaData = computed(() => wilma.value?.data ?? null);
@@ -677,7 +679,7 @@ const isNight = computed(() => {
           @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel(id, col, row, pointerCol, pointerRow)"
           @resize="(colSpan, rowSpan) => panelLayout.resizePanel(id, colSpan, rowSpan)"
           @hide="panelLayout.hidePanel(id)">
-          <WasteCard v-if="id === 'waste'" :household="household" :can-edit="canEdit" @refresh="refresh" />
+          <WasteCard v-if="id === 'waste'" :snapshot="waste" :linkable="newsLinksAllowed" :household="household" :can-edit="canEdit" @refresh="refresh" />
           <MenuCard v-else-if="id === 'menu'" :snapshot="menu" :selected-ids="settings?.menuSchoolIds ?? ['karstula_koulut']" :linkable="newsLinksAllowed" />
           <ShoppingCard v-else-if="id === 'shopping'" :household="household" :can-edit="canEdit" @refresh="refresh" />
           <NamedayCard v-else-if="id === 'nameday'" :data="dashboard?.namedays ?? null" :household="household" :can-edit="canEdit" :linkable="newsLinksAllowed" @refresh="refresh" />
@@ -705,7 +707,7 @@ const isNight = computed(() => {
       ei voi lukea listaa josta piilotetut on jo karsittu — muuten valintaa ei
       saisi enää peruttua. Sama syy kuin AlarmsPanelilla alempana.
     -->
-    <SettingsPanel
+    <SettingsPanel :linkable="newsLinksAllowed"
       v-if="settings"
       :settings="settings"
       :students="allStudents"

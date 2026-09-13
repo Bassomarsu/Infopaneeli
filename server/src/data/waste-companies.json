@@ -1,0 +1,543 @@
+{
+  "sourceUrl": "https://www.kivo.fi/tietoa-meista/jasenisto",
+  "checkedAt": "2026-09-13",
+  "companies": [
+    {
+      "id": "botniarosk-oy-ab",
+      "name": "Botniarosk Oy Ab",
+      "municipalities": [
+        "Isojoki",
+        "Karijoki",
+        "Kaskinen",
+        "Kauhajoki",
+        "Kristiinankaupunki",
+        "Närpiö",
+        "Teuva"
+      ],
+      "website": "http://www.botniarosk.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "ekokymppi-kainuun-jatehuollon-kuntayhtyma",
+      "name": "Ekokymppi (Kainuun jätehuollon kuntayhtymä)",
+      "municipalities": [
+        "Hyrynsalmi",
+        "Kajaani",
+        "Kuhmo",
+        "Paltamo",
+        "Puolanka",
+        "Ristijärvi",
+        "Sotkamo",
+        "Suomussalmi",
+        "Vaala"
+      ],
+      "website": "http://www.ekokymppi.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "ekorosk-ab-oy",
+      "name": "Ekorosk Ab Oy",
+      "municipalities": [
+        "Kokkola",
+        "Pietarsaari",
+        "Kauhava",
+        "Pedersöre",
+        "Uusikaarlepyy",
+        "Kruunupyy",
+        "Kaustinen",
+        "Luoto",
+        "Veteli",
+        "Evijärvi"
+      ],
+      "website": "http://www.ekorosk.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "etela-karjalan-jatehuolto-oy",
+      "name": "Etelä-Karjalan Jätehuolto Oy",
+      "municipalities": [
+        "Lappeenranta",
+        "Imatra",
+        "Lemi",
+        "Luumäki",
+        "Parikkala",
+        "Rautjärvi",
+        "Ruokolahti",
+        "Savitaipale",
+        "Taipalsaari"
+      ],
+      "website": "http://www.ekjh.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "helsingin-seudun-ymparistopalvelut",
+      "name": "Helsingin seudun ympäristöpalvelut",
+      "municipalities": [
+        "Espoo",
+        "Helsinki",
+        "Kauniainen",
+        "Kirkkonummi",
+        "Vantaa"
+      ],
+      "website": "http://www.hsy.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "jamsan-kaupunki",
+      "name": "Jämsän kaupunki",
+      "municipalities": [
+        "Jämsä"
+      ],
+      "website": "https://jamsa.fi/asuminen-ja-ymparisto/asuminen/asumisen-huolto/jatehuolto/",
+      "adapter": "manual"
+    },
+    {
+      "id": "jatekukko-oy",
+      "name": "Jätekukko Oy",
+      "municipalities": [
+        "Juuka",
+        "Kaavi",
+        "Konnevesi",
+        "Kuopio",
+        "Lieksa",
+        "Nurmes",
+        "Outokumpu",
+        "Pieksämäki",
+        "Rautalampi",
+        "Rautavaara",
+        "Siilinjärvi",
+        "Suonenjoki",
+        "Tervo",
+        "Tuusniemi",
+        "Vesanto"
+      ],
+      "website": "http://www.jatekukko.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "keraamo-oy",
+      "name": "Keräämö Oy",
+      "municipalities": [
+        "Harjavalta",
+        "Kokemäki",
+        "Merikarvia",
+        "Nakkila",
+        "Pomarkku",
+        "Pori",
+        "Siikainen",
+        "Ulvila"
+      ],
+      "website": "http://www.keraamo.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "keski-savon-jatehuolto-liikelaitoskuntayhtyma",
+      "name": "Keski-Savon Jätehuolto liikelaitoskuntayhtymä",
+      "municipalities": [
+        "Heinävesi",
+        "Joroinen",
+        "Juva",
+        "Leppävirta",
+        "Varkaus"
+      ],
+      "website": "https://www.keskisavonjatehuolto.fi/",
+      "adapter": "manual"
+    },
+    {
+      "id": "kierratysyhtio-rippee-oy",
+      "name": "Kierrätysyhtiö Rippee Oy",
+      "municipalities": [
+        "Enonkoski",
+        "Rantasalmi",
+        "Savonlinna",
+        "Sulkava"
+      ],
+      "website": "http://www.rippee.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "kiertokaari-oy",
+      "name": "Kiertokaari Oy",
+      "municipalities": [
+        "Hailuoto",
+        "Ii",
+        "Kempele",
+        "Lumijoki",
+        "Oulu",
+        "Pudasjärvi",
+        "Siikajoki",
+        "Simo"
+      ],
+      "website": "http://www.kiertokaari.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "kiertokapula-oy",
+      "name": "Kiertokapula Oy",
+      "municipalities": [
+        "Hattula",
+        "Hausjärvi",
+        "Hyvinkää",
+        "Hämeenlinna",
+        "Janakkala",
+        "Järvenpää",
+        "Kerava",
+        "Loppi",
+        "Mäntsälä",
+        "Nurmijärvi",
+        "Riihimäki",
+        "Tuusula",
+        "Valkeakoski"
+      ],
+      "website": "https://kiertokapula.fi/",
+      "adapter": "manual"
+    },
+    {
+      "id": "kuhmoisten-kunta",
+      "name": "Kuhmoisten kunta",
+      "municipalities": [
+        "Kuhmoinen"
+      ],
+      "website": "https://www.kuhmoinen.fi/asuminen%20ja%20ymp%C3%A4rist%C3%B6/tekniset%20palvelut/j%C3%A4tehuolto/",
+      "adapter": "manual"
+    },
+    {
+      "id": "kymenlaakson-jate-oy",
+      "name": "Kymenlaakson Jäte Oy",
+      "municipalities": [
+        "Hamina",
+        "Iitti",
+        "Kouvola",
+        "Lapinjärvi",
+        "Miehikkälä",
+        "Mäntyharju",
+        "Pyhtää",
+        "Virolahti"
+      ],
+      "website": "http://www.kymenlaaksonjate.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "etappi",
+      "name": "Lakeuden Etappi Oy",
+      "municipalities": [
+        "Alavus",
+        "Ilmajoki",
+        "Kihniö",
+        "Kuortane",
+        "Kurikka",
+        "Lapua",
+        "Seinäjoki",
+        "Ähtäri"
+      ],
+      "website": "http://www.etappi.com",
+      "adapter": "vingo",
+      "baseUrl": "https://omaetappi.com/etappi"
+    },
+    {
+      "id": "lapeco-lapin-jatehuolto-kuntayhtyma",
+      "name": "Lapeco (Lapin Jätehuolto kuntayhtymä)",
+      "municipalities": [
+        "Enontekiö",
+        "Inari",
+        "Kemijärvi",
+        "Kittilä",
+        "Muonio",
+        "Pelkosenniemi",
+        "Salla",
+        "Savukoski",
+        "Sodankylä"
+      ],
+      "website": "http://www.lapeco.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "loimi-hameen-jatehuolto-oy",
+      "name": "Loimi-Hämeen Jätehuolto Oy",
+      "municipalities": [
+        "Akaa",
+        "Eura",
+        "Forssa",
+        "Huittinen",
+        "Humppila",
+        "Jokioinen",
+        "Koski Tl",
+        "Loimaa",
+        "Oripää",
+        "Punkalaidun",
+        "Sastamala",
+        "Somero",
+        "Säkylä",
+        "Tammela",
+        "Urjala",
+        "Ypäjä"
+      ],
+      "website": "http://www.lhj.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "lounais-suomen-jatehuolto-oy",
+      "name": "Lounais-Suomen Jätehuolto Oy",
+      "municipalities": [
+        "Aura",
+        "Kaarina",
+        "Kemiönsaari",
+        "Lieto",
+        "Marttila",
+        "Masku",
+        "Mynämäki",
+        "Naantali",
+        "Nousiainen",
+        "Paimio",
+        "Parainen",
+        "Pöytyä",
+        "Raisio",
+        "Rusko",
+        "Salo",
+        "Sauvo",
+        "Turku",
+        "Uusikaupunki"
+      ],
+      "website": "http://www.lsjh.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "metsasairila-oy",
+      "name": "Metsäsairila Oy",
+      "municipalities": [
+        "Mikkeli"
+      ],
+      "website": "http://www.metsasairila.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "millespakka-oy",
+      "name": "Millespakka Oy",
+      "municipalities": [
+        "Alajärvi",
+        "Halsua",
+        "Kyyjärvi",
+        "Lappajärvi",
+        "Lestijärvi",
+        "Perho",
+        "Reisjärvi",
+        "Soini",
+        "Vimpeli"
+      ],
+      "website": "http://www.millespakka.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "mustankorkea-oy",
+      "name": "Mustankorkea Oy",
+      "municipalities": [
+        "Jyväskylä",
+        "Laukaa",
+        "Muurame",
+        "Toivakka"
+      ],
+      "website": "http://www.mustankorkea.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "napapiirin-residuum-oy",
+      "name": "Napapiirin Residuum Oy",
+      "municipalities": [
+        "Pello",
+        "Ranua",
+        "Rovaniemi"
+      ],
+      "website": "http://www.residuum.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "perameren-jatehuolto-oy",
+      "name": "Perämeren Jätehuolto Oy",
+      "municipalities": [
+        "Kemi",
+        "Keminmaa",
+        "Tervola",
+        "Tornio",
+        "Ylitornio"
+      ],
+      "website": "http://www.jakala.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "pirkanmaan-jatehuolto-oy",
+      "name": "Pirkanmaan Jätehuolto Oy",
+      "municipalities": [
+        "Hämeenkyrö",
+        "Ikaalinen",
+        "Juupajoki",
+        "Kangasala",
+        "Lempäälä",
+        "Mänttä-Vilppula",
+        "Nokia",
+        "Orivesi",
+        "Parkano",
+        "Pirkkala",
+        "Pälkäne",
+        "Ruovesi",
+        "Sastamala",
+        "Tampere",
+        "Vesilahti",
+        "Virrat",
+        "Ylöjärvi"
+      ],
+      "website": "http://www.pjhoy.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "pohjois-satakunnan-jatteidenkasittely-oy",
+      "name": "Pohjois-Satakunnan Jätteidenkäsittely Oy",
+      "municipalities": [
+        "Kankaanpää"
+      ],
+      "website": "https://www.kankaanpaa.fi/asuminen-ja-ymparisto/jatehuolto/",
+      "adapter": "manual"
+    },
+    {
+      "id": "puhas",
+      "name": "Puhas Oy",
+      "municipalities": [
+        "Ilomantsi",
+        "Joensuu",
+        "Kontiolahti",
+        "Liperi",
+        "Polvijärvi"
+      ],
+      "website": "http://www.puhas.fi",
+      "adapter": "vingo",
+      "baseUrl": "https://www.asiointipuhas.fi/puhas"
+    },
+    {
+      "id": "rauman-seudun-jatehuoltolaitos",
+      "name": "Rauman seudun jätehuoltolaitos",
+      "municipalities": [
+        "Eurajoki",
+        "Rauma"
+      ],
+      "website": "http://www.rauma.fi/jatehuolto",
+      "adapter": "manual"
+    },
+    {
+      "id": "rosk-n-roll-oy-ab",
+      "name": "Rosk'n Roll Oy Ab",
+      "municipalities": [
+        "Askola",
+        "Hanko",
+        "Inkoo",
+        "Karkkila",
+        "Lohja",
+        "Loviisa",
+        "Pornainen",
+        "Porvoo",
+        "Raasepori",
+        "Sipoo",
+        "Siuntio",
+        "Vihti"
+      ],
+      "website": "http://www.rosknroll.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "salpakierto-oy",
+      "name": "Salpakierto Oy",
+      "municipalities": [
+        "Asikkala",
+        "Heinola",
+        "Hollola",
+        "Kärkölä",
+        "Lahti",
+        "Myrskylä",
+        "Orimattila",
+        "Padasjoki",
+        "Pukkila"
+      ],
+      "website": "http://www.salpakierto.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "sammakkokangas",
+      "name": "Sammakkokangas Oy",
+      "municipalities": [
+        "Hankasalmi",
+        "Kannonkoski",
+        "Karstula",
+        "Kinnula",
+        "Kivijärvi",
+        "Multia",
+        "Petäjävesi",
+        "Pihtipudas",
+        "Saarijärvi",
+        "Uurainen",
+        "Viitasaari",
+        "Äänekoski"
+      ],
+      "website": "http://www.sammakkokangas.fi",
+      "adapter": "vingo",
+      "baseUrl": "https://asiointi.sammakkokangas.fi/sammakkokangas"
+    },
+    {
+      "id": "stormossen-ab-oy",
+      "name": "Stormossen Ab Oy",
+      "municipalities": [
+        "Isokyrö",
+        "Korsnäs",
+        "Maalahti",
+        "Mustasaari",
+        "Vaasa",
+        "Vöyri"
+      ],
+      "website": "http://www.stormossen.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "vestia-oy",
+      "name": "Vestia Oy",
+      "municipalities": [
+        "Alavieska",
+        "Haapajärvi",
+        "Haapavesi",
+        "Kalajoki",
+        "Kannus",
+        "Kärsämäki",
+        "Merijärvi",
+        "Nivala",
+        "Oulainen",
+        "Pyhäjoki",
+        "Pyhäjärvi",
+        "Pyhäntä",
+        "Sievi",
+        "Siikalatva",
+        "Toholampi",
+        "Ylivieska"
+      ],
+      "website": "http://www.vestia.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "yla-savon-jatehuolto-oy",
+      "name": "Ylä-Savon Jätehuolto Oy",
+      "municipalities": [
+        "Iisalmi",
+        "Keitele",
+        "Kiuruvesi",
+        "Lapinlahti",
+        "Pielavesi",
+        "Sonkajärvi",
+        "Vieremä"
+      ],
+      "website": "http://www.ylasavonjatehuolto.fi",
+      "adapter": "manual"
+    },
+    {
+      "id": "other",
+      "name": "Muu jätehuoltoyhtiö / oma aikataulu",
+      "municipalities": [],
+      "website": "",
+      "adapter": "manual"
+    }
+  ]
+}

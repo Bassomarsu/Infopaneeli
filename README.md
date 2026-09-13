@@ -41,6 +41,39 @@ koulut tai päiväkodit eivät ole palvelussa. Nimipäivissä käytetään vuode
 lisätyt nimet puuttuvat. Omat merkkipäivät voi lisätä erikseen.
 Katso [tietolähteet ja aineiston alkuperä](docs/widget-sources.md).
 
+## Roskien nouto: automaattinen yhteys
+
+Avaa **Asetukset → Jätehuollon automaattinen aikataulu** täydellä käyttöoikeudella.
+Kirjoita paikkakunta, valitse jätehuoltoyhtiö ja anna osoite. Automaattinen
+kirjautumisliitäntä on toteutettu Sammakkokankaalle, Puhakselle ja Lakeuden
+Etapille. Syötä yhtiön sähköisen asioinnin tunnus ja salasana, tallenna yhteys,
+hae kiinteistöt ja valitse oma kiinteistö. Ota haku käyttöön omalla painikkeellaan.
+Yhteysasetukset tallentuvat heti, erillään muista asetuksista.
+
+Paikkakunta ehdottaa yhtiötä; päivät haetaan valitun kiinteistön asiakkuudelta.
+Hakemistossa on 33 kunnallista jätelaitosta sekä muu yhtiö -valinta. Hakemisto
+ei tarkoita automaattista tukea kaikille yhtiöille: muiden yhteydessä käytetään
+toistaiseksi käsin asetettavaa aikataulua. Yksityinen kuljetusyhtiö voi olla
+eri kuin kunnan jätelaitos, joten yhtiövalinnan saa vaihtaa itse.
+
+Automaattinen haku päivittyy kuuden tunnin välein. Katkossa aiemmat saman kohteen
+päivät säilyvät vanhentuneiksi merkittyinä. Epäonnistunut kirjautuminen pysäyttää
+uudet automaattiset kirjautumisyritykset, kunnes yhteys avataan asetuksista
+uudelleen. Tarkista myös yhtiön poikkeustiedotteet.
+
+**Käsin asetettu aikataulu säilyy aina rinnalla.** Se perustuu omiin päivämääriin
+ja toistoväliin. Automaattinen haku ei muuta käsin lisättyjä merkintöjä.
+
+Tunnukset tallennetaan salattuina paikalliseen tietokantaan. Avaintiedoston nimi
+on tietokannan polku + `.waste-key`, oletuksena `data/infonaytto.db.waste-key`.
+Varmuuskopioi tietokanta ja avain yhdessä; kadonneen avaimen jälkeen tunnukset
+on syötettävä uudelleen. Salaus ei suojaa koneen ylläpitäjältä, jolla on pääsy
+molempiin tiedostoihin. Osoitteet ja asiakaskohtaiset aikataulut eivät kuulu
+julkiseen dashboard-vastaukseen.
+
+Katso [jätehuollon tietolähteet ja tuen rajat](docs/waste-sources.md).
+
+
 ## Käyttöönotto
 
 **Näyttölaitteelle** käytetään julkaisupakettia, jossa Node-ajonaika on mukana —
