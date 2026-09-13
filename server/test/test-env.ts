@@ -13,12 +13,14 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const LOG_DIR = "data/logs-test";
 const DB_PATH = "data/infonaytto-test.db";
 
-process.env.LOG_DIR ??= LOG_DIR;
-process.env.DB_PATH ??= DB_PATH;
+const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
+process.env.LOG_DIR = path.resolve(projectRoot, process.env.LOG_DIR ?? LOG_DIR);
+process.env.DB_PATH = path.resolve(projectRoot, process.env.DB_PATH ?? DB_PATH);
 
 /**
  * Wipe the previous run's state before anything opens it.

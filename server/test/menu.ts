@@ -1,0 +1,24 @@
+import './test-env.ts';
+import assert from 'node:assert/strict';
+import { parseMenuPage, fetchMenu } from '../src/providers/menu.ts';
+function page(start='2026-12-28', dates=['maanantai 28.12.','perjantai 1.1.']) { return {result:{pageContext:{menu:{RestaurantId:'karstula_koulut',RestaurantName:'Karstula - Koulut',Start:start,Days:dates.map(Date=>({Date,Meals:[{MealType:'Lounas',Name:'Keitto'}]}))}}}}; }
+const menu=parseMenuPage(page());
+assert.deepEqual(menu.days.map(d=>d.date),['2026-12-28','2027-01-01']);
+assert.deepEqual(menu.days[1]?.meals,[{type:'Lounas',name:'Keitto'}]);
+assert.throws(()=>parseMenuPage(page('2026-02-30')),/viikko/);
+assert.throws(()=>parseMenuPage(page('2026-12-28',['maanantai 28.12.','maanantai 28.12.'])),/päivämäärä/);
+assert.throws(()=>parseMenuPage(page('2026-12-28',['maanantai 21.12.'])),/päivämäärä/);
+const wrong=page(); wrong.result.pageContext.menu.RestaurantId='other';
+assert.throws(()=>parseMenuPage(wrong),/eri koululle/);
+assert.throws(()=>parseMenuPage({}),/rakenne/);
+let calls:string[]=[];
+const fetched=await fetchMenu((async url=>{calls.push(String(url));return Response.json(String(url).includes('/2/')?page('2027-01-04',['maanantai 4.1.']):page());}) as typeof fetch,new Date('2026-12-29T12:00:00Z'));
+assert.equal(calls.length,2);assert.deepEqual(fetched.days.map(d=>d.date),['2026-12-28','2027-01-01','2027-01-04']);
+const missing=await fetchMenu((async url=>String(url).includes('/2/')?new Response(null,{status:404}):Response.json(page())) as typeof fetch,new Date('2026-12-29T12:00:00Z'));
+assert.equal(missing.days.length,2);
+await assert.rejects(()=>fetchMenu((async()=>Response.json(page())) as typeof fetch,new Date('2027-02-01T12:00:00Z')),/vanhentunut/);
+await assert.rejects(()=>fetchMenu((async()=>new Response(null,{status:503})) as typeof fetch),/HTTP 503/);
+await assert.rejects(()=>fetchMenu((async url=>String(url).includes('/2/')?new Response(null,{status:500}):Response.json(page())) as typeof fetch),/HTTP 500/);
+const empty=await fetchMenu((async()=>Response.json(page('2026-12-28',[]))) as typeof fetch,new Date('2026-12-29T12:00:00Z'));
+assert.deepEqual(empty.days,[]);
+console.log('Menu: parser, year rollover, missing days, duplicate/date/location validation, fetch errors and stale source checks passed');

@@ -17,6 +17,8 @@ import {
   PANEL_IDS,
   SettingsValidationError,
   defaultPanelLayout,
+  defaultHiddenPanels,
+  defaultSettings,
   getSettings,
   isPanelId,
   parseHiddenPanels,
@@ -45,14 +47,30 @@ function testEveryPanelHasADefaultPlacement(): void {
  * Kaksi laskentaa samasta asiasta (päällekkäisyys ja aukot) yhdellä
  * läpikäynnillä, jotta virheilmoitus kertoo kumpi vika on kyseessä ja missä.
  */
+/**
+ * Oletuksena NÄKYVIEN paneelien on katettava ruudukko tasan kerran.
+ *
+ * Piilotetut eivät kuulu tähän: niiden sijoitus on parkkipaikka eikä
+ * piirtopaikka, ja se saa mennä näkyvien päälle koska sitä ei renderöidä.
+ * Kaksitoista paneelia ei mahtuisi muuten lainkaan — 6×8 solua ja minimi 2×2
+ * tarkoittaa tasan kahtatoista, eli kaikkien näyttäminen kerralla pakottaisi
+ * jokaisen pienimpään mahdolliseen kokoon.
+ *
+ * Piilotetuille tarkistetaan silti rajat ja vähimmäiskoko: parkkipaikka saa
+ * mennä päällekkäin, muttei ruudukon ulkopuolelle — sieltä paneelia ei saisi
+ * takaisin käyttöön millään.
+ */
 function testDefaultLayoutTilesTheGridExactly(): void {
   const owner = new Map<string, PanelId>();
+  const piilossa = new Set<string>(defaultSettings.hiddenPanels);
 
   for (const id of PANEL_IDS) {
     const p = defaultPanelLayout[id];
     assert.ok(p.colSpan >= MIN_PANEL_SPAN && p.rowSpan >= MIN_PANEL_SPAN, `${id}: alle vähimmäiskoon`);
     assert.ok(p.col >= 1 && p.col + p.colSpan - 1 <= GRID_COLUMNS, `${id}: ei mahdu leveyssuunnassa`);
     assert.ok(p.row >= 1 && p.row + p.rowSpan - 1 <= GRID_ROWS, `${id}: ei mahdu korkeussuunnassa`);
+
+    if (piilossa.has(id)) continue;
 
     for (let col = p.col; col < p.col + p.colSpan; col++) {
       for (let row = p.row; row < p.row + p.rowSpan; row++) {
@@ -72,7 +90,9 @@ function testDefaultLayoutTilesTheGridExactly(): void {
   }
   assert.deepEqual(empty, [], "oletusasetteluun jäi tyhjiä soluja");
   assert.equal(owner.size, GRID_COLUMNS * GRID_ROWS);
-  console.log(`ok  oletusasettelu kattaa ruudukon ${GRID_COLUMNS}×${GRID_ROWS} tasan kerran`);
+  console.log(
+    `ok  oletuksena näkyvät ${PANEL_IDS.length - piilossa.size} paneelia kattavat ruudukon ${GRID_COLUMNS}×${GRID_ROWS} tasan kerran`,
+  );
 }
 
 function testParsePanelLayoutRequiresNews(): void {
@@ -85,7 +105,7 @@ function testParsePanelLayoutRequiresNews(): void {
     (err: unknown) => err instanceof SettingsValidationError && /news/.test(err.message),
     "vajaa asettelu pudottaisi uutiskortin hiljaa pois",
   );
-  assert.deepEqual(parsePanelLayout(defaultPanelLayout), defaultPanelLayout);
+  assert.deepEqual(parsePanelLayout(defaultPanelLayout, defaultHiddenPanels), defaultPanelLayout);
   console.log("ok  parsePanelLayout vaatii myös news-paneelin");
 }
 
@@ -136,24 +156,24 @@ function testHiddenPanelsRejectsBadInput(): void {
   console.log("ok  kelvoton hiddenPanels hylätään kentän nimeävällä viestillä");
 }
 
-function testDefaultIsEmpty(): void {
+function testDefaultHidesNewPanels(): void {
   setSetting("settings", {});
-  assert.deepEqual(getSettings().hiddenPanels, [], "puuttuva avain = kaikki näkyvät");
-  console.log("ok  oletuksena mikään paneeli ei ole piilossa");
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels], "puuttuva avain = vanhat seitsemän näkyvät");
+  console.log("ok  oletuksena viisi uutta paneelia on piilossa");
 }
 
 function testRoundTripThroughSettings(): void {
   setSetting("settings", {});
-  const saved = updateSettings({ hiddenPanels: ["news", "electricity"] });
-  assert.deepEqual(saved.hiddenPanels, ["news", "electricity"]);
-  assert.deepEqual(getSettings().hiddenPanels, ["news", "electricity"], "asetus säilyy levyllä");
+  const saved = updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news", "electricity"] });
+  assert.deepEqual(saved.hiddenPanels, [...defaultHiddenPanels, "news", "electricity"]);
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels, "news", "electricity"], "asetus säilyy levyllä");
 
   // Muun asetuksen päivitys ei saa nollata listaa.
   updateSettings({ hideNextAlarm: true });
-  assert.deepEqual(getSettings().hiddenPanels, ["news", "electricity"]);
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels, "news", "electricity"]);
 
-  updateSettings({ hiddenPanels: [] });
-  assert.deepEqual(getSettings().hiddenPanels, []);
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels]);
   console.log("ok  hiddenPanels kulkee tallennuksen läpi eikä muu päivitys nollaa sitä");
 }
 
@@ -168,17 +188,17 @@ function testRoundTripThroughSettings(): void {
  */
 function testLayoutEditorPartialUpdate(): void {
   setSetting("settings", {});
-  updateSettings({ hiddenPanels: ["weather"] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels, "weather"] });
 
-  const saved = updateSettings({ panelLayout: defaultPanelLayout, hiddenPanels: ["news"] });
-  assert.deepEqual(saved.hiddenPanels, ["news"]);
+  const saved = updateSettings({ panelLayout: defaultPanelLayout, hiddenPanels: [...defaultHiddenPanels, "news"] });
+  assert.deepEqual(saved.hiddenPanels, [...defaultHiddenPanels, "news"]);
   assert.deepEqual(saved.panelLayout, defaultPanelLayout, "asettelu ja piilotus tallentuvat samasta pyynnöstä");
 
   // "Palauta oletusasettelu" -nappi.
-  const reset = updateSettings({ panelLayout: null, hiddenPanels: [] });
+  const reset = updateSettings({ panelLayout: null, hiddenPanels: [...defaultHiddenPanels] });
   assert.equal(reset.panelLayout, null);
-  assert.deepEqual(reset.hiddenPanels, []);
-  assert.deepEqual(getSettings().hiddenPanels, []);
+  assert.deepEqual(reset.hiddenPanels, [...defaultHiddenPanels]);
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels]);
   console.log("ok  asettelun muokkaimen osittainen PUT vie sekä asettelun että piilotukset");
 }
 
@@ -200,7 +220,7 @@ function testNewPanelIsHiddenNotPlaced(): void {
   setSetting("settings", { panelLayout: STORED_LAYOUT_BEFORE_NEWS });
   const settings = getSettings();
 
-  assert.deepEqual(settings.hiddenPanels, ["news"], "uusi paneeli menee piiloon");
+  assert.deepEqual(settings.hiddenPanels, [...defaultHiddenPanels, "news"], "uusi paneeli menee piiloon");
 
   // Käyttäjän kuusi korttia säilyttävät TÄSMÄLLEEN paikkansa.
   for (const [id, placement] of Object.entries(STORED_LAYOUT_BEFORE_NEWS)) {
@@ -216,20 +236,20 @@ function testUpgradedSettingsSurviveTheSettingsPanelRoundTrip(): void {
   setSetting("settings", { panelLayout: STORED_LAYOUT_BEFORE_NEWS });
   const echoed = getSettings();
   const saved = updateSettings({ ...echoed });
-  assert.deepEqual(saved.hiddenPanels, ["news"]);
+  assert.deepEqual(saved.hiddenPanels, [...defaultHiddenPanels, "news"]);
   assert.deepEqual(saved.panelLayout?.schedule, STORED_LAYOUT_BEFORE_NEWS["schedule"]);
   console.log("ok  päivitetty asennus selviää asetuspaneelin koko-olion PUT:ista");
 }
 
 function testMigrationDoesNotRepeatAfterUserEnablesPanel(): void {
   setSetting("settings", { panelLayout: STORED_LAYOUT_BEFORE_NEWS });
-  assert.deepEqual(getSettings().hiddenPanels, ["news"]);
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels, "news"]);
 
   // Käyttäjä ottaa uutiset käyttöön. Hänen on TEHTÄVÄ SILLE TILAA: parkkipaikka
   // (3,7) on kalenterin päällä, ja näkyvien kesken päällekkäisyys hylätään.
   const parked = { ...(getSettings().panelLayout as PanelLayout) };
   assert.throws(
-    () => updateSettings({ panelLayout: parked, hiddenPanels: [] }),
+    () => updateSettings({ panelLayout: parked, hiddenPanels: [...defaultHiddenPanels] }),
     (err: unknown) => err instanceof SettingsValidationError && /päällekkäin/.test(err.message),
     "parkkipaikaltaan suoraan näkyviin otettu paneeli on kalenterin päällä",
   );
@@ -240,14 +260,14 @@ function testMigrationDoesNotRepeatAfterUserEnablesPanel(): void {
     calendar: { col: 3, row: 4, colSpan: 2, rowSpan: 3 },
     news: { col: 3, row: 7, colSpan: 2, rowSpan: 2 },
   };
-  updateSettings({ panelLayout: layout, hiddenPanels: [] });
+  updateSettings({ panelLayout: layout, hiddenPanels: [...defaultHiddenPanels] });
 
-  assert.deepEqual(getSettings().hiddenPanels, [], "migraatio ei saa piilottaa korttia uudelleen");
-  assert.deepEqual(getSettings().hiddenPanels, [], "eikä seuraavallakaan lukukerralla");
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels], "migraatio ei saa piilottaa korttia uudelleen");
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels], "eikä seuraavallakaan lukukerralla");
 
   // Käyttäjä piilottaa sen myöhemmin itse — se on hänen valintansa ja säilyy.
-  updateSettings({ hiddenPanels: ["news"] });
-  assert.deepEqual(getSettings().hiddenPanels, ["news"]);
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news"] });
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels, "news"]);
   console.log("ok  migraatio ei palaudu sen jälkeen kun käyttäjä on ottanut paneelin käyttöön");
 }
 
@@ -255,7 +275,7 @@ function testFreshInstallIsUntouched(): void {
   setSetting("settings", {});
   const settings = getSettings();
   assert.equal(settings.panelLayout, null, "uudella asennuksella ei ole tallennettua asettelua");
-  assert.deepEqual(settings.hiddenPanels, [], "uutiset näkyvät uudessa asennuksessa normaalisti");
+  assert.deepEqual(settings.hiddenPanels, [...defaultHiddenPanels], "uutiset näkyvät uudessa asennuksessa normaalisti");
   console.log("ok  uutta asennusta migraatio ei koske");
 }
 
@@ -266,7 +286,7 @@ function testBrokenPlacementIsRepairedButNotHidden(): void {
     panelLayout: { ...STORED_LAYOUT_BEFORE_NEWS, notes: { col: "x", row: null } },
   });
   const settings = getSettings();
-  assert.deepEqual(settings.hiddenPanels, ["news"], "vain aidosti uusi paneeli piilotetaan");
+  assert.deepEqual(settings.hiddenPanels, [...defaultHiddenPanels, "news"], "vain aidosti uusi paneeli piilotetaan");
 
   // Korjattu sijoittelu on kelvollinen ja käyttökelpoinen — ei välttämättä
   // oletuspaikka, koska vapaa alue (tässä notesin oma vanha paikka) on
@@ -299,7 +319,7 @@ function testNewPanelPrefersFreeSpace(): void {
     panelLayout: { ...STORED_LAYOUT_BEFORE_NEWS, calendar: { col: 3, row: 4, colSpan: 2, rowSpan: 3 } },
   });
   const settings = getSettings();
-  assert.deepEqual(settings.hiddenPanels, ["news"], "uusi paneeli on yhä piilossa");
+  assert.deepEqual(settings.hiddenPanels, [...defaultHiddenPanels, "news"], "uusi paneeli on yhä piilossa");
   assert.deepEqual(
     settings.panelLayout?.news,
     { col: 3, row: 7, colSpan: 2, rowSpan: 2 },
@@ -307,8 +327,8 @@ function testNewPanelPrefersFreeSpace(): void {
   );
 
   // Ja käyttöön otettuna se kelpaa suoraan, ilman että mitään tarvitsee siirtää.
-  const enabled = updateSettings({ panelLayout: settings.panelLayout, hiddenPanels: [] });
-  assert.deepEqual(enabled.hiddenPanels, []);
+  const enabled = updateSettings({ panelLayout: settings.panelLayout, hiddenPanels: [...defaultHiddenPanels] });
+  assert.deepEqual(enabled.hiddenPanels, [...defaultHiddenPanels]);
   console.log("ok  uusi paneeli sijoittuu vapaaseen tilaan kun sitä on");
 }
 
@@ -322,7 +342,7 @@ function testFullGridFallsBackToDefaultSpot(): void {
     "täydessä ruudukossa vapaata ei ole, joten oletuspaikka on varasija",
   );
   // Se on kalenterin päällä — sallittua vain koska paneeli on piilossa.
-  assert.deepEqual(settings.hiddenPanels, ["news"]);
+  assert.deepEqual(settings.hiddenPanels, [...defaultHiddenPanels, "news"]);
   console.log("ok  täysi ruudukko putoaa oletuspaikkaan, joka saa olla päällekkäinen");
 }
 
@@ -343,7 +363,7 @@ function testMigrationIsIdempotentAndWritesNothing(): void {
   const first = getSettings();
   const second = getSettings();
   assert.deepEqual(second, first, "toistuva luku antaa saman tuloksen");
-  assert.deepEqual(second.hiddenPanels, ["news"], "lista ei kasva joka lukukerralla");
+  assert.deepEqual(second.hiddenPanels, [...defaultHiddenPanels, "news"], "lista ei kasva joka lukukerralla");
 
   // Levylle ei ole kirjoitettu mitään: tallennettu muoto on yhä alkuperäinen,
   // joten keskeytys ei voi jättää puolittaista tilaa.
@@ -371,13 +391,13 @@ function testVisibleOverlapIsRejected(): void {
   // Kahden paneelin osittainenkin limitys riittää.
   const partial = { ...defaultPanelLayout, notes: { col: 4, row: 7, colSpan: 2, rowSpan: 2 } };
   assert.throws(
-    () => parsePanelLayout(partial),
+    () => parsePanelLayout(partial, defaultHiddenPanels),
     (err: unknown) => err instanceof SettingsValidationError && /news ja notes|notes ja news/.test(err.message),
     "yhden solun limitys riittää hylkäykseen",
   );
 
   // Oletusasettelu ei limity lainkaan.
-  assert.deepEqual(parsePanelLayout(defaultPanelLayout), defaultPanelLayout);
+  assert.deepEqual(parsePanelLayout(defaultPanelLayout, defaultHiddenPanels), defaultPanelLayout);
   console.log("ok  näkyvien paneelien päällekkäisyys hylätään");
 }
 
@@ -396,7 +416,7 @@ function testHiddenPanelMayOverlap(): void {
     "näkyvänä sama sijoitus hylätään",
   );
   assert.deepEqual(
-    parsePanelLayout(parked, ["news"]),
+    parsePanelLayout(parked, [...defaultHiddenPanels, "news"]),
     parked,
     "piilotettuna sama sijoitus hyväksytään — sitä ei renderöidä",
   );
@@ -409,13 +429,13 @@ function testHiddenPanelsIsParsedBeforeLayout(): void {
   // piilottaminen ja päällekkäiseksi siirtäminen samalla kertaa hylättäisiin.
   setSetting("settings", {});
   const parked = { ...defaultPanelLayout, news: { col: 1, row: 7, colSpan: 2, rowSpan: 2 } };
-  const saved = updateSettings({ panelLayout: parked, hiddenPanels: ["news"] });
-  assert.deepEqual(saved.hiddenPanels, ["news"]);
+  const saved = updateSettings({ panelLayout: parked, hiddenPanels: [...defaultHiddenPanels, "news"] });
+  assert.deepEqual(saved.hiddenPanels, [...defaultHiddenPanels, "news"]);
   assert.deepEqual(saved.panelLayout?.news, parked.news);
 
   // Ja päinvastoin: saman pyynnön sisällä näkyväksi otettu ei saa limittyä.
   assert.throws(
-    () => updateSettings({ panelLayout: parked, hiddenPanels: [] }),
+    () => updateSettings({ panelLayout: parked, hiddenPanels: [...defaultHiddenPanels] }),
     (err: unknown) => err instanceof SettingsValidationError && /päällekkäin/.test(err.message),
   );
   setSetting("settings", {});
@@ -425,11 +445,11 @@ function testHiddenPanelsIsParsedBeforeLayout(): void {
 function testStoredGarbageIsNormalisedOnRead(): void {
   // Esim. uudemmalla versiolla tallennettu tunniste, jota tämä versio ei
   // tunne. Asetusten luku ei saa kaatua eikä tunniste vuotaa dashboardiin.
-  setSetting("settings", { hiddenPanels: ["news", "tuntematon", "news", 5, null] });
-  assert.deepEqual(getSettings().hiddenPanels, ["news"]);
+  setSetting("settings", { hiddenPanels: [...defaultHiddenPanels, "news", "tuntematon", "news", 5, null] });
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels, "news"]);
 
   setSetting("settings", { hiddenPanels: "news" });
-  assert.deepEqual(getSettings().hiddenPanels, []);
+  assert.deepEqual(getSettings().hiddenPanels, [...defaultHiddenPanels]);
 
   setSetting("settings", {});
   console.log("ok  tallennettu roska siivotaan luettaessa ilman poikkeusta");
@@ -442,7 +462,7 @@ testIsPanelId();
 testHiddenPanelsAccepted();
 testHiddenPanelsDeduplicates();
 testHiddenPanelsRejectsBadInput();
-testDefaultIsEmpty();
+testDefaultHidesNewPanels();
 testRoundTripThroughSettings();
 testLayoutEditorPartialUpdate();
 testVisibleOverlapIsRejected();
@@ -508,7 +528,7 @@ function testStoredSettingsWithoutGridOverflowGetTheDefault(): void {
  * takaisin hylkäisi käyttäjän asettelun.
  */
 function testLayoutIsValidInBothModes(): void {
-  const täysi = buildSevenPanelLayout();
+  const täysi = buildAllPanelLayout();
   for (const mode of ["fit", "scroll"] as const) {
     setSetting("settings", {});
     updateSettings({ gridOverflow: mode, panelLayout: täysi, hiddenPanels: [] });
@@ -526,7 +546,7 @@ function testLayoutIsValidInBothModes(): void {
  * MIN_PANEL_SPAN kumpaankin suuntaan, joten raja on niiden osamäärä — ei
  * mikään erillinen luku, jota voisi vahingossa laskea liian pieneksi.
  */
-function buildSevenPanelLayout(): PanelLayout {
+function buildAllPanelLayout(): PanelLayout {
   const layout = {} as PanelLayout;
   let col = 1;
   let row = 1;
@@ -551,7 +571,7 @@ function testGridFitsMoreThanSixPanels(): void {
 
   // Eikä se ole pelkkää laskentaa: rakennetaan asettelu jossa KAIKKI paneelit
   // ovat näkyvissä yhtä aikaa, ja tarkistetaan että validointi hyväksyy sen.
-  const layout = buildSevenPanelLayout();
+  const layout = buildAllPanelLayout();
   const kelpaa = parsePanelLayout(layout);
   assert.equal(Object.keys(kelpaa ?? {}).length, PANEL_IDS.length);
 
@@ -577,3 +597,33 @@ testLayoutIsValidInBothModes();
 testGridFitsMoreThanSixPanels();
 
 console.log("\npaneeliasetukset ok");
+
+// Vanha oletusasettelu voi sisältää nimenomaisen tyhjän piilotuslistan.
+// Luku täydentää vain uusien paneelien piilotukset eikä muuta levyllä olevaa valintaa.
+for (const hidden of [[], ["news"]] as PanelId[][]) {
+  const original = { panelLayout: null, hiddenPanels: hidden };
+  setSetting("settings", original);
+  const upgraded = getSettings();
+  assert.equal(upgraded.panelLayout, null);
+  assert.deepEqual(upgraded.hiddenPanels, [...hidden, ...defaultHiddenPanels]);
+  assert.deepEqual(getSettings(), upgraded, "toistuva migraatio on vakaa");
+  assert.deepEqual(getSetting("settings"), original, "lukeminen ei muuta tallennusta");
+  assert.deepEqual(updateSettings({ ...upgraded }).hiddenPanels, upgraded.hiddenPanels);
+}
+console.log("ok  vanha oletusasettelu täydentyy ilman päällekkäisyyttä tai lukemisen sivuvaikutuksia");
+
+// Pelkkä näkyvyysmuutos on validoitava voimassa olevaa asettelua vasten.
+for (const panelLayout of [null, defaultPanelLayout]) {
+  setSetting("settings", { panelLayout, hiddenPanels: [...defaultHiddenPanels] });
+  const before = getSetting("settings");
+  assert.throws(
+    () => updateSettings({ hiddenPanels: defaultHiddenPanels.filter((id) => id !== "waste") }),
+    (err: unknown) => err instanceof SettingsValidationError && /päällekkäin/.test(err.message),
+    "pelkkä piilotuksen poisto ei saa paljastaa päällekkäistä parkkipaikkaa",
+  );
+  assert.deepEqual(getSetting("settings"), before, "torjuttu osittaispäivitys ei muuta asetuksia");
+  assert.throws(() => updateSettings({ panelLayout: null, hiddenPanels: [] }), SettingsValidationError);
+  assert.deepEqual(getSetting("settings"), before);
+}
+console.log("ok  päällekkäinen osittaispäivitys ja väärä oletusten palautus torjutaan atomisesti");
+setSetting("settings", {});

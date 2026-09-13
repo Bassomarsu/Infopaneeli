@@ -23,6 +23,7 @@ import {
   PANEL_IDS,
   PANEL_TITLES,
   defaultPanelLayout,
+  defaultHiddenPanels,
   isPanelHidden,
   isPanelId,
   panelVisibilityRows,
@@ -31,6 +32,18 @@ import {
   type PanelId,
   type PanelLayout,
 } from "../src/types.ts";
+
+/**
+ * Täydentää osittaisen asettelun täydeksi. Testit kuvaavat vain ne paneelit
+ * joilla on merkitystä kyseiselle tapaukselle; loput otetaan oletuksista.
+ *
+ * Ilman tätä jokainen testiasettelu pitäisi kirjoittaa uusiksi joka kerta kun
+ * uusi paneeli lisätään — ja silloin testi kertoisi paneelien määrästä eikä
+ * siitä asiasta jota se on kirjoitettu vartioimaan.
+ */
+function taydenna(osittainen: Partial<PanelLayout>): PanelLayout {
+  return { ...defaultPanelLayout, ...osittainen } as PanelLayout;
+}
 
 /** Ne paneelit jotka näkyvät annetulla piilotuslistalla, muokkaustilan ulkopuolella. */
 function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
@@ -58,7 +71,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 
 {
   const visible = rendered(["news", "notes", "weather"]);
-  assert.deepEqual(visible, ["schedule", "messages", "electricity", "calendar"]);
+  assert.deepEqual(visible, PANEL_IDS.filter((id) => !["news", "notes", "weather"].includes(id)));
   console.log("ok  useampi kerralla pois");
 }
 
@@ -198,13 +211,14 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     assert.ok(p.colSpan >= MIN_PANEL_SPAN && p.rowSpan >= MIN_PANEL_SPAN, `${id} on oletuksena liian pieni`);
     assert.ok(p.col >= 1 && p.col + p.colSpan - 1 <= GRID_COLUMNS, `${id} ylittää sarakkeet`);
     assert.ok(p.row >= 1 && p.row + p.rowSpan - 1 <= GRID_ROWS, `${id} ylittää rivit`);
-    area += p.colSpan * p.rowSpan;
+    if (!defaultHiddenPanels.includes(id)) area += p.colSpan * p.rowSpan;
   }
   assert.equal(area, GRID_COLUMNS * GRID_ROWS, "oletusasettelun on täytettävä ruudukko tasan, ilman aukkoja");
 
   // Päällekkäisyys solu kerrallaan — pinta-alan summa yksinään ei sulkisi sitä pois.
   const owner = new Map<string, PanelId>();
   for (const id of ids) {
+    if (defaultHiddenPanels.includes(id)) continue;
     const p = defaultPanelLayout[id];
     for (let c = p.col; c < p.col + p.colSpan; c++) {
       for (let r = p.row; r < p.row + p.rowSpan; r++) {
@@ -228,7 +242,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 {
   // Aito tapaus tuotantonäytöltä: kalenteri on venytetty sarakkeille 3-4,
   // riveille 4-8, ja uutisten oletuspaikka (3,7) 2x2 jää kokonaan sen sisään.
-  const kayttajan: PanelLayout = {
+  const kayttajan: PanelLayout = taydenna({
     schedule: { col: 1, row: 1, colSpan: 2, rowSpan: 4 },
     messages: { col: 1, row: 5, colSpan: 2, rowSpan: 4 },
     weather: { col: 3, row: 1, colSpan: 2, rowSpan: 3 },
@@ -236,15 +250,15 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     calendar: { col: 3, row: 4, colSpan: 2, rowSpan: 5 },
     notes: { col: 5, row: 5, colSpan: 2, rowSpan: 4 },
     news: { ...defaultPanelLayout.news },
-  };
+  });
 
   assert.deepEqual(
-    overlappingVisiblePanels(kayttajan, ["news"]),
+    overlappingVisiblePanels(kayttajan, [...defaultHiddenPanels, "news"]),
     [],
     "pois kytketty paneeli ei voi mennä minkään päälle — se ei ole ruudulla",
   );
   assert.deepEqual(
-    overlappingVisiblePanels(kayttajan, []),
+    overlappingVisiblePanels(kayttajan, [...defaultHiddenPanels]),
     ["calendar", "news"],
     "päälle kytkettynä uutiset ja kalenteri ovat samoissa ruuduissa",
   );
@@ -252,10 +266,10 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 }
 
 {
-  // Oletusasettelu on kunnossa kaikilla näkyvyyskombinaatioilla — muuten
+  // Vanhojen seitsemän paneelin oletusasettelu on kunnossa niiden näkyvyyskombinaatioilla — muuten
   // varoitus vilkkuisi tavallisessa käytössä eikä sitä uskoisi silloin kun
   // siihen on aihetta.
-  const combos: PanelId[][] = [[], ["news"], ["calendar"], ["schedule", "messages"], [...PANEL_IDS]];
+  const combos: PanelId[][] = [[...defaultHiddenPanels], [...defaultHiddenPanels, "news"], [...defaultHiddenPanels, "calendar"], [...defaultHiddenPanels, "schedule", "messages"], [...PANEL_IDS]];
   for (const hidden of combos) {
     assert.deepEqual(
       overlappingVisiblePanels(defaultPanelLayout, hidden),
@@ -263,7 +277,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
       `oletusasettelu ei saa olla päällekkäinen (piilossa: ${hidden.join(",") || "ei mitään"})`,
     );
   }
-  console.log("ok  oletusasettelu ei tuota päällekkäisyysvaroitusta millään näkyvyysvalinnalla");
+  console.log("ok  oletusasettelu ei tuota päällekkäisyysvaroitusta vanhojen paneelien näkyvyysvalinnoilla");
 }
 
 // --- Piilotettu paneeli ei varaa ruutuja ---
@@ -278,10 +292,10 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
   // 2x3-kokoinen kortti mahtuu niihin. Haettavana on `news`, jotta haun
   // oma poissulku (paneeli ei ole itselleen tiellä) ei sekoitu tuloksen
   // tulkintaan.
-  const spot = findFreeSpot(defaultPanelLayout, ["electricity"], "news", 2, 3);
+  const spot = findFreeSpot(defaultPanelLayout, [...defaultHiddenPanels, "electricity"], "news", 2, 3);
   assert.deepEqual(spot, { col: 5, row: 4, colSpan: 2, rowSpan: 3 }, "piilotetun paneelin ruudut ovat vapaita");
   assert.equal(
-    findFreeSpot(defaultPanelLayout, [], "news", 2, 3),
+    findFreeSpot(defaultPanelLayout, [...defaultHiddenPanels], "news", 2, 3),
     null,
     "täydessä ruudukossa ei ole 2x3:n kokoista vapaata paikkaa kun kaikki näkyvät",
   );
@@ -296,8 +310,8 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     ...defaultPanelLayout,
     schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
   };
-  const first = findFreeSpot(kaksiVapaata, ["schedule", "calendar", "news"], "notes", 2, 2);
-  const second = findFreeSpot(kaksiVapaata, ["schedule", "calendar", "news"], "notes", 2, 2);
+  const first = findFreeSpot(kaksiVapaata, [...defaultHiddenPanels, "schedule", "calendar", "news"], "notes", 2, 2);
+  const second = findFreeSpot(kaksiVapaata, [...defaultHiddenPanels, "schedule", "calendar", "news"], "notes", 2, 2);
   assert.deepEqual(first, second, "haun on oltava toisteinen");
   assert.deepEqual(first, { col: 1, row: 1, colSpan: 2, rowSpan: 2 }, "ensimmäinen vapaa ylhäältä vasemmalta");
   console.log("ok  vapaan paikan haku on toisteinen ja alkaa vasemmalta ylhäältä");
@@ -307,11 +321,11 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 {
   // 1. Parkkipaikka vapaa: paneeli palaa TÄSMÄLLEEN siihen. Juuri tämä tekee
   //    kytkimestä peruutettavan — pois ja takaisin ei muuta mitään.
-  const outcome = enablePanel(defaultPanelLayout, ["news"], "news");
+  const outcome = enablePanel(defaultPanelLayout, [...defaultHiddenPanels, "news"], "news");
   assert.equal(outcome.rejected, null);
   assert.equal(outcome.relocated, false, "vapaalle parkkipaikalle palaava paneeli ei saa siirtyä");
   assert.deepEqual(outcome.layout.news, defaultPanelLayout.news, "sijoitus säilyy bitilleen");
-  assert.deepEqual(outcome.hiddenPanels, []);
+  assert.deepEqual(outcome.hiddenPanels, [...defaultHiddenPanels]);
   assert.equal(outcome.layout, defaultPanelLayout, "asettelua ei saa kopioida turhaan kun mikään ei muutu");
   console.log("ok  vapaalle paikalle palaava paneeli palaa täsmälleen entiseen kohtaansa");
 }
@@ -319,7 +333,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 {
   // 2. Parkkipaikka varattu mutta tilaa on muualla: paneeli sijoitetaan
   //    sinne, eikä yhtäkään NAAPURIA siirretä.
-  const layout: PanelLayout = {
+  const layout: PanelLayout = taydenna({
     schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
     messages: { col: 1, row: 4, colSpan: 4, rowSpan: 3 },
     weather: { col: 5, row: 1, colSpan: 2, rowSpan: 3 },
@@ -328,13 +342,13 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     calendar: { col: 1, row: 7, colSpan: 4, rowSpan: 2 },
     notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
     news: { ...defaultPanelLayout.news },
-  };
+  });
   // Muistilista piilossa → sen 2x2 (5,7) on vapaa.
-  const outcome = enablePanel(layout, ["news", "notes"], "news");
+  const outcome = enablePanel(layout, [...defaultHiddenPanels, "news", "notes"], "news");
   assert.equal(outcome.rejected, null);
   assert.equal(outcome.relocated, true);
   assert.deepEqual(outcome.layout.news, { col: 5, row: 7, colSpan: 2, rowSpan: 2 });
-  assert.deepEqual(outcome.hiddenPanels, ["notes"], "vain käyttöön otettu paneeli poistuu listalta");
+  assert.deepEqual(outcome.hiddenPanels, ["notes", ...defaultHiddenPanels], "vain käyttöön otettu paneeli poistuu listalta");
   for (const id of PANEL_IDS) {
     if (id === "news") continue;
     assert.deepEqual(outcome.layout[id], layout[id], `${id}: naapuria ei saa siirtää`);
@@ -348,7 +362,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 {
   // 3. Mikään ei mahdu: EI oteta käyttöön. Tämä on se oikea tilanne johon
   //    päivitys törmää — käyttäjän asettelu täyttää ruudukon 48/48.
-  const taysi: PanelLayout = {
+  const taysi: PanelLayout = taydenna({
     schedule: { col: 1, row: 1, colSpan: 2, rowSpan: 4 },
     messages: { col: 1, row: 5, colSpan: 2, rowSpan: 4 },
     weather: { col: 3, row: 1, colSpan: 2, rowSpan: 3 },
@@ -356,10 +370,10 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     calendar: { col: 3, row: 4, colSpan: 2, rowSpan: 5 },
     notes: { col: 5, row: 5, colSpan: 2, rowSpan: 4 },
     news: { ...defaultPanelLayout.news },
-  };
-  const outcome = enablePanel(taysi, ["news"], "news");
+  });
+  const outcome = enablePanel(taysi, [...defaultHiddenPanels, "news"], "news");
   assert.equal(outcome.rejected, "no-room");
-  assert.deepEqual(outcome.hiddenPanels, ["news"], "hylätty käyttöönotto ei saa poistaa paneelia listalta");
+  assert.deepEqual(outcome.hiddenPanels, ["news", ...defaultHiddenPanels], "hylätty käyttöönotto ei saa poistaa paneelia listalta");
   assert.equal(outcome.layout, taysi, "hylätty käyttöönotto ei saa muuttaa asettelua");
   assert.deepEqual(
     overlappingVisiblePanels(outcome.layout, outcome.hiddenPanels),
@@ -372,7 +386,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 {
   // Kun käyttäjä tekee tilaa, sama kytkin toimii — eikä vaadi muuta kuin
   // yhden kortin kutistamisen.
-  const taysi: PanelLayout = {
+  const taysi: PanelLayout = taydenna({
     schedule: { col: 1, row: 1, colSpan: 2, rowSpan: 4 },
     messages: { col: 1, row: 5, colSpan: 2, rowSpan: 4 },
     weather: { col: 3, row: 1, colSpan: 2, rowSpan: 3 },
@@ -380,8 +394,8 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     calendar: { col: 3, row: 4, colSpan: 2, rowSpan: 3 },
     notes: { col: 5, row: 5, colSpan: 2, rowSpan: 4 },
     news: { ...defaultPanelLayout.news },
-  };
-  const outcome = enablePanel(taysi, ["news"], "news");
+  });
+  const outcome = enablePanel(taysi, [...defaultHiddenPanels, "news"], "news");
   assert.equal(outcome.rejected, null);
   assert.equal(outcome.relocated, false, "kalenterin kutistaminen vapautti juuri parkkipaikan");
   assert.deepEqual(outcome.layout.news, { col: 3, row: 7, colSpan: 2, rowSpan: 2 });
@@ -396,7 +410,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
     ...defaultPanelLayout,
     calendar: { col: 1, row: 7, colSpan: 4, rowSpan: 2 },
   };
-  for (const hidden of [["news"], ["news", "notes"], ["news", "notes", "weather"]] as PanelId[][]) {
+  for (const hidden of [[...defaultHiddenPanels, "news"], [...defaultHiddenPanels, "news", "notes"], [...defaultHiddenPanels, "news", "notes", "weather"]] as PanelId[][]) {
     const outcome = enablePanel(layout, hidden, "news");
     assert.deepEqual(
       overlappingVisiblePanels(outcome.layout, outcome.hiddenPanels),
@@ -409,7 +423,7 @@ function rendered(hidden: readonly unknown[] | null | undefined): PanelId[] {
 
 {
   // Jo näkyvän paneelin "käyttöönotto" ei tee mitään.
-  const outcome = enablePanel(defaultPanelLayout, [], "news");
+  const outcome = enablePanel(defaultPanelLayout, [...defaultHiddenPanels], "news");
   assert.equal(outcome.rejected, null);
   assert.equal(outcome.relocated, false);
   assert.equal(outcome.layout, defaultPanelLayout);

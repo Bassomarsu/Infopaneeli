@@ -9,6 +9,13 @@ import KioskExitHotspot from "./components/KioskExitHotspot.vue";
 import LayoutEditor from "./components/LayoutEditor.vue";
 import MessagesCard from "./components/MessagesCard.vue";
 import NewsCard from "./components/NewsCard.vue";
+import WasteCard from "./components/WasteCard.vue";
+import ShoppingCard from "./components/ShoppingCard.vue";
+import SeasonalCard from "./components/SeasonalCard.vue";
+import MenuCard from "./components/MenuCard.vue";
+import NamedayCard from "./components/NamedayCard.vue";
+import type { HouseholdData } from "./household.ts";
+import type { MenuData } from "./publicWidgets.ts";
 import NotesCard from "./components/NotesCard.vue";
 import ScheduleCard from "./components/ScheduleCard.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -20,7 +27,7 @@ import { useDashboard } from "./composables/useDashboard";
 import { useEditAccess } from "./composables/useEditAccess.ts";
 import { panelGridKey, usePanelLayout } from "./composables/usePanelLayout";
 import { useScheduleDay } from "./composables/useScheduleDay";
-import { PANEL_IDS, panelVisibilityRows, shouldRenderPanel, type PanelId } from "./types";
+import { defaultHiddenPanels, PANEL_IDS, panelVisibilityRows, shouldRenderPanel, type PanelId } from "./types";
 import type {
   ElectricityData,
   NewsData,
@@ -86,6 +93,9 @@ const wilma = computed(() => provider<WilmaData>("wilma"));
 const paikky = computed(() => provider<PaikkyData>("paikky"));
 const news = computed(() => provider<NewsData>("news"));
 
+const newPanels = ["waste", "menu", "shopping", "nameday", "seasonal"] as const;
+const household = computed<HouseholdData>(() => dashboard.value?.household ?? { waste: [], shopping: [], seasonal: [], anniversaries: [] });
+const menu = computed(() => provider<MenuData>("menu"));
 const settings = computed<Settings | null>(() => dashboard.value?.settings ?? null);
 const wilmaData = computed(() => wilma.value?.data ?? null);
 
@@ -297,7 +307,7 @@ provide(panelGridKey, gridEl);
 const panelLayoutSetting = computed<PanelLayout | null>(() => settings.value?.panelLayout ?? null);
 // Puuttuva avain vanhassa tallennetussa asetusoliossa tarkoittaa "kaikki
 // näkyy" — ks. hiddenPanelsin kommentti types.ts:ssä.
-const hiddenPanelsSetting = computed<readonly unknown[] | null>(() => settings.value?.hiddenPanels ?? null);
+const hiddenPanelsSetting = computed<readonly unknown[] | null>(() => settings.value?.hiddenPanels ?? defaultHiddenPanels);
 const panelLayout = usePanelLayout(panelLayoutSetting, hiddenPanelsSetting, canEdit, refresh);
 
 /**
@@ -660,6 +670,20 @@ const isNight = computed(() => {
       >
         <NewsCard :snapshot="news" :linkable="newsLinksAllowed" />
       </LayoutEditor>
+
+      <template v-for="id in newPanels" :key="id">
+        <LayoutEditor v-if="renders(id)" :class="'grid__slot--' + id" :panel-id="id"
+          :placement="panelLayout.layout.value[id]" :editing="panelLayout.editing.value"
+          @move="(col, row, pointerCol, pointerRow) => panelLayout.movePanel(id, col, row, pointerCol, pointerRow)"
+          @resize="(colSpan, rowSpan) => panelLayout.resizePanel(id, colSpan, rowSpan)"
+          @hide="panelLayout.hidePanel(id)">
+          <WasteCard v-if="id === 'waste'" :household="household" :can-edit="canEdit" @refresh="refresh" />
+          <MenuCard v-else-if="id === 'menu'" :snapshot="menu" :linkable="newsLinksAllowed" />
+          <ShoppingCard v-else-if="id === 'shopping'" :household="household" :can-edit="canEdit" @refresh="refresh" />
+          <NamedayCard v-else-if="id === 'nameday'" :data="dashboard?.namedays ?? null" :household="household" :can-edit="canEdit" :linkable="newsLinksAllowed" @refresh="refresh" />
+          <SeasonalCard v-else :household="household" :can-edit="canEdit" @refresh="refresh" />
+        </LayoutEditor>
+      </template>
 
       <!--
         Kaikki paneelit voi kytkeä pois — sitä ei estetä, koska estäminen

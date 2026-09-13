@@ -559,6 +559,7 @@ function verifyArchiveContents(archivePath, topFolderName) {
     // jokainen postinumerohaku epaonnistuu. Siksi se on pakollisten listalla
     // eika pelkastaan kopiointisuodattimen varassa (ks. copyServerSrc).
     path.join("server", "src", "data", "postinumerot.json"),
+    path.join("server", "src", "data", "namedays-2000.json"),
     path.join("web", "dist", "index.html"),
     "node_modules",
     "VERSIO.txt",

@@ -10,7 +10,7 @@ import "./test-env.ts";
 import assert from "node:assert/strict";
 import { Provider } from "../src/core/provider.ts";
 import { createNewsProvider, parseNewsFeed, resetHiddenFetchGuard, shouldFetchNews } from "../src/providers/news.ts";
-import { updateSettings } from "../src/core/settings.ts";
+import { defaultHiddenPanels, updateSettings } from "../src/core/settings.ts";
 import { db, writeCache } from "../src/core/store.ts";
 
 /** Rakentaa yhden `<item>`-lohkon samassa muodossa kuin Ylen syöte. */
@@ -376,16 +376,16 @@ function testHtmlErrorPageWithItemWordDoesNotProduceNews(): void {
 }
 
 function testHiddenPanelStopsFetching(): void {
-  updateSettings({ hiddenPanels: [] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
   assert.equal(shouldFetchNews(), true, "näkyvä kortti haetaan");
 
-  updateSettings({ hiddenPanels: ["news"] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news"] });
   assert.equal(shouldFetchNews(), false, "piilotettua korttia ei haeta");
 
-  updateSettings({ hiddenPanels: ["weather"] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels, "weather"] });
   assert.equal(shouldFetchNews(), true, "toisen kortin piilotus ei estä uutishakua");
 
-  updateSettings({ hiddenPanels: [] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
   console.log("ok  hiddenPanels ohjaa uutisproviderin hakukierroksia");
 }
 
@@ -407,22 +407,22 @@ async function testHiddenPanelSkipsRealProviderCycles(): Promise<void> {
   });
 
   try {
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
     await provider.runOnce();
     assert.equal(calls, 1, "näkyvä kortti hakee");
 
-    updateSettings({ hiddenPanels: ["news"] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news"] });
     await provider.runOnce();
     await provider.runOnce();
     assert.equal(calls, 1, "piilotettu kortti ei tee yhtään hakua");
     assert.deepEqual(provider.snapshot().data, { n: 1 }, "vanha data säilyy portin takana");
 
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
     await provider.runOnce();
     assert.equal(calls, 2, "käyttöön palautettu kortti hakee taas ilman uudelleenkäynnistystä");
   } finally {
     provider.stop();
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
   }
   console.log("ok  piilotettu kortti ohittaa hakukierrokset, käyttöön palautettu jatkaa");
 }
@@ -443,14 +443,14 @@ async function testFirstFetchRunsEvenWhenHidden(): Promise<void> {
   });
 
   try {
-    updateSettings({ hiddenPanels: ["news"] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news"] });
     await provider.runOnce();
     assert.equal(calls, 1, "tyhjä provideri hakee kerran myös piilotettuna");
     await provider.runOnce();
     assert.equal(calls, 1, "sen jälkeen portti pitää");
   } finally {
     provider.stop();
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
   }
   console.log("ok  ensimmäinen haku tehdään vaikka kortti olisi piilossa");
 }
@@ -476,7 +476,7 @@ async function testHiddenCardMakesAtMostOneNetworkAttempt(): Promise<void> {
   // Kylmä käynnistys: ei välimuistiriviä, jolloin provider.ts:n ohitus on
   // voimassa ja tämä on se tilanne jossa ikuinen haku tapahtuisi.
   db.exec("DELETE FROM provider_cache WHERE id = 'news'");
-  updateSettings({ hiddenPanels: ["news"] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news"] });
   resetHiddenFetchGuard();
 
   const provider = createNewsProvider();
@@ -485,7 +485,7 @@ async function testHiddenCardMakesAtMostOneNetworkAttempt(): Promise<void> {
     assert.equal(httpCalls, 1, "piilotettu kortti saa yrittää kerran, ei kahdestitoista");
 
     // Käyttöön palautus nollaa laskurin, eikä jää jumiin yhteen yritykseen.
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
     await provider.runOnce();
     assert.equal(httpCalls, 2, "näkyviin palautettu kortti hakee taas");
     await provider.runOnce();
@@ -494,7 +494,7 @@ async function testHiddenCardMakesAtMostOneNetworkAttempt(): Promise<void> {
     provider.stop();
     globalThis.fetch = realFetch;
     db.exec("DELETE FROM provider_cache WHERE id = 'news'");
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
     resetHiddenFetchGuard();
   }
   console.log("ok  piilotettu kortti tekee enintään yhden verkkopyynnön vaikka syöte olisi poikki");
@@ -518,7 +518,7 @@ async function testHiddenCardWithCachedDataMakesNoRequests(): Promise<void> {
     { items: [{ id: "x", title: "Vanha otsikko", link: "https://yle.fi/a/x", publishedAt: "2026-09-12T00:00:00.000Z", summary: null }] },
     new Date().toISOString(),
   );
-  updateSettings({ hiddenPanels: ["news"] });
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels, "news"] });
   resetHiddenFetchGuard();
 
   const provider = createNewsProvider();
@@ -530,7 +530,7 @@ async function testHiddenCardWithCachedDataMakesNoRequests(): Promise<void> {
     provider.stop();
     globalThis.fetch = realFetch;
     db.exec("DELETE FROM provider_cache WHERE id = 'news'");
-    updateSettings({ hiddenPanels: [] });
+    updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
     resetHiddenFetchGuard();
   }
   console.log("ok  piilotettu kortti lämpimällä välimuistilla ei tee yhtään pyyntöä");

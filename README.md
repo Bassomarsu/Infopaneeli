@@ -20,6 +20,26 @@ joka ajaa sekä palvelimen että selaimen kioskitilassa.
 | Muistilista | oma SQLite | — |
 | Kouluhälytykset | lukujärjestys + omat asetukset | kellosykli, 20 s |
 
+## Uudet paneelit (0.4.0)
+
+Avaa **Asetukset → näytettävät paneelit** ja ota käyttöön roskien nouto,
+ruokalista, kauppalista, nimipäivät ja merkkipäivät sekä kausimuistutukset.
+Ne ovat päivityksen jälkeen pois näkyvistä, jotta aiempi asettelu säilyy.
+Ruudukossa on tilaa enintään 12 pienimmän kokoiselle paneelille. Vapauta
+paikka pienentämällä tai piilottamalla muita paneeleja. Valinta **Anna vuotaa yli**
+sallii pystysuoran vierityksen ja helpottaa pitkien korttien lukemista.
+
+Omat listat ja merkkipäivät tallentuvat paikalliseen tietokantaan. Puhelimella
+muokkaus avataan yläpalkin lukosta. Roskien noutoon annetaan tunnettu noutopäivä
+ja toistoväli viikkoina (0 tarkoittaa kertaluonteista). Kausimuistutuksen voi
+kuitata ja viimeisimmän kuittauksen perua; tekemätön muistutus säilyy myös
+vuodenvaihteen yli. Kauppalista on erillinen vanhasta muistilistasta.
+
+Ruokalista näyttää Karstulan koulujen ateriat; päiväkotien kattavuutta ei ole
+varmistettu. Nimipäivissä käytetään vuoden 2000 kalenteria, joten myöhemmin
+lisätyt nimet puuttuvat. Omat merkkipäivät voi lisätä erikseen.
+Katso [tietolähteet ja aineiston alkuperä](docs/widget-sources.md).
+
 ## Käyttöönotto
 
 **Näyttölaitteelle** käytetään julkaisupakettia, jossa Node-ajonaika on mukana —

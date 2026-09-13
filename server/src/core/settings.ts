@@ -28,6 +28,11 @@ export const PANEL_IDS = [
   "calendar",
   "notes",
   "news",
+  "waste",
+  "menu",
+  "shopping",
+  "nameday",
+  "seasonal",
 ] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
@@ -68,6 +73,20 @@ export type PanelLayout = Record<PanelId, PanelPlacement>;
  * yhtäkään: alarivistä tulee kolme samankokoista 2 × 2 -korttia
  * (kalenteri | uutiset | muistilista).
  */
+/**
+ * Paneelit jotka ovat oletuksena piilossa.
+ *
+ * Kaksitoista paneelia täyttää ruudukon kokonaan pienimmällä sallitulla
+ * koolla (6×8 solua, minimi 2×2), joten kaikkien näyttäminen kerralla tekisi
+ * jokaisesta kortista liian pienen luettavaksi. Nämä viisi ovat uusimmat, ja
+ * käyttäjä ottaa käyttöön ne jotka haluaa.
+ *
+ * Tämä on myös se joukko johon "Palauta oletusasettelu" palauttaa. Tyhjä
+ * lista siinä näyttäisi kaikki kaksitoista päällekkäin — oletusasettelussa
+ * piilotettujen sijoitus on parkkipaikka, ei piirtopaikka.
+ */
+export const defaultHiddenPanels: readonly PanelId[] = ["waste", "menu", "shopping", "nameday", "seasonal"];
+
 export const defaultPanelLayout: PanelLayout = {
   schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
   messages: { col: 1, row: 4, colSpan: 4, rowSpan: 3 },
@@ -76,6 +95,17 @@ export const defaultPanelLayout: PanelLayout = {
   weather: { col: 5, row: 1, colSpan: 2, rowSpan: 3 },
   electricity: { col: 5, row: 4, colSpan: 2, rowSpan: 3 },
   notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
+  // PARKKIPAIKAT. Nämä viisi ovat oletuksena piilossa (ks.
+  // defaultSettings.hiddenPanels), ja piilotetun paneelin sijoitus on
+  // parkkipaikka eikä piirtopaikka — sitä ei renderöidä, joten se saa mennä
+  // näkyvien päälle. Vaihtoehto olisi ollut kutistaa kaikki kaksitoista
+  // paneelia 2x2:een, jolloin uusi asennus näyttäisi aivan toiselta kuin
+  // ennen ja lukujärjestys mahtuisi neljään riviin tekstiä.
+  waste: { col: 1, row: 1, colSpan: 2, rowSpan: 2 },
+  menu: { col: 3, row: 1, colSpan: 2, rowSpan: 2 },
+  shopping: { col: 5, row: 1, colSpan: 2, rowSpan: 2 },
+  nameday: { col: 1, row: 3, colSpan: 2, rowSpan: 2 },
+  seasonal: { col: 3, row: 3, colSpan: 2, rowSpan: 2 },
 };
 
 /**
@@ -238,7 +268,7 @@ export const defaultSettings: Settings = {
   breakfastTime: "08:00",
   weatherPostalCode: null,
   panelLayout: null,
-  hiddenPanels: [],
+  hiddenPanels: [...defaultHiddenPanels],
   gridOverflow: "fit",
   alarms: [],
 };
@@ -250,6 +280,11 @@ export function getSettings(): Settings {
   const merged = { ...defaultSettings, ...(stored ?? {}) };
   merged.alarms = normalizeStoredAlarms(merged.alarms);
   merged.hiddenPanels = normalizeStoredHiddenPanels(merged.hiddenPanels);
+  // Vanhan oletusasettelun hiddenPanels: [] ei saa paljastaa uusia parkkipaikkoja.
+  // Kaikkien paneelien näyttäminen vaatii erikseen tallennetun kelvollisen asettelun.
+  if (merged.panelLayout === null) {
+    merged.hiddenPanels = [...new Set([...merged.hiddenPanels, ...defaultHiddenPanels])];
+  }
   adoptNewPanels(merged);
   return merged;
 }
@@ -476,6 +511,7 @@ export function updateSettings(patch: unknown): Settings {
     next.hideNextAlarm = value;
   }
 
+  assertNoVisibleOverlap(next.panelLayout ?? defaultPanelLayout, next.hiddenPanels);
   setSetting(KEY, next);
   return next;
 }

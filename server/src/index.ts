@@ -1,3 +1,4 @@
+import { createMenuProvider } from "./providers/menu.ts";
 import fs from "node:fs";
 import Fastify from "fastify";
 import type { FastifyBaseLogger } from "fastify";
@@ -41,6 +42,7 @@ registry.register(createCalendarProvider());
 // Uutiset ovat julkista tietoa eivätkä kuulu routes/api.ts:n
 // SENSITIVE_PROVIDERS-joukkoon — kortti näkyy myös puhelimessa.
 registry.register(createNewsProvider());
+registry.register(createMenuProvider());
 
 // Resolves TRUSTED_HOSTS hostnames in the background and on a timer; never
 // blocks startup and never throws (see core/trusted-hosts.ts).

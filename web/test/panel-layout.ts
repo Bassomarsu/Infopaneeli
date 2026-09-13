@@ -16,9 +16,22 @@ import {
   MIN_PANEL_SPAN,
   PANEL_IDS,
   defaultPanelLayout,
+  defaultHiddenPanels,
   type PanelId,
   type PanelLayout,
 } from "../src/types.ts";
+
+/**
+ * Täydentää osittaisen asettelun täydeksi. Testit kuvaavat vain ne paneelit
+ * joilla on merkitystä kyseiselle tapaukselle; loput otetaan oletuksista.
+ *
+ * Ilman tätä jokainen testiasettelu pitäisi kirjoittaa uusiksi joka kerta kun
+ * uusi paneeli lisätään — ja silloin testi kertoisi paneelien määrästä eikä
+ * siitä asiasta jota se on kirjoitettu vartioimaan.
+ */
+function taydenna(osittainen: Partial<PanelLayout>): PanelLayout {
+  return { ...defaultPanelLayout, ...osittainen } as PanelLayout;
+}
 
 /** `noUncheckedIndexedAccess` merkitsee kaiken indeksoinnin mahdollisesti undefinediksi — tämä kaventaa sen pois, koska i/j pysyvät aina PANEL_IDS:n rajoissa. */
 function panelIdAt(index: number): PanelId {
@@ -27,11 +40,12 @@ function panelIdAt(index: number): PanelId {
   return id;
 }
 
-function assertNoOverlaps(layout: PanelLayout, label: string): void {
+function assertNoOverlaps(layout: PanelLayout, label: string, hidden: readonly PanelId[] = defaultHiddenPanels): void {
   for (let i = 0; i < PANEL_IDS.length; i++) {
     for (let j = i + 1; j < PANEL_IDS.length; j++) {
       const idA = panelIdAt(i);
       const idB = panelIdAt(j);
+      if (hidden.includes(idA) || hidden.includes(idB)) continue;
       assert.ok(!overlaps(layout[idA], layout[idB]), `${label}: ${idA} ja ${idB} menevät päällekkäin`);
     }
   }
@@ -65,7 +79,7 @@ function assertAllPanelsPresent(layout: PanelLayout, label: string): void {
   // weather (col5,row1,2x3) raahataan electricityn (col5,row4,2x3) päälle,
   // mutta pudotuspiste (6,6) on electricityn oikeassa alakulmassa, ei sen
   // origossa (5,4) — silti pitää vaihtaa.
-  const outcome = resolveMove(defaultPanelLayout, "weather", 6, 6, 6, 6);
+  const outcome = resolveMove(defaultPanelLayout, "weather", 6, 6, 6, 6, defaultHiddenPanels);
   assert.equal(outcome.rejected, null, "osuma kohdepaneelin sisään jostain kohtaa ei saa hylätä");
   assert.equal(outcome.layout.weather.col, defaultPanelLayout.electricity.col);
   assert.equal(outcome.layout.weather.row, defaultPanelLayout.electricity.row);
@@ -80,7 +94,7 @@ function assertAllPanelsPresent(layout: PanelLayout, label: string): void {
 // Pudotuspiste eri kokoisen paneelin päällä hylkää siirron syyllä "size-mismatch".
 {
   // schedule (4x3) pudotetaan calendarin (4x2) päälle, pudotuspiste (2,7).
-  const outcome = resolveMove(defaultPanelLayout, "schedule", 1, 7, 2, 7);
+  const outcome = resolveMove(defaultPanelLayout, "schedule", 1, 7, 2, 7, defaultHiddenPanels);
   assert.equal(outcome.rejected, "size-mismatch");
   assert.equal(outcome.layout, defaultPanelLayout, "hylätty siirto ei saa muuttaa asettelua");
   console.log("ok  eri kokoisen paneelin päälle pudottaminen hylätään syyllä size-mismatch");
@@ -92,7 +106,7 @@ function assertAllPanelsPresent(layout: PanelLayout, label: string): void {
 // käsin rakennettua asettelua, jossa kaikki paneelit ovat 2x2 ja vasemman
 // puoliskon (sarakkeet 1-4) täyttäviä — sarakkeet 5-6 jäävät kokonaan
 // vapaiksi.
-const sparse: PanelLayout = {
+const sparse: PanelLayout = taydenna({
   schedule: { col: 1, row: 1, colSpan: 2, rowSpan: 2 },
   messages: { col: 1, row: 3, colSpan: 2, rowSpan: 2 },
   weather: { col: 1, row: 5, colSpan: 2, rowSpan: 2 },
@@ -100,14 +114,14 @@ const sparse: PanelLayout = {
   calendar: { col: 3, row: 1, colSpan: 2, rowSpan: 2 },
   notes: { col: 3, row: 3, colSpan: 2, rowSpan: 2 },
   news: { col: 3, row: 5, colSpan: 2, rowSpan: 2 },
-};
+});
 assertNoOverlaps(sparse, "sparse-fixture on itsessään virheellinen");
 assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 
 // Aidosti vapaaseen tilaan siirto onnistuu, kun pudotuspiste on vapaa solu.
 {
   // notes (col3,row3) vapaaseen kohtaan (col5,row1) — kukaan ei omista sitä.
-  const outcome = resolveMove(sparse, "notes", 5, 1, 5, 1);
+  const outcome = resolveMove(sparse, "notes", 5, 1, 5, 1, defaultHiddenPanels);
   assert.equal(outcome.rejected, null);
   assert.equal(outcome.layout.notes.col, 5);
   assert.equal(outcome.layout.notes.row, 1);
@@ -122,7 +136,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
   // electricity (col1,row7) kohti kulmaa (2,1): jalanjälki col2-3,row1-2
   // osuu sekä scheduleen (col1-2,row1-2) että calendariin (col3-4,row1-2).
   // Pudotuspiste (5,5) on itsessään täysin vapaa.
-  const outcome = resolveMove(sparse, "electricity", 2, 1, 5, 5);
+  const outcome = resolveMove(sparse, "electricity", 2, 1, 5, 5, defaultHiddenPanels);
   assert.equal(outcome.rejected, "occupied");
   assert.equal(outcome.layout, sparse, "hylätty siirto ei saa muuttaa asettelua");
   console.log("ok  vapaa pudotuspiste ei riitä jos raahatun paneelin oma jalanjälki osuu toiseen");
@@ -132,7 +146,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 // yli reunan — riippumatta siitä mihin haaraan (vaihto/vapaa tila/hylkäys)
 // päädytään.
 {
-  const outcome = resolveMove(defaultPanelLayout, "schedule", 999, 999, 999, 999);
+  const outcome = resolveMove(defaultPanelLayout, "schedule", 999, 999, 999, 999, defaultHiddenPanels);
   assertInBounds(outcome.layout, "reunan yli raahauksen jälkeen");
   assertAllPanelsPresent(outcome.layout, "reunan yli raahauksen jälkeen");
   console.log("ok  siirto typistetään ruudukon sisään myös äärimmäisillä arvoilla");
@@ -148,7 +162,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
     return seed % max;
   }
   for (let i = 0; i < 500; i++) {
-    const id = panelIdAt(rand(PANEL_IDS.length));
+    const id = PANEL_IDS.filter((id) => !defaultHiddenPanels.includes(id))[rand(PANEL_IDS.length - defaultHiddenPanels.length)]!;
     const outcome = resolveMove(
       layout,
       id,
@@ -156,6 +170,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
       rand(GRID_ROWS) + 1,
       rand(GRID_COLUMNS) + 1,
       rand(GRID_ROWS) + 1,
+      defaultHiddenPanels,
     );
     layout = outcome.layout;
     assertAllPanelsPresent(layout, `satunnaissiirto ${i}`);
@@ -170,7 +185,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 // Kutistus ei saa koskaan mennä MIN_PANEL_SPANin (2) alle — kortti leikkaisi
 // otsikkonsa piiloon sitä pienempänä (ks. types.ts).
 {
-  const shrunk = resolveResize(defaultPanelLayout, "schedule", 1, 1);
+  const shrunk = resolveResize(defaultPanelLayout, "schedule", 1, 1, defaultHiddenPanels);
   assert.equal(shrunk.schedule.colSpan, MIN_PANEL_SPAN, "colSpan ei saa mennä minimin alle");
   assert.equal(shrunk.schedule.rowSpan, MIN_PANEL_SPAN, "rowSpan ei saa mennä minimin alle");
   assertInBounds(shrunk, "minimiin kutistuksen jälkeen");
@@ -181,7 +196,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 // suunnat ovat jo reunassa, joten kumpikaan span ei voi kasvaa yhtään,
 // pelkkä ruudukon reunan typistys (ei ylitys) riittää estämään sen.
 {
-  const grown = resolveResize(defaultPanelLayout, "notes", 6, 6);
+  const grown = resolveResize(defaultPanelLayout, "notes", 6, 6, defaultHiddenPanels);
   assertInBounds(grown, "reunassa olevan paneelin resizen jälkeen");
   assert.deepEqual(grown, defaultPanelLayout, "reunassa oleva paneeli ei voi kasvaa kumpaankaan suuntaan");
   console.log("ok  ruudukon reunassa oleva paneeli ei kasva yli reunan");
@@ -191,7 +206,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 // noteseen — vain rowSpan kasvoi, joten vain sitä kutistetaan takaisin,
 // colSpan ei saa muuttua vaikka se olisikin kokeiltu ensin.
 {
-  const grown = resolveResize(defaultPanelLayout, "electricity", 2, 5);
+  const grown = resolveResize(defaultPanelLayout, "electricity", 2, 5, defaultHiddenPanels);
   assertNoOverlaps(grown, "resize-kasvun jälkeen");
   assertInBounds(grown, "resize-kasvun jälkeen");
   assertAllPanelsPresent(grown, "resize-kasvun jälkeen");
@@ -207,7 +222,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
   // electricity (col5,row4,2x3): kasvatetaan sarake yhdellä (3) ja rivi
   // kahdella (5). Sarake mahtuisi sellaisenaan (col5-7 ylittäisi ruudukon,
   // joten se typistyy jo rajan takia), mutta rivikasvu osuu noteseen.
-  const grown = resolveResize(defaultPanelLayout, "electricity", 10, 10);
+  const grown = resolveResize(defaultPanelLayout, "electricity", 10, 10, defaultHiddenPanels);
   assertNoOverlaps(grown, "isoimman kasvun jälkeen");
   assertInBounds(grown, "isoimman kasvun jälkeen");
   assertAllPanelsPresent(grown, "isoimman kasvun jälkeen");
@@ -216,7 +231,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 
 // Koon muutos ei koskaan voi työntää paneelia ruudukon ulkopuolelle.
 {
-  const grown = resolveResize(defaultPanelLayout, "schedule", GRID_COLUMNS + 10, GRID_ROWS + 10);
+  const grown = resolveResize(defaultPanelLayout, "schedule", GRID_COLUMNS + 10, GRID_ROWS + 10, defaultHiddenPanels);
   assertInBounds(grown, "äärimmäisen resizen jälkeen");
   console.log("ok  koon kasvu typistetään ruudukon sisään");
 }
@@ -231,8 +246,8 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
     return seed % max;
   }
   for (let i = 0; i < 500; i++) {
-    const id = panelIdAt(rand(PANEL_IDS.length));
-    layout = resolveResize(layout, id, rand(GRID_COLUMNS) + 1, rand(GRID_ROWS) + 1);
+    const id = PANEL_IDS.filter((id) => !defaultHiddenPanels.includes(id))[rand(PANEL_IDS.length - defaultHiddenPanels.length)]!;
+    layout = resolveResize(layout, id, rand(GRID_COLUMNS) + 1, rand(GRID_ROWS) + 1, defaultHiddenPanels);
     assertAllPanelsPresent(layout, `satunnaisresize ${i}`);
     assertInBounds(layout, `satunnaisresize ${i}`);
     assertNoOverlaps(layout, `satunnaisresize ${i}`);
@@ -289,10 +304,10 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 // tasan, joten naapuria ei voisi koskaan kasvattaa.
 {
   // Sähkö piilossa: sää (5,1 2x3) voi kasvaa sen päälle riveille 4-6.
-  const next = resolveResize(defaultPanelLayout, "weather", 2, 6, ["electricity"]);
+  const next = resolveResize(defaultPanelLayout, "weather", 2, 6, [...defaultHiddenPanels, "electricity"]);
   assert.equal(next.weather.rowSpan, 6, "piilotetun paneelin ruudut ovat vapaita kasvulle");
 
-  const blocked = resolveResize(defaultPanelLayout, "weather", 2, 6, []);
+  const blocked = resolveResize(defaultPanelLayout, "weather", 2, 6, defaultHiddenPanels);
   assert.equal(blocked.weather.rowSpan, 3, "näkyvä naapuri estää kasvun yhä");
   console.log("ok  piilotettu paneeli ei estä naapurin kasvattamista, näkyvä estää");
 }
@@ -300,7 +315,7 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 {
   // Sama siirrolle: pudotus piilotetun paneelin ruutuihin onnistuu, eikä sitä
   // tulkita paikanvaihdoksi piilotetun kanssa.
-  const outcome = resolveMove(defaultPanelLayout, "notes", 1, 7, 1, 7, ["calendar"]);
+  const outcome = resolveMove(defaultPanelLayout, "notes", 1, 7, 1, 7, [...defaultHiddenPanels, "calendar"]);
   assert.equal(outcome.rejected, null, "piilotetun paneelin ruutuun pudottaminen onnistuu");
   assert.deepEqual(outcome.layout.notes, { col: 1, row: 7, colSpan: 2, rowSpan: 2 });
   assert.deepEqual(
@@ -312,4 +327,40 @@ assertInBounds(sparse, "sparse-fixture on itsessään virheellinen");
 }
 
 console.log("ok  null palauttaa koko oletusasettelun");
+}
+
+// Kaikki paneelit näkyvissä: piilotuslista on tarkoituksella tyhjä.
+// Jokainen kortti käy siirron lähteenä ja kohteena, myös kaikki viisi uutta.
+{
+  const compact = {} as PanelLayout;
+  const perRow = Math.floor(GRID_COLUMNS / MIN_PANEL_SPAN);
+  PANEL_IDS.forEach((id, index) => {
+    compact[id] = {
+      col: 1 + (index % perRow) * MIN_PANEL_SPAN,
+      row: 1 + Math.floor(index / perRow) * MIN_PANEL_SPAN,
+      colSpan: MIN_PANEL_SPAN, rowSpan: MIN_PANEL_SPAN,
+    };
+  });
+  assert.equal(PANEL_IDS.length, 12, "kaikki kaksitoista paneelia mukana");
+  assertNoOverlaps(compact, "kaikki näkyvissä", []);
+  assertInBounds(compact, "kaikki näkyvissä");
+  for (const source of PANEL_IDS) {
+    for (const target of PANEL_IDS) {
+      if (source === target) continue;
+      const to = compact[target];
+      const moved = resolveMove(compact, source, to.col, to.row, to.col, to.row, []);
+      assert.equal(moved.rejected, null);
+      assert.deepEqual(moved.layout[source], compact[target]);
+      assert.deepEqual(moved.layout[target], compact[source]);
+      for (const other of PANEL_IDS) {
+        if (other !== source && other !== target) assert.deepEqual(moved.layout[other], compact[other]);
+      }
+      assertNoOverlaps(moved.layout, source + " → " + target, []);
+      assertInBounds(moved.layout, "kaikkien paneelien vaihto");
+      assertAllPanelsPresent(moved.layout, "kaikkien paneelien vaihto");
+    }
+    const grown = resolveResize(compact, source, GRID_COLUMNS, GRID_ROWS, []);
+    assert.deepEqual(grown, compact, "täyden ruudukon korttia ei voi kasvattaa muiden päälle");
+  }
+  console.log("ok  kaikkien 12 paneelin 132 paikanvaihtoa ja kasvun esto ilman piilotuksia");
 }

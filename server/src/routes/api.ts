@@ -1,3 +1,6 @@
+import { readHousehold } from "../core/household.ts";
+import { getNamedays } from "../core/namedays.ts";
+import { registerHouseholdRoutes } from "./household.ts";
 import fs from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { registry, type ProviderSnapshot } from "../core/provider.ts";
@@ -103,6 +106,7 @@ function withLocalReadState<T extends { id: string | number }>(
 }
 
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
+  registerHouseholdRoutes(app);
   app.get("/api/health", async () => ({ ok: true, time: new Date().toISOString() }));
 
   // Kertoo mitkä tasot on ylipäätään asetettu .env:ssä — ei koskaan itse
@@ -266,6 +270,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       place: weatherLocation.location.place,
       placeSource: weatherLocation.source,
       settings: getSettings(),
+      household: readHousehold(),
+      namedays: getNamedays(),
       notes: listNotes(),
       providers: snapshots,
       localClient: local,

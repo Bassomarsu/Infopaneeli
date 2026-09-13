@@ -5,6 +5,7 @@ import {
   GRID_ROWS,
   MIN_PANEL_SPAN,
   PANEL_IDS,
+  defaultHiddenPanels,
   defaultPanelLayout,
   isPanelHidden,
   sanitizeHiddenPanels,
@@ -559,9 +560,12 @@ export function usePanelLayout(
   async function resetToDefault(): Promise<void> {
     if (!editing.value) return;
     draft.value = cloneLayout(defaultPanelLayout);
-    hiddenDraft.value = [];
+    // Oletusten piilotusjoukko, EI tyhjä lista: oletusasettelussa piilotettujen
+    // sijoitus on parkkipaikka eikä piirtopaikka, joten tyhjä lista toisi
+    // kaikki kaksitoista näkyviin viisi toistensa päällä.
+    hiddenDraft.value = [...defaultHiddenPanels];
     setNotice(null);
-    const ok = await persist(null, []);
+    const ok = await persist(null, [...defaultHiddenPanels]);
     if (ok) editing.value = false;
   }
 

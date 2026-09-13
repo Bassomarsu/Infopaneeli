@@ -1,0 +1,60 @@
+import './household-test-env.ts';
+import assert from 'node:assert/strict';
+process.env.DB_PATH='data/infonaytto-test-household-'+process.pid+'.db';
+process.env.LOG_DIR='data/logs-test-household-'+process.pid;
+process.env.EDIT_PIN='4242';
+process.env.TRUSTED_HOSTS='';
+const {validDate,nextWasteDate,seasonalOccurrence,helsinkiToday,saveHousehold,readHousehold}=await import('../src/core/household.ts');
+const {registerHouseholdRoutes}=await import('../src/routes/household.ts');
+const {default:Fastify}=await import('fastify');
+assert.equal(validDate('2025-02-29'),false);
+assert.equal(validDate('2024-02-29'),true);
+assert.equal(validDate('2026-13-01'),false);
+assert.equal(helsinkiToday(new Date('2026-09-12T21:30:00Z')),'2026-09-13');
+assert.equal(nextWasteDate({id:'w',label:'Bio',date:'2026-03-22',intervalWeeks:1},'2026-03-30'),'2026-04-05');
+assert.equal(nextWasteDate({id:'w',label:'Bio',date:'2026-03-22',intervalWeeks:1},'2026-03-29'),'2026-03-29');
+const seasonal={id:'s',label:'Renkaat',date:'2026-12-01',annual:true,completedDate:null};
+assert.equal(seasonalOccurrence(seasonal,'2027-01-15'),'2026-12-01','unfinished December remains overdue in January');
+assert.equal(seasonalOccurrence({...seasonal,completedDate:'2026-12-01'},'2027-01-15'),'2027-12-01');
+assert.equal(seasonalOccurrence({...seasonal,date:'2024-02-29',completedDate:'2024-02-29'},'2025-01-01'),'2025-02-28');
+const app=Fastify(); registerHouseholdRoutes(app);
+for(const kind of ['waste','shopping','seasonal','anniversaries']) {
+ const body=kind==='shopping'?{text:'Maito'}:kind==='waste'?{label:'Bio',date:'2026-09-13',intervalWeeks:2}:kind==='seasonal'?{label:'Renkaat',date:'2026-12-01',annual:true}:{label:'Juhla',date:'2024-02-29'};
+ for(const method of ['POST','PATCH','DELETE']) {
+  const denied=await app.inject({method:method as 'POST'|'PATCH'|'DELETE',url:'/api/household/'+kind+(method==='POST'?'':'/missing'),remoteAddress:'192.0.2.50',...(method==='DELETE'?{}:{payload:body})});
+  assert.equal(denied.statusCode,401,kind+' requires edit access');
+ }
+ const added=await app.inject({method:'POST',url:'/api/household/'+kind,remoteAddress:'192.0.2.50',headers:{'x-edit-pin':'4242'},payload:body});
+ assert.equal(added.statusCode,201,added.body); const id=added.json().id;
+ const changed=await app.inject({method:'PATCH',url:'/api/household/'+kind+'/'+id,payload:kind==='shopping'?{done:true}:{label:'Uusi'}});assert.equal(changed.statusCode,200,changed.body);
+ const invalid=await app.inject({method:'PATCH',url:'/api/household/'+kind+'/'+id,payload:{unexpected:true}});assert.equal(invalid.statusCode,400);
+ const read=await app.inject('/api/household');assert.equal(read.json()[kind].length,1);
+ const removed=await app.inject({method:'DELETE',url:'/api/household/'+kind+'/'+id});assert.equal(removed.statusCode,204);
+ const missing=await app.inject({method:'DELETE',url:'/api/household/'+kind+'/'+id});assert.equal(missing.statusCode,404);
+}
+assert.throws(()=>saveHousehold('waste',{label:'Bio',date:'2026-02-30',intervalWeeks:1}));
+assert.throws(()=>saveHousehold('waste',{label:'Bio',date:'2026-02-20',intervalWeeks:1.5}));
+assert.throws(()=>saveHousehold('shopping',{text:' '}));
+assert.throws(()=>saveHousehold('anniversaries',{label:'Juhla',date:'2020-01-01',annual:false}));
+saveHousehold('anniversaries',{label:'Karkauspäivä',date:'2024-02-29'});
+assert.equal(readHousehold(new Date('2025-02-28T10:00:00Z')).anniversaries[0]?.occurrenceDate,'2025-02-28');
+assert.equal(readHousehold(new Date('2025-03-01T10:00:00Z')).anniversaries[0]?.occurrenceDate,'2026-02-28');
+assert.equal(readHousehold().shopping.length,0);
+const task=saveHousehold('seasonal',{label:'Renkaat',date:'2026-12-01',annual:true});
+assert.ok(task);
+saveHousehold('seasonal',{done:true,occurrenceDate:'2026-12-01'},task.id,new Date('2027-01-15T10:00:00Z'));
+assert.equal(readHousehold(new Date('2027-01-15T10:00:00Z')).seasonal[0]?.occurrenceDate,'2027-12-01');
+// Duplicate requests from stale dashboards must never complete next year's task.
+saveHousehold('seasonal',{done:true,occurrenceDate:'2026-12-01'},task.id);
+assert.equal(readHousehold().seasonal[0]?.occurrenceDate,'2027-12-01');
+saveHousehold('seasonal',{done:true,occurrenceDate:'2027-12-01'},task.id);
+saveHousehold('seasonal',{done:false,occurrenceDate:'2027-12-01'},task.id);
+assert.equal(readHousehold().seasonal[0]?.occurrenceDate,'2027-12-01','undo retains earlier completed years');
+saveHousehold('seasonal',{done:false,occurrenceDate:'2027-12-01'},task.id);
+assert.equal(readHousehold().seasonal[0]?.occurrenceDate,'2027-12-01','duplicate undo is a no-op');
+assert.throws(()=>saveHousehold('seasonal',{done:true},task.id));
+assert.throws(()=>saveHousehold('seasonal',{done:true,occurrenceDate:'2029-12-01'},task.id));
+assert.equal(saveHousehold('shopping',{text:'Missing'},'unknown'),null);
+assert.equal(readHousehold().shopping.length,0);
+await app.close();
+console.log('Household: date boundaries, CRUD, validation and all mutation authorization checks passed');

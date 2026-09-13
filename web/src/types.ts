@@ -1,3 +1,5 @@
+import type { HouseholdData } from "./household.ts";
+import type { NamedayData } from "./publicWidgets.ts";
 /** `hidden` = the server withheld this payload because the client is not the display. */
 export type ProviderStatus = "ok" | "stale" | "failed" | "idle" | "hidden";
 
@@ -309,6 +311,11 @@ export const PANEL_IDS = [
   "calendar",
   "notes",
   "news",
+  "waste",
+  "menu",
+  "shopping",
+  "nameday",
+  "seasonal",
 ] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
@@ -334,6 +341,11 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   calendar: "Kalenteri",
   notes: "Muistilista",
   news: "Uutiset",
+  waste: "Roskien nouto",
+  menu: "Ruokalista",
+  shopping: "Kauppalista",
+  nameday: "Nimipäivät",
+  seasonal: "Kausimuistutukset",
 };
 
 /**
@@ -348,6 +360,21 @@ export const PANEL_TITLES: Record<PanelId, string> = {
  * paneelin paikasta aina kun tallennettu asettelu puuttuu tai on kelvoton
  * (ks. mergeWithDefaults usePanelLayout.ts:ssä).
  */
+/**
+ * Paneelit jotka ovat oletuksena piilossa.
+ *
+ * Kaksitoista paneelia täyttää ruudukon kokonaan pienimmällä sallitulla
+ * koolla (6×8 solua, minimi 2×2), joten kaikkien näyttäminen kerralla tekisi
+ * jokaisesta kortista liian pienen luettavaksi. Nämä viisi ovat uusimmat, ja
+ * käyttäjä ottaa käyttöön ne jotka haluaa.
+ *
+ * Tämä on myös se joukko johon "Palauta oletusasettelu" palauttaa. Tyhjä
+ * lista siinä näyttäisi kaikki kaksitoista päällekkäin — oletusasettelussa
+ * piilotettujen sijoitus on parkkipaikka, ei piirtopaikka.
+ */
+/** Pidettävä samana kuin server/src/core/settings.ts. */
+export const defaultHiddenPanels: readonly PanelId[] = ["waste", "menu", "shopping", "nameday", "seasonal"];
+
 export const defaultPanelLayout: PanelLayout = {
   schedule: { col: 1, row: 1, colSpan: 4, rowSpan: 3 },
   messages: { col: 1, row: 4, colSpan: 4, rowSpan: 3 },
@@ -356,6 +383,17 @@ export const defaultPanelLayout: PanelLayout = {
   weather: { col: 5, row: 1, colSpan: 2, rowSpan: 3 },
   electricity: { col: 5, row: 4, colSpan: 2, rowSpan: 3 },
   notes: { col: 5, row: 7, colSpan: 2, rowSpan: 2 },
+  // PARKKIPAIKAT. Nämä viisi ovat oletuksena piilossa (ks.
+  // defaultSettings.hiddenPanels), ja piilotetun paneelin sijoitus on
+  // parkkipaikka eikä piirtopaikka — sitä ei renderöidä, joten se saa mennä
+  // näkyvien päälle. Vaihtoehto olisi ollut kutistaa kaikki kaksitoista
+  // paneelia 2x2:een, jolloin uusi asennus näyttäisi aivan toiselta kuin
+  // ennen ja lukujärjestys mahtuisi neljään riviin tekstiä.
+  waste: { col: 1, row: 1, colSpan: 2, rowSpan: 2 },
+  menu: { col: 3, row: 1, colSpan: 2, rowSpan: 2 },
+  shopping: { col: 5, row: 1, colSpan: 2, rowSpan: 2 },
+  nameday: { col: 1, row: 3, colSpan: 2, rowSpan: 2 },
+  seasonal: { col: 3, row: 3, colSpan: 2, rowSpan: 2 },
 };
 
 const PANEL_ID_SET: ReadonlySet<string> = new Set<string>(PANEL_IDS);
@@ -552,6 +590,8 @@ export interface Settings {
 }
 
 export interface Dashboard {
+  household?: HouseholdData;
+  namedays?: NamedayData;
   generatedAt: string;
   timezone: string;
   place: string;
