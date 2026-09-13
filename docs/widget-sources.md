@@ -4,11 +4,13 @@ Tarkistettu 13.9.2026.
 
 ## Ruokalista
 
-Kortti näyttää **Karstulan koulujen** ateriat. Lähde on [kouluruoka.fi](https://kouluruoka.fi/menu/karstula_koulut/).
+Kortti näyttää asetuksista valittujen koulujen ateriat. Lähde on [kouluruoka.fi](https://kouluruoka.fi/). Asetusten **Ruokalistan koulut** -kohdassa haetaan koulua tai kuntaa ja valitaan enintään kahdeksan listaa. Samalla listalla oleville sisaruksille riittää yksi valinta. Tyhjä valinta ei hae mitään. Version 0.4.0 Karstula-oletus säilyy, kunnes käyttäjä muuttaa sitä.
 Sivun oma julkinen Gatsby-aineisto on `https://kouluruoka.fi/page-data/menu/karstula_koulut/page-data.json`; seuraava viikko on saman polun `2/page-data.json`.
-Molemmat palauttivat HTTP 200 tarkistuksessa. Karstulan julkinen paikkaluettelo sisälsi vain `karstula_koulut`; päiväkotien kattavuutta ei voitu varmistaa. Koulujen aamiaista ei tulkita päiväkodin listaksi.
+Kouluhakemisto luetaan etusivun page-data/index/page-data.json-tiedoston ilmoittamista staticQueryHashes-kyselyistä. Hash-numeroita ei ole kiinnitetty koodiin. Hakemisto sisältää koulun nimen, kunnan ja lähteen tunnisteen; 13.9.2026 siinä oli 1361 eri listaa. Koulujen viikkopolussa Karstulan tunniste korvataan valitun koulun tunnisteella.
 
-Palvelin hakee listan neljän tunnin välein ja käyttää samaa pysyvää välimuistia ja virhetilaa kuin muut tietolähteet. Seuraavan viikon 404 tarkoittaa julkaisematonta viikkoa. Verkkovirhe tai muuttunut rakenne säilyttää aiemman listan vanhentunut-merkinnällä. Vanhat päivät eivät näyttäydy tämän päivän aterioina. Vuosi ratkaistaan lähteen viikon alusta, myös vuodenvaihteessa. Kortin linkki avataan vain käyttöliittymän salliessa ulkoiset linkit.
+Karstulan molemmat viikkopolut palauttivat HTTP 200 tarkistuksessa. Karstulan julkinen paikkaluettelo sisälsi vain `karstula_koulut`; päiväkotien kattavuutta ei voitu varmistaa. Koulujen aamiaista ei tulkita päiväkodin listaksi.
+
+Palvelin hakee listan neljän tunnin välein ja käyttää samaa pysyvää välimuistia ja virhetilaa kuin muut tietolähteet. Seuraavan viikon 404 tarkoittaa julkaisematonta viikkoa. Verkkovirhe tai muuttunut rakenne säilyttää saman koulun aiemman listan vanhentunut-merkinnällä. Yhden koulun katko ei peitä muita kouluja. Koulun vaihtuessa poistettu koulu katoaa heti, ja kesken olevan haun jälkeen haetaan uusin valinta. Vanhat päivät eivät näyttäydy tämän päivän aterioina. Vuosi ratkaistaan lähteen viikon alusta, myös vuodenvaihteessa. Kortin linkki avataan vain käyttöliittymän salliessa ulkoiset linkit.
 
 ## Nimipäivät
 

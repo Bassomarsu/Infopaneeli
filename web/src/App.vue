@@ -15,7 +15,7 @@ import SeasonalCard from "./components/SeasonalCard.vue";
 import MenuCard from "./components/MenuCard.vue";
 import NamedayCard from "./components/NamedayCard.vue";
 import type { HouseholdData } from "./household.ts";
-import type { MenuData } from "./publicWidgets.ts";
+import type { MenuCollection } from "./publicWidgets.ts";
 import NotesCard from "./components/NotesCard.vue";
 import ScheduleCard from "./components/ScheduleCard.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -95,7 +95,7 @@ const news = computed(() => provider<NewsData>("news"));
 
 const newPanels = ["waste", "menu", "shopping", "nameday", "seasonal"] as const;
 const household = computed<HouseholdData>(() => dashboard.value?.household ?? { waste: [], shopping: [], seasonal: [], anniversaries: [] });
-const menu = computed(() => provider<MenuData>("menu"));
+const menu = computed(() => provider<MenuCollection>("menu"));
 const settings = computed<Settings | null>(() => dashboard.value?.settings ?? null);
 const wilmaData = computed(() => wilma.value?.data ?? null);
 
@@ -678,7 +678,7 @@ const isNight = computed(() => {
           @resize="(colSpan, rowSpan) => panelLayout.resizePanel(id, colSpan, rowSpan)"
           @hide="panelLayout.hidePanel(id)">
           <WasteCard v-if="id === 'waste'" :household="household" :can-edit="canEdit" @refresh="refresh" />
-          <MenuCard v-else-if="id === 'menu'" :snapshot="menu" :linkable="newsLinksAllowed" />
+          <MenuCard v-else-if="id === 'menu'" :snapshot="menu" :selected-ids="settings?.menuSchoolIds ?? ['karstula_koulut']" :linkable="newsLinksAllowed" />
           <ShoppingCard v-else-if="id === 'shopping'" :household="household" :can-edit="canEdit" @refresh="refresh" />
           <NamedayCard v-else-if="id === 'nameday'" :data="dashboard?.namedays ?? null" :household="household" :can-edit="canEdit" :linkable="newsLinksAllowed" @refresh="refresh" />
           <SeasonalCard v-else :household="household" :can-edit="canEdit" @refresh="refresh" />

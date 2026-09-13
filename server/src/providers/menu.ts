@@ -1,3 +1,5 @@
+import { getSettings } from "../core/settings.ts";
+import { readCache } from "../core/store.ts";
 import { Provider } from "../core/provider.ts";
 import { localDateKey, shiftDateKey } from "../core/time.ts";
 
@@ -10,7 +12,7 @@ export interface MenuData {
   days: MenuDay[];
 }
 export const MENU_LOCATION_ID = "karstula_koulut";
-const SOURCE = `https://kouluruoka.fi/menu/${MENU_LOCATION_ID}/`;
+const sourceUrl = (id: string) => `https://kouluruoka.fi/menu/${id}/`;
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Ruokalistan rakenne muuttui");
   return value as Record<string, unknown>;
@@ -22,10 +24,10 @@ function text(value: unknown): string {
 
 /** Dates have no year in day labels. Match to the seven actual dates of Start,
  * so missing weekdays and weeks crossing New Year never shift the meals. */
-export function parseMenuPage(body: unknown): MenuData {
+export function parseMenuPage(body: unknown, locationId = MENU_LOCATION_ID): MenuData {
   const menu = record(record(record(body).result).pageContext).menu;
   const m = record(menu);
-  if (m.RestaurantId !== MENU_LOCATION_ID) throw new Error("Ruokalista kuuluu eri koululle");
+  if (m.RestaurantId !== locationId) throw new Error("Ruokalista kuuluu eri koululle");
   const start = text(m.Start).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !Number.isFinite(Date.parse(start)) || new Date(start).toISOString().slice(0, 10) !== start) {
     throw new Error("Ruokalistan viikko puuttuu");
@@ -45,18 +47,19 @@ export function parseMenuPage(body: unknown): MenuData {
       return { type: text(meal.MealType), name: text(meal.Name) };
     }) };
   });
-  return { locationId: MENU_LOCATION_ID, locationName: text(m.RestaurantName), sourceUrl: SOURCE, days: days.sort((a, b) => a.date.localeCompare(b.date)) };
+  return { locationId, locationName: text(m.RestaurantName), sourceUrl: sourceUrl(locationId), days: days.sort((a, b) => a.date.localeCompare(b.date)) };
 }
 
-export async function fetchMenu(fetcher: typeof fetch = fetch, now: Date = new Date()): Promise<MenuData> {
+export async function fetchMenu(fetcher: typeof fetch = fetch, now: Date = new Date(), locationId = MENU_LOCATION_ID): Promise<MenuData> {
+  if (!/^[a-zA-Z0-9_-]{1,120}$/.test(locationId)) throw new Error("Virheellinen koulutunniste");
   const weeks = await Promise.all(["", "2/"].map(async suffix => {
-    const response = await fetcher(`https://kouluruoka.fi/page-data/menu/${MENU_LOCATION_ID}/${suffix}page-data.json`, {
+    const response = await fetcher(`https://kouluruoka.fi/page-data/menu/${locationId}/${suffix}page-data.json`, {
       headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000),
     });
     // Next week is legitimately absent during school holidays.
     if (suffix && response.status === 404) return null;
     if (!response.ok) throw new Error(`Ruokalistan haku epäonnistui (HTTP ${response.status})`);
-    return parseMenuPage(await response.json());
+    return parseMenuPage(await response.json(), locationId);
   }));
   const first = weeks[0]!;
   if (!first) throw new Error("Ruokalista puuttuu");
@@ -66,6 +69,29 @@ export async function fetchMenu(fetcher: typeof fetch = fetch, now: Date = new D
   if (days.length && days.every(d => d.date < shiftDateKey(today, -2))) throw new Error("Lähteen ruokalista on vanhentunut");
   return { ...first, days };
 }
-export function createMenuProvider(): Provider<MenuData> {
-  return new Provider<MenuData>({ id: "menu", intervalMs: 4 * 60 * 60 * 1000, initialDelayMs: 7_000, fetch: () => fetchMenu() });
+
+export interface MenuSchool extends MenuData { status: 'ok'|'stale'|'failed'|'loading'; error: string|null; fetchedAt: string|null }
+export interface MenuCollection { schools: MenuSchool[] }
+export function selectedMenuData(data: unknown, ids: string[], fetchedAt: string|null = null): MenuCollection {
+  const raw = data as Partial<MenuCollection & MenuData> | null;
+  const schools = Array.isArray(raw?.schools) ? raw.schools : raw?.locationId && Array.isArray(raw.days) ? [{...raw, status:'stale',error:null,fetchedAt} as MenuSchool] : [];
+  return {schools:ids.map(id=>schools.find(s=>s.locationId===id) ?? {locationId:id,locationName:id,sourceUrl:sourceUrl(id),days:[],status:'loading',error:null,fetchedAt:null})};
+}
+export async function fetchSelectedMenus(fetcher: typeof fetch = fetch, selection = () => getSettings().menuSchoolIds, previous: unknown = null, now = new Date()): Promise<MenuCollection> {
+  // A setting can change during either network request. Finish with the current
+  // selection, so Provider's busy guard cannot strand the new school for 4h.
+  for(let attempt=0;attempt<4;attempt++) {
+    const ids=[...selection()]; const old=selectedMenuData(previous,ids).schools;
+    const schools=await Promise.all(ids.map(async (id): Promise<MenuSchool> => {
+      try {return {...await fetchMenu(fetcher,now,id),status:'ok',error:null,fetchedAt:new Date().toISOString()};}
+      catch(error) {const cached=old.find(s=>s.locationId===id)!;return {...cached,status:cached.fetchedAt?'stale':'failed',error:error instanceof Error?error.message:'Ruokalistan haku epäonnistui'};}
+    }));
+    if(JSON.stringify(ids)===JSON.stringify(selection()))return {schools};
+    previous={schools};
+  }
+  throw new Error('Kouluvalinta muuttui haun aikana. Yritetään uudelleen.');
+}
+export function createMenuProvider(): Provider<MenuCollection> {
+  return new Provider<MenuCollection>({ id: 'menu', intervalMs: 4*60*60*1000, initialDelayMs:7000,
+    fetch:()=>{ const cached=readCache<unknown>('menu'); return fetchSelectedMenus(fetch,()=>getSettings().menuSchoolIds,selectedMenuData(cached?.data,getSettings().menuSchoolIds,cached?.fetchedAt)); } });
 }

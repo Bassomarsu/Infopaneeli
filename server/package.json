@@ -30,7 +30,7 @@
     "test:kiosk-exit-full-too-short": "node test/kiosk-exit-full-too-short.ts",
     "test:smoke": "node --env-file-if-exists=../.env test/wilma-smoke.ts",
     "test:household": "node test/household.ts",
-    "test:menu": "node test/menu.ts",
+    "test:menu": "node test/menu.ts && node test/menu-selection.ts",
     "test:namedays": "node test/namedays.ts"
   },
   "dependencies": {

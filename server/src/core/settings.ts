@@ -221,6 +221,7 @@ export interface Settings {
    * paikkakunnan ilman palvelimen uudelleenkäynnistystä.
    */
   weatherPostalCode: string | null;
+  menuSchoolIds: string[];
   /** Where each panel sits. Null means "never edited", so the default is used. */
   panelLayout: PanelLayout | null;
   /**
@@ -267,6 +268,7 @@ export const defaultSettings: Settings = {
   nightModeEnd: "06:00",
   breakfastTime: "08:00",
   weatherPostalCode: null,
+  menuSchoolIds: ["karstula_koulut"],
   panelLayout: null,
   hiddenPanels: [...defaultHiddenPanels],
   gridOverflow: "fit",
@@ -278,6 +280,7 @@ const KEY = "settings";
 export function getSettings(): Settings {
   const stored = getSetting<Partial<Settings>>(KEY);
   const merged = { ...defaultSettings, ...(stored ?? {}) };
+  merged.menuSchoolIds = parseMenuSchoolIds(merged.menuSchoolIds);
   merged.alarms = normalizeStoredAlarms(merged.alarms);
   merged.hiddenPanels = normalizeStoredHiddenPanels(merged.hiddenPanels);
   // Vanhan oletusasettelun hiddenPanels: [] ei saa paljastaa uusia parkkipaikkoja.
@@ -464,6 +467,7 @@ export function updateSettings(patch: unknown): Settings {
     next[key] = value;
   }
 
+  if ("menuSchoolIds" in input) next.menuSchoolIds = parseMenuSchoolIds(input["menuSchoolIds"]);
   if ("weatherPostalCode" in input) {
     next.weatherPostalCode = parseWeatherPostalCode(input["weatherPostalCode"]);
   }
@@ -942,4 +946,9 @@ function normalizeStoredAlarms(value: unknown): Alarm[] {
     }
   });
   return out;
+}
+
+export function parseMenuSchoolIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 8 || value.some(id => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(id))) throw new SettingsValidationError("Valitse enintään kahdeksan koulun ruokalistaa.");
+  return [...new Set(value)] as string[];
 }

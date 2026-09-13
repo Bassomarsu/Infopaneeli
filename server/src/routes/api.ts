@@ -1,3 +1,5 @@
+import { selectedMenuData } from "../providers/menu.ts";
+import { getMenuSchools } from "../core/menu-schools.ts";
 import { readHousehold } from "../core/household.ts";
 import { getNamedays } from "../core/namedays.ts";
 import { registerHouseholdRoutes } from "./household.ts";
@@ -177,6 +179,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/dashboard", async (request) => {
     const snapshots = registry.snapshots();
+    if (snapshots.menu) snapshots.menu = { ...snapshots.menu, data: selectedMenuData(snapshots.menu.data, getSettings().menuSchoolIds, snapshots.menu.fetchedAt) };
     const local = isTrustedRequest(request);
 
     // A phone on the home network gets the shopping list and the weather, but
@@ -321,12 +324,20 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     return found;
   });
 
+  app.get("/api/menu-schools", async (_request, reply) => {
+    try { return { schools: await getMenuSchools() }; }
+    catch { return reply.code(502).send({error:"Koululuetteloa ei saatu ladattua. Yritä uudelleen."}); }
+  });
+
   app.get("/api/settings", async () => getSettings());
 
   app.put("/api/settings", async (request, reply) => {
     if (!requireEditAccess(request, reply)) return reply;
     try {
-      return updateSettings(request.body);
+      const before = getSettings().menuSchoolIds;
+      const settings = updateSettings(request.body);
+      if (JSON.stringify(before) !== JSON.stringify(settings.menuSchoolIds)) void registry.get("menu")?.runOnce();
+      return settings;
     } catch (err) {
       if (err instanceof SettingsValidationError) {
         return reply.code(400).send({ error: err.message });

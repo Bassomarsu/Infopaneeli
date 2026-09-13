@@ -587,6 +587,7 @@ export interface Settings {
    * sijainnin ja sen lähteen erikseen tämän kentän arvosta riippumatta.
    */
   weatherPostalCode: string | null;
+  menuSchoolIds?: string[];
 }
 
 export interface Dashboard {

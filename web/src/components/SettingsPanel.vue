@@ -13,6 +13,7 @@ import {
   type CurrentWeatherLocation,
 } from "../composables/useWeatherLocation.ts";
 import ConnectionTest from "./ConnectionTest.vue";
+import MenuSchoolSettings from "./MenuSchoolSettings.vue";
 import { PANEL_IDS, PANEL_TITLES, panelVisibilityRows, sanitizeHiddenPanels, type PanelId } from "../types";
 import type { PaikkyChild, Settings, WilmaStudent } from "../types";
 
@@ -63,7 +64,7 @@ const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
  * saa päätyä valintaruuduksi, jota ei ole olemassa.
  */
 function draftFrom(settings: Settings): Settings {
-  return { ...settings, hiddenPanels: sanitizeHiddenPanels(settings.hiddenPanels) };
+  return { ...settings, hiddenPanels: sanitizeHiddenPanels(settings.hiddenPanels), menuSchoolIds: [...(settings.menuSchoolIds ?? ["karstula_koulut"])] };
 }
 
 const draft = ref<Settings>(draftFrom(props.settings));
@@ -469,6 +470,8 @@ async function save(): Promise<void> {
             <span>{{ child.firstName }} {{ child.lastName }}</span>
           </label>
         </fieldset>
+
+        <MenuSchoolSettings v-model="draft.menuSchoolIds" />
 
         <fieldset class="group">
           <legend>Näytettävät paneelit</legend>

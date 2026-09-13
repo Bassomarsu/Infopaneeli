@@ -35,8 +35,9 @@ ja toistoväli viikkoina (0 tarkoittaa kertaluonteista). Kausimuistutuksen voi
 kuitata ja viimeisimmän kuittauksen perua; tekemätön muistutus säilyy myös
 vuodenvaihteen yli. Kauppalista on erillinen vanhasta muistilistasta.
 
-Ruokalista näyttää Karstulan koulujen ateriat; päiväkotien kattavuutta ei ole
-varmistettu. Nimipäivissä käytetään vuoden 2000 kalenteria, joten myöhemmin
+Ruokalistan koulut valitaan asetusten **Ruokalistan koulut** -kohdassa koulun
+tai kunnan nimellä. Voit valita useita listoja. Lähde on kouluruoka.fi; kaikki
+koulut tai päiväkodit eivät ole palvelussa. Nimipäivissä käytetään vuoden 2000 kalenteria, joten myöhemmin
 lisätyt nimet puuttuvat. Omat merkkipäivät voi lisätä erikseen.
 Katso [tietolähteet ja aineiston alkuperä](docs/widget-sources.md).
 
