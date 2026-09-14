@@ -379,3 +379,9 @@ Linux-kohtaista:
   kirjoita sitä ensin väljemmillä oikeuksilla.
 - Taustapalvelu on ajossa tavallisena käyttäjänä, ei roottina, ja
   `ProtectSystem=strict` rajaa sen kirjoitusoikeuden pelkkään `data`-kansioon.
+
+## Widgettien asetukset
+
+Kortin otsikon hammasratas avaa sen omat asetukset. Yläpalkin asetuksissa
+valitaan näkyvät paneelit, asettelu ja yötila. Katso
+[widgettien asetukset ja uutisten lukeminen](../docs/widget-settings.md).

@@ -12,6 +12,9 @@ import {
   fetchCurrentWeatherLocation,
   type CurrentWeatherLocation,
 } from "../composables/useWeatherLocation.ts";
+import ModalDialog from './ModalDialog.vue';
+import NewsCategorySettings from './NewsCategorySettings.vue';
+import { settingsPatch } from '../composables/widgetSettings';
 import ConnectionTest from "./ConnectionTest.vue";
 import MenuSchoolSettings from "./MenuSchoolSettings.vue";
 import WasteSettings from "./WasteSettings.vue";
@@ -22,6 +25,7 @@ const editAccess = useEditAccess();
 
 const props = defineProps<{
   settings: Settings;
+  widget?: PanelId;
   linkable?: boolean;
   students: WilmaStudent[];
   /**
@@ -54,6 +58,8 @@ const props = defineProps<{
   open: boolean;
 }>();
 
+const dialogTitle = computed(() => props.widget ? PANEL_TITLES[props.widget] + ': asetukset' : 'Yleiset asetukset');
+const inWidget = (...ids: PanelId[]) => props.widget !== undefined && ids.includes(props.widget);
 const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
 
 /**
@@ -66,7 +72,7 @@ const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
  * saa päätyä valintaruuduksi, jota ei ole olemassa.
  */
 function draftFrom(settings: Settings): Settings {
-  return { ...settings, hiddenPanels: sanitizeHiddenPanels(settings.hiddenPanels), menuSchoolIds: [...(settings.menuSchoolIds ?? ["karstula_koulut"])] };
+  return JSON.parse(JSON.stringify({ ...settings, hiddenPanels: sanitizeHiddenPanels(settings.hiddenPanels), menuSchoolIds: [...(settings.menuSchoolIds ?? ["karstula_koulut"])], newsCategories: [...(settings.newsCategories ?? ["paauutiset"])] }));
 }
 
 const draft = ref<Settings>(draftFrom(props.settings));
@@ -141,7 +147,7 @@ function togglePanelVisible(id: PanelId): void {
   // samaan kysymykseen olisi juuri se tapa jolla nämä kaksi näkymää ajautuvat
   // eri mieltä siitä mitä kytkin tekee.
   const layout = mergeWithDefaults(draft.value.panelLayout);
-  const outcome = enablePanel(layout, draft.value.hiddenPanels, id);
+  const outcome = enablePanel(layout, draft.value.hiddenPanels, id, draft.value.gridOverflow === "scroll");
   if (outcome.rejected !== null) {
     panelNotice.value = `${PANEL_TITLES[id]} ei mahdu ruudukkoon. Pienennä tai siirrä jotakin korttia kohdassa “Muokkaa asettelua”, niin paneeli mahtuu.`;
     return;
@@ -194,7 +200,7 @@ onUnmounted(() => {
 // Reopening must show what is actually stored, not whatever was typed and
 // abandoned last time.
 watch(
-  () => [props.open, props.settings] as const,
+  () => [props.open, props.widget] as const,
   ([open]) => {
     if (open) {
       draft.value = draftFrom(props.settings);
@@ -213,18 +219,11 @@ const currentLocationLoading = ref(false);
 
 onUnmounted(() => postalLookup.dispose());
 
-/**
- * Postinumerokenttä nollataan VAIN kun paneeli avataan, ei aina kun
- * `props.settings` vaihtuu. Yllä oleva draft-watch tekee jälkimmäistä, koska
- * settings on App.vuessa laskettu dashboardista ja saa uuden identiteetin
- * joka pollauksella — kesken kirjoitettu postinumero katoaisi siihen
- * minuutin välein. Siksi tallennettava arvo luetaan hakukentän tilasta
- * (`postalToSave`) eikä draftista.
- */
+/** Avatessa aloitetaan tallennetusta arvosta. Taustapollaus ei nollaa luonnosta. */
 watch(
   () => props.open,
   (open) => {
-    if (!open) return;
+    if (!open || props.widget !== "weather") return;
     postalInput.value = postalLookup.setInput(props.settings.weatherPostalCode ?? "");
     void loadCurrentLocation();
   },
@@ -386,7 +385,7 @@ async function persistDraft(): Promise<boolean> {
   // Sama este kuin Tallenna-napin `disabled`illa, mutta tässä myös
   // "Muokkaa asettelua" -polulle — ja tämä on se paikka joka oikeasti
   // estää ratkaisemattoman sijainnin menemästä palvelimelle.
-  if (postalBlocksSave.value !== null) {
+  if (props.widget === "weather" && postalBlocksSave.value !== null) {
     error.value = postalBlocksSave.value;
     return false;
   }
@@ -396,7 +395,7 @@ async function persistDraft(): Promise<boolean> {
     const response = await editAccess.editFetch("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...draft.value, weatherPostalCode: postalToSave.value }),
+      body: JSON.stringify(settingsPatch({ ...draft.value, weatherPostalCode: postalToSave.value }, props.widget)),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -431,17 +430,18 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="open" class="overlay" @click.self="emit('close')">
+  <ModalDialog v-if="open" :label="dialogTitle" @close="emit('close')">
     <section class="panel">
       <header class="panel__head">
-        <h2>Asetukset</h2>
-        <button class="panel__close" type="button" @click="emit('close')">Sulje</button>
+        <h2>{{ dialogTitle }}</h2>
+        <button class="panel__close" autofocus type="button" @click="emit('close')">Sulje</button>
       </header>
 
       <div class="panel__body">
+        <p v-if="inWidget('schedule', 'messages')" class="group__hint">Lapsivalinnat koskevat sekä lukujärjestystä että viestejä.</p>
         <!-- Kaksi lapsivalintaa peräkkäin, kummallakin oma lähteensä: otsikot
              nimeävät lähteen, jotta ryhmiä ei lueta saman listan jatkoksi. -->
-        <fieldset class="group">
+        <fieldset v-if="inWidget('schedule', 'messages')" class="group">
           <legend>Näytettävät lapset — Wilma</legend>
           <p v-if="!canPreviewSchedule" class="group__hint">Oppilasvalinta näkyy vain näyttölaitteella.</p>
           <p v-else-if="students.length === 0" class="group__hint">
@@ -457,7 +457,7 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <fieldset v-if="paikkyConfigured" class="group">
+        <fieldset v-if="inWidget('schedule', 'messages') && paikkyConfigured" class="group">
           <legend>Näytettävät lapset — Päikky</legend>
           <p v-if="!canPreviewSchedule" class="group__hint">Lapsivalinta näkyy vain näyttölaitteella.</p>
           <p v-else-if="paikkyChildren.length === 0" class="group__hint">
@@ -473,10 +473,11 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <MenuSchoolSettings v-model="draft.menuSchoolIds" />
-        <WasteSettings :allowed="canPreviewSchedule" :linkable="linkable" />
+        <NewsCategorySettings v-if="inWidget('news')" v-model="draft.newsCategories" />
+        <MenuSchoolSettings v-if="inWidget('menu')" v-model="draft.menuSchoolIds" />
+        <WasteSettings v-if="inWidget('waste')" :allowed="canPreviewSchedule" :linkable="linkable" />
 
-        <fieldset class="group">
+        <fieldset v-if="!widget" class="group">
           <legend>Näytettävät paneelit</legend>
           <p class="group__hint">
             Valitse mitkä paneelit näkyvät näytöllä. Pois kytketty paneeli
@@ -502,33 +503,29 @@ async function save(): Promise<void> {
           </p>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="!widget" class="group">
           <legend>Paneelien asettelu</legend>
           <p class="group__hint">Siirrä paneeleja ja muuta niiden kokoa suoraan näytöllä.</p>
-          <button type="button" class="btn" :disabled="isNarrow || saving || postalBlocksSave !== null" @click="editLayout">
+          <button type="button" class="btn" :disabled="isNarrow || saving || (widget === 'weather' && postalBlocksSave !== null)" @click="editLayout">
             {{ saving ? "Tallennetaan…" : "Muokkaa asettelua" }}
           </button>
           <p v-if="isNarrow" class="group__hint">Asettelua muokataan infonäytöllä — näkymä on nyt liian kapea.</p>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="!widget" class="group">
           <legend>Kun paneeleja on paljon</legend>
           <label class="radio">
             <input v-model="draft.gridOverflow" type="radio" value="fit" />
-            <span>Sovita ruudulle — kaikki näkyy kerralla, kortit kutistuvat</span>
+            <span>Sovita ruudulle — käytössä on yksi ruudullinen</span>
           </label>
           <label class="radio">
             <input v-model="draft.gridOverflow" type="radio" value="scroll" />
-            <span>Anna vuotaa yli — kortit pysyvät luettavina, näyttöä voi vierittää alaspäin</span>
+            <span>Anna vuotaa yli — säilytä korttien koko ja lisää tilaa alaspäin</span>
           </label>
-          <p class="group__hint">
-            Seinänäytölle sopii yleensä sovitus: siihen ei kosketa ohi kulkiessa, joten
-            alas vieritetty kortti jäisi näkymättömiin. Vieritys on hyödyllisempi puhelimessa
-            ja silloin kun paneeleja on enemmän kuin ruudulle mukavasti mahtuu.
-          </p>
+          <p class="group__hint">Vieritys ei muuta korttien kokoa. Uudet paneelit sijoitetaan tarvittaessa alemmas. Siirrä alempana olevat paneelit takaisin ruudulle tai piilota ne ennen sovitustilaan palaamista.</p>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="inWidget('schedule')" class="group">
           <legend>Lukujärjestyksen asettelu</legend>
           <label class="radio">
             <input v-model="draft.scheduleLayout" type="radio" value="split" />
@@ -540,7 +537,7 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="inWidget('schedule')" class="group">
           <legend>Päivän vaihtuminen</legend>
           <p class="group__hint">
             Tähän kellonaikaan asti näkyy kuluva päivä, sen jälkeen seuraava koulupäivä.
@@ -551,7 +548,7 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="inWidget('schedule')" class="group">
           <legend>Aamupala</legend>
           <p class="group__hint">
             Käytetään hälytysten "aamupala"-ankkurina (ks. Hälytykset) niinä päivinä kun lapsi menee kouluun
@@ -567,7 +564,7 @@ async function save(): Promise<void> {
              näytetään erikseen kentän yläpuolella, koska tyhjä kenttä ei
              tarkoita "ei sijaintia" vaan ".env:n arvo" — ks. types.ts:n
              weatherPostalCode. -->
-        <fieldset class="group">
+        <fieldset v-if="inWidget('weather')" class="group">
           <legend>Sään sijainti</legend>
           <p class="group__hint">{{ currentLocationText }}</p>
           <label class="field">
@@ -603,7 +600,7 @@ async function save(): Promise<void> {
         <!-- Oma ryhmänsä eikä yötilan tai yksityisyyden alla: banneri ei ole
              kumpaakaan, vaan yläpalkin sisältöä. Yötilan vieressä siksi että
              molemmat koskevat ruudun yläosaa ja passiivista tietoa. -->
-        <fieldset class="group">
+        <fieldset v-if="!widget" class="group">
           <legend>Yläpalkki</legend>
           <label class="check">
             <input v-model="showNextAlarm" type="checkbox" />
@@ -614,7 +611,7 @@ async function save(): Promise<void> {
           </p>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="!widget" class="group">
           <legend>Yötila</legend>
           <p class="group__hint">Näyttö himmenee tällä välillä.</p>
           <div class="field-row">
@@ -629,7 +626,7 @@ async function save(): Promise<void> {
           </div>
         </fieldset>
 
-        <fieldset class="group">
+        <fieldset v-if="inWidget('messages')" class="group">
           <legend>Yksityisyys</legend>
           <label class="check">
             <input v-model="draft.hideMessagePreviews" type="checkbox" />
@@ -641,7 +638,7 @@ async function save(): Promise<void> {
              koodilla — näyttölaitteella ei ole tallennettua koodia
              unohdettavaksi. currentLevel on aina tuore (App.vue), joten
              teksti ei voi jäädä väittämään väärää tasoa. -->
-        <fieldset v-if="editAccess.hasStoredPin.value" class="group">
+        <fieldset v-if="!widget && editAccess.hasStoredPin.value" class="group">
           <legend>Muokkausoikeus</legend>
           <p class="group__hint">
             {{
@@ -659,7 +656,7 @@ async function save(): Promise<void> {
              käyttäjä olettaisi paneelin muun logiikan pätevän tähänkin.
              Fieldset ja legend tässä eikä ConnectionTestissä, jotta
              paneelin omat .group/legend-tyylit pätevät sellaisenaan. -->
-        <fieldset class="group">
+        <fieldset v-if="inWidget('schedule', 'messages')" class="group">
           <legend>Wilma-yhteys</legend>
           <ConnectionTest />
         </fieldset>
@@ -667,33 +664,20 @@ async function save(): Promise<void> {
         <p v-if="error" class="panel__error">{{ error }}</p>
       </div>
 
-      <footer class="panel__foot">
+      <footer v-if="widget !== 'waste'" class="panel__foot">
         <!-- Syy näkyy tässä eikä vain sään ryhmässä: Tallenna on paneelin
              pohjalla, eikä harmaa nappi ilman selitystä kerro mitään. -->
-        <p v-if="postalBlocksSave" class="panel__blocked">{{ postalBlocksSave }}</p>
+        <p v-if="widget === 'weather' && postalBlocksSave" class="panel__blocked">{{ postalBlocksSave }}</p>
         <button type="button" class="btn" @click="emit('close')">Peruuta</button>
-        <button type="button" class="btn btn--primary" :disabled="saving || postalBlocksSave !== null" @click="save">
+        <button type="button" class="btn btn--primary" :disabled="saving || (widget === 'weather' && postalBlocksSave !== null)" @click="save">
           {{ saving ? "Tallennetaan…" : "Tallenna" }}
         </button>
       </footer>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Scroll-mode topbar is z-index 70; the dialog must cover it. */
-  z-index: 100;
-  padding: 1.5rem;
-}
-
 .panel {
   background: #141821;
   border: 1px solid var(--border);

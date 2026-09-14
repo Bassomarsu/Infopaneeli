@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import type { ProviderStatus } from "../types";
 
+import { widgetPanelKey, widgetSettingsKey, WIDGET_SETTING_KEYS } from '../composables/widgetSettings';
+import { PANEL_TITLES } from '../types';
+const panelId = inject(widgetPanelKey, undefined);
+const openSettings = inject(widgetSettingsKey, undefined);
+const hasSettings = computed(() => panelId && openSettings && panelId.value in WIDGET_SETTING_KEYS);
+const settingsLabel = computed(() => panelId ? PANEL_TITLES[panelId.value] + ': asetukset' : 'Widgetin asetukset');
 const props = defineProps<{
   title: string;
   accent?: string;
@@ -77,6 +83,9 @@ const staleLabel = computed(() => {
       <span v-if="isStale" class="badge badge--warn">vanhentunut · {{ staleLabel }}</span>
       <span v-else-if="isFailed" class="badge badge--error">ei yhteyttä</span>
       <span v-else-if="note" class="card__note">{{ note }}</span>
+      <button v-if="hasSettings" class="card__settings" type="button" :aria-label="settingsLabel" :title="settingsLabel" aria-haspopup="dialog" @click.stop="panelId && openSettings?.(panelId)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-.6 2.3-2 .9-2.1-.7-2 3.5 1.6 1.6v2.3L2.3 14.5l2 3.5 2.2-.6 2 .9L9 21h4l.6-2.7 2-.9 2.1.6 2-3.5-1.6-1.6v-2.3l1.6-1.6-2-3.5-2.1.7-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></svg>
+      </button>
     </header>
 
     <!--
@@ -107,6 +116,10 @@ const staleLabel = computed(() => {
 </template>
 
 <style scoped>
+.card__settings { flex: 0 0 36px; width: 36px; height: 36px; padding: 7px; margin: -6px 0 -6px auto; border: 0; border-radius: 9px; color: var(--text-dim); background: transparent; cursor: pointer; position: relative; z-index: 1; }
+.card__settings:hover, .card__settings:focus-visible { color: var(--text); background: var(--surface-strong); }
+.card__title { min-width: 0; }
+
 /*
  * Vain klikattavan otsikon tyylit. Kortin muut luokat elävät style.css:ssä
  * globaaleina; näitä ei ole siellä koska ne koskevat yhtä korttia.

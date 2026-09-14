@@ -1,24 +1,10 @@
 <script setup lang="ts">
-/**
- * Ylen uutisotsikot.
- *
- * YLEN KÄYTTÖEHDOT (https://yle.fi/aihe/a/20-10008076, päivitetty 15.11.2024)
- * rajaavat tätä korttia enemmän kuin mikään muu vaatimus. Nämä eivät ole
- * makuasioita eivätkä jousta:
- *
- *   - Otsikot näytetään SELLAISENAAN. Ei uudelleensanoitusta, ei tiivistystä.
- *     Näyttötilan takia otsikon saa katkaista, ja se tehdään CSS:llä
- *     (`-webkit-line-clamp`) eikä merkkijonoa leikkaamalla.
- *   - Linkin on vietävä SUORAAN kyseiseen juttuun Ylen sivustolla. Siksi
- *     `row.link` menee `href`iin sellaisenaan — ei omaa osoitteenrakennusta,
- *     ei välisivua, ei hakua.
- *   - Valokuvia ei käytetä. Syötteessä ei ole kuvia eikä niitä haeta mistään.
- *   - Lähde on käytävä ilmi. Se on kortin otsikossa ("Uutiset · Yle") eikä
- *     alatunnisteessa, koska otsikko näkyy MYÖS virhe- ja tyhjässä tilassa
- *     ja matalimmassakin paneelissa — alatunniste olisi ensimmäinen asia
- *     joka jäisi pois tilan loppuessa.
- */
+/** Ylen otsikot. Juttusivut estävät upotuksen (X-Frame-Options: DENY).
+ * Otsikko avaa suljettavan dialogin; alkuperäiseen juttuun linkitetään suoraan.
+ * RSS-käyttöehdot: https://yle.fi/a/20-10008076 */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import ModalDialog from './ModalDialog.vue';
+import type { NewsRow } from './news';
 import CardShell from "./CardShell.vue";
 import { fittingItemCount, newsRows } from "./news";
 import { useClock } from "../composables/useClock";
@@ -26,22 +12,17 @@ import type { NewsData, ProviderSnapshot } from "../types";
 
 const props = defineProps<{
   snapshot?: ProviderSnapshot<NewsData>;
-  /**
-   * Saako otsikkoa painaa auki yle.fi:hin.
-   *
-   * KIOSKIONGELMA: seinänäyttö on kioskiselain ilman näppäimistöä. Jos
-   * otsikko veisi yle.fi:hin, takaisin ei pääsisi — selain jäisi Ylen
-   * sivulle eikä infonäyttöä saisi takaisin ilman että joku kävelee koneelle.
-   * Ylen ehdot vaativat, että JOS linkitetään, linkki vie suoraan juttuun;
-   * ne eivät vaadi linkittämistä. Näytöllä otsikot ovat siis pelkkää
-   * tekstiä, puhelimessa oikeita linkkejä.
-   *
-   * Päätöksen tekee App.vue (ks. `newsLinksAllowed`), ei tämä kortti — sama
-   * kortti ei saa itse päätellä millä laitteella se on.
-   */
+  /** Ulkoiset linkit sallitaan vain laitteella, jossa pääsee takaisin. */
   linkable: boolean;
 }>();
 
+const selected = ref<NewsRow | null>(null);
+const copied = ref(false);
+function openNews(row: NewsRow) { selected.value = row; copied.value = false; }
+async function copyLink() {
+  try { await navigator.clipboard.writeText(selected.value?.link ?? ''); copied.value = true; }
+  catch { copied.value = false; }
+}
 const { now } = useClock();
 
 const rows = computed(() => newsRows(props.snapshot?.data?.items, now.value));
@@ -119,27 +100,45 @@ const isEmpty = computed(() => rows.value.length === 0);
     </div>
 
     <div v-else ref="listEl" class="news">
-      <component
-        :is="linkable ? 'a' : 'article'"
+      <button
+        type="button"
         v-for="(row, index) in rows"
         :key="row.id"
         :ref="(el: unknown) => captureItem(el, index)"
         class="news__item"
-        :class="{ 'news__item--link': linkable }"
+        aria-haspopup="dialog"
+        @click="openNews(row)"
         :style="index < visibleCount ? undefined : { visibility: 'hidden' }"
         :aria-hidden="index < visibleCount ? undefined : 'true'"
-        :href="linkable ? row.link : undefined"
-        :target="linkable ? '_blank' : undefined"
-        :rel="linkable ? 'noopener noreferrer' : undefined"
       >
         <span class="news__title">{{ row.title }}</span>
         <span v-if="row.age" class="news__age tnum">{{ row.age }}</span>
-      </component>
+      </button>
     </div>
   </CardShell>
+  <ModalDialog v-if="selected" label="Uutinen · Yle" @close="selected = null">
+    <article class="reader">
+      <header class="reader__head"><strong>Uutinen · Yle</strong><button autofocus type="button" class="reader__close" @click="selected = null">Sulje uutinen</button></header>
+      <div class="reader__body">
+        <h2>{{ selected.title }}</h2>
+        <p>Yle estää koko artikkelin näyttämisen sovelluksen sisällä. Voit lukea jutun Ylen sivustolla.</p>
+        <a v-if="linkable" :href="selected.link" target="_blank" rel="noopener noreferrer" class="reader__link">Lue koko uutinen Ylen sivustolla ↗</a>
+        <template v-else><p>Avaa tämä osoite puhelimella tai tietokoneella:</p><p class="reader__url">{{ selected.link }}</p></template>
+        <button type="button" class="reader__close" @click="copyLink">{{ copied ? 'Linkki kopioitu' : 'Kopioi uutisen linkki' }}</button>
+      </div>
+    </article>
+  </ModalDialog>
 </template>
 
 <style scoped>
+.reader { width: min(48rem, 100%); max-height: 100%; display: flex; flex-direction: column; background: var(--page-bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.reader__head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: 1rem; border-bottom: 1px solid var(--border); }
+.reader__body { padding: 1.3rem; overflow-y: auto; line-height: 1.6; }
+.reader__body h2 { margin-top: 0; line-height: 1.35; }
+.reader__link { display: block; color: var(--accent-school); margin: 1rem 0; }
+.reader__close { flex-shrink: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: .65rem; font: inherit; cursor: pointer; }
+.reader__url { overflow-wrap: anywhere; }
+
 .news {
   flex: 1;
   min-height: 0;
@@ -153,6 +152,7 @@ const isEmpty = computed(() => rows.value.length === 0);
 }
 
 .news__item {
+  width: 100%; border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; padding: .2rem 0;
   display: flex;
   align-items: baseline;
   gap: 0.7rem;
@@ -186,24 +186,21 @@ const isEmpty = computed(() => rows.value.length === 0);
   white-space: nowrap;
 }
 
-/* Puhelimessa otsikko on oikea linkki. Seinänäytöllä tätä luokkaa ei ole
-   lainkaan, joten siellä ei ole myöskään mitään painettavan näköistä. */
-.news__item--link {
-  /* Sormelle isompi kosketusalue. Rivi on tämän takia linkkitilassa
-     korkeampi kuin näytöllä, eikä se haittaa: mahtuvien rivien määrä
-     MITATAAN renderöinnistä (ks. `measure`), joten se sopeutuu itsestään. */
+/* Sama avattava otsikko sekä puhelimessa että kioskissa. */
+.news__item {
+  /* Mahtuvien otsikoiden määrä mitataan renderöinnistä. */
   padding: 0.25rem 0.3rem;
   margin: 0 -0.3rem;
   border-radius: 10px;
 }
 
-.news__item--link:hover .news__title,
-.news__item--link:focus-visible .news__title {
+.news__item:hover .news__title,
+.news__item:focus-visible .news__title {
   text-decoration: underline;
   text-underline-offset: 0.2em;
 }
 
-.news__item--link:active {
+.news__item:active {
   background: var(--surface);
 }
 </style>

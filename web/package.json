@@ -1,6 +1,6 @@
 {
   "name": "@infonaytto/web",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,7 +17,8 @@
     "test:kiosk-exit-hotspot": "node test/kiosk-exit-hotspot.ts",
     "test:weather-location": "node test/weather-location.ts",
     "test:panel-visibility": "node test/panel-visibility.ts",
-    "test:news-card": "node test/news-card.ts"
+    "test:news-card": "node test/news-card.ts",
+    "test:widget-settings": "node test/widget-settings.ts"
   },
   "dependencies": {
     "vue": "^3.5.13"

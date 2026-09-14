@@ -627,3 +627,26 @@ for (const panelLayout of [null, defaultPanelLayout]) {
 }
 console.log("ok  päällekkäinen osittaispäivitys ja väärä oletusten palautus torjutaan atomisesti");
 setSetting("settings", {});
+
+// Extended layouts survive saves/reloads; fit rejects atomically, preserving work.
+{
+  const layout = structuredClone(defaultPanelLayout);
+  layout.waste.row = 20;
+  const hidden = defaultHiddenPanels.filter(id => id !== 'waste');
+  updateSettings({ gridOverflow: 'scroll', panelLayout: layout, hiddenPanels: hidden });
+  assert.deepEqual(getSettings().panelLayout, layout);
+  assert.deepEqual(updateSettings({ volume: 0.5 }).panelLayout, layout);
+  const before = getSetting('settings');
+  assert.throws(() => updateSettings({ gridOverflow: 'fit' }), /kahdeksan/);
+  assert.deepEqual(getSetting('settings'), before);
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels], gridOverflow: 'fit' });
+  assert.deepEqual(getSettings().panelLayout, layout, 'hidden extended positions retained in fit');
+  assert.throws(() => updateSettings({ hiddenPanels: hidden }), /kahdeksan/);
+  updateSettings({ gridOverflow: 'scroll', hiddenPanels: hidden });
+  assert.deepEqual(getSettings().panelLayout, layout);
+  const invalid = structuredClone(layout);
+  invalid.waste.row = Number.MAX_SAFE_INTEGER;
+  assert.throws(() => parsePanelLayout(invalid, hidden, 'scroll'), SettingsValidationError);
+  setSetting('settings', {});
+  console.log('ok  extended layout reload, partial saves and rejected fit preserve placements');
+}

@@ -82,7 +82,7 @@ watch(() => props.allowed, allowed => {
     <p>Paikkakunta auttaa löytämään jätehuoltoyhtiön. Oman kiinteistön noutopäivät vaativat yhtiön sähköisen asioinnin tunnukset ja kiinteistön valinnan.</p>
     <p v-if="!allowed">Avaa täydet käyttöoikeudet, jotta voit muuttaa yhteyttä. Käsin asetettua aikataulua voi käyttää ilman yhteyttä.</p>
     <template v-else>
-      <p class="separate">Nämä asetukset tallennetaan omilla painikkeillaan heti. Asetusikkunan Peruuta ei peru näitä tallennuksia.</p>
+      <p class="separate">Yhteysasetukset tallennetaan omilla painikkeillaan heti. Ikkunan sulkeminen ei peru tallennuksia.</p>
       <p v-if="busy" role="status">Käsitellään pyyntöä…</p>
       <p v-if="error" role="alert">{{ error }}</p>
       <p v-if="notice" role="status">{{ notice }}</p>

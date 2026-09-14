@@ -25,9 +25,11 @@ joka ajaa sekä palvelimen että selaimen kioskitilassa.
 Avaa **Asetukset → näytettävät paneelit** ja ota käyttöön roskien nouto,
 ruokalista, kauppalista, nimipäivät ja merkkipäivät sekä kausimuistutukset.
 Ne ovat päivityksen jälkeen pois näkyvistä, jotta aiempi asettelu säilyy.
-Ruudukossa on tilaa enintään 12 pienimmän kokoiselle paneelille. Vapauta
-paikka pienentämällä tai piilottamalla muita paneeleja. Valinta **Anna vuotaa yli**
-sallii pystysuoran vierityksen ja helpottaa pitkien korttien lukemista.
+Sovitustilassa ruudulle mahtuu 12 pienimmän kokoista paneelia. Valinta
+**Anna vuotaa yli** säilyttää paneelien koon ja mahdollistaa niiden sijoittamisen
+ruudun alapuolelle. Uudet paneelit saavat tarvittaessa paikan alempaa, ja näkymää
+voi vierittää. Sovitustilaan palaaminen edellyttää, että näkyvät paneelit
+mahtuvat ensimmäiselle ruudulle; asettelua ei muuteta automaattisesti.
 
 Omat listat ja merkkipäivät tallentuvat paikalliseen tietokantaan. Puhelimella
 muokkaus avataan yläpalkin lukosta. Roskien noutoon annetaan tunnettu noutopäivä
@@ -35,15 +37,37 @@ ja toistoväli viikkoina (0 tarkoittaa kertaluonteista). Kausimuistutuksen voi
 kuitata ja viimeisimmän kuittauksen perua; tekemätön muistutus säilyy myös
 vuodenvaihteen yli. Kauppalista on erillinen vanhasta muistilistasta.
 
-Ruokalistan koulut valitaan asetusten **Ruokalistan koulut** -kohdassa koulun
+Ruokalistan koulut valitaan **Ruokalistan hammasrattaasta → Ruokalistan koulut** koulun
 tai kunnan nimellä. Voit valita useita listoja. Lähde on kouluruoka.fi; kaikki
 koulut tai päiväkodit eivät ole palvelussa. Nimipäivissä käytetään vuoden 2000 kalenteria, joten myöhemmin
 lisätyt nimet puuttuvat. Omat merkkipäivät voi lisätä erikseen.
 Katso [tietolähteet ja aineiston alkuperä](docs/widget-sources.md).
 
+## Widgettien asetukset ja uutiset
+
+Widgetin otsikon hammasratas avaa sen omat asetukset:
+
+- Lukujärjestys: lapset, asettelu, päivän vaihtumisaika ja aamupala.
+- Wilma-viestit: lapset ja viestien sisällön piilotus. Lapsivalinnat ovat yhteiset lukujärjestyksen kanssa.
+- Sää: sijainti postinumerolla.
+- Ruokalista: lasten koulut.
+- Roskien nouto: jätehuollon yhteys ja kiinteistö.
+- Uutiset: 1–8 Ylen aihe- tai maakuntakategoriaa. Samat jutut näkyvät vain kerran.
+
+Yläpalkin yleisiin asetuksiin jäävät paneelien näkyvyys, asettelu, yötila,
+seuraavan hälytyksen näyttö ja tallennetun käyttöoikeuskoodin poistaminen.
+Piilotetun widgetin voi ottaa sieltä takaisin näkyviin. Listojen merkintöjä
+muokataan edelleen suoraan korteissa. Puhelimella hammasratas pyytää tarvittaessa PIN-koodin.
+
+Uutisen painallus avaa otsikkomodaalin. **Koko Ylen juttua ei voi näyttää
+modaalissa:** Yle estää sivujensa upottamisen, ja [RSS-käyttöehdot](https://yle.fi/a/20-10008076)
+kieltävät sisällön kopioimisen omaan näkymään. Puhelimella modaali tarjoaa
+suoran linkin alkuperäiseen juttuun; kioskissa näytetään kopioitava osoite,
+jotta infonäytöstä pääsee aina takaisin. Sulje-painike ja Esc palauttavat kortille.
+
 ## Roskien nouto: automaattinen yhteys
 
-Avaa **Asetukset → Jätehuollon automaattinen aikataulu** täydellä käyttöoikeudella.
+Avaa **Roskien nouto -widgetin hammasratas** täydellä käyttöoikeudella.
 Kirjoita paikkakunta, valitse jätehuoltoyhtiö ja anna osoite. Automaattinen
 kirjautumisliitäntä on toteutettu Sammakkokankaalle, Puhakselle ja Lakeuden
 Etapille. Syötä yhtiön sähköisen asioinnin tunnus ja salasana, tallenna yhteys,

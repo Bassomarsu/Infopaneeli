@@ -1,3 +1,4 @@
+import { isNewsCategory } from "./news-categories.ts";
 import { getSetting, setSetting } from "./store.ts";
 import { parseClockTime } from "./time.ts";
 import { isPostalCode } from "./postal-codes.ts";
@@ -10,6 +11,8 @@ import { isPostalCode } from "./postal-codes.ts";
  */
 export const GRID_COLUMNS = 6;
 export const GRID_ROWS = 8;
+/** Generous safety bound for browser CSS grid tracks, independent of viewport capacity. */
+export const MAX_LAYOUT_ROWS = 10_000;
 
 /**
  * Kortti leikkaa ylivuotavan sisältönsä piiloon (`overflow: hidden`), eikä
@@ -222,6 +225,7 @@ export interface Settings {
    */
   weatherPostalCode: string | null;
   menuSchoolIds: string[];
+  newsCategories: string[];
   /** Where each panel sits. Null means "never edited", so the default is used. */
   panelLayout: PanelLayout | null;
   /**
@@ -236,22 +240,9 @@ export interface Settings {
    */
   hiddenPanels: PanelId[];
   /**
-   * Mahtuuko ruudukko aina ruudulle, vai saako se vuotaa pystysuunnassa yli?
-   *
-   *   "fit"    — nykyinen ja oletus. Kahdeksan riviä jakaa ruudun korkeuden
-   *              keskenään, joten mikään ei jää näkymättömiin eikä sivu
-   *              vierity. Seinänäytöllä tämä on se mitä halutaan: siihen ei
-   *              kosketa ohi kulkiessa, ja piiloon vieritetty kortti olisi
-   *              yhtä kuin poissa.
-   *   "scroll" — riveillä on vähimmäiskorkeus, joten kortit pysyvät
-   *              luettavina vaikka niitä olisi monta. Jos ruudukko ei mahdu,
-   *              sivu vierittyy pystysuunnassa.
-   *
-   * Rivimäärä on SAMA molemmissa tiloissa (GRID_ROWS). Vain rivin korkeuden
-   * käyttäytyminen muuttuu. Tämä on tarkoituksellista: jos "scroll" sallisi
-   * enemmän rivejä, siinä tehty asettelu olisi kelvoton "fit"-tilassa, ja
-   * asetuksen vaihtaminen takaisin hylkäisi käyttäjän asettelun tai
-   * pudottaisi osan paneeleista näkymättömiin.
+   * "fit" näyttää kahdeksan riviä. "scroll" säilyttää rivien ja korttien
+   * koon, mutta sallii lisärivit alaspäin. Paluu sovitukseen hylätään
+   * tallennusta muuttamatta, jos näkyviä kortteja on kahdeksan rivin alla.
    */
   gridOverflow: GridOverflow;
   alarms: Alarm[];
@@ -269,6 +260,7 @@ export const defaultSettings: Settings = {
   breakfastTime: "08:00",
   weatherPostalCode: null,
   menuSchoolIds: ["karstula_koulut"],
+  newsCategories: ["paauutiset"],
   panelLayout: null,
   hiddenPanels: [...defaultHiddenPanels],
   gridOverflow: "fit",
@@ -280,6 +272,7 @@ const KEY = "settings";
 export function getSettings(): Settings {
   const stored = getSetting<Partial<Settings>>(KEY);
   const merged = { ...defaultSettings, ...(stored ?? {}) };
+  merged.newsCategories = parseNewsCategories(merged.newsCategories);
   merged.menuSchoolIds = parseMenuSchoolIds(merged.menuSchoolIds);
   merged.alarms = normalizeStoredAlarms(merged.alarms);
   merged.hiddenPanels = normalizeStoredHiddenPanels(merged.hiddenPanels);
@@ -467,6 +460,7 @@ export function updateSettings(patch: unknown): Settings {
     next[key] = value;
   }
 
+  if ("newsCategories" in input) next.newsCategories = parseNewsCategories(input["newsCategories"]);
   if ("menuSchoolIds" in input) next.menuSchoolIds = parseMenuSchoolIds(input["menuSchoolIds"]);
   if ("weatherPostalCode" in input) {
     next.weatherPostalCode = parseWeatherPostalCode(input["weatherPostalCode"]);
@@ -485,7 +479,7 @@ export function updateSettings(patch: unknown): Settings {
   }
 
   if ("panelLayout" in input) {
-    next.panelLayout = parsePanelLayout(input["panelLayout"], next.hiddenPanels);
+    next.panelLayout = parsePanelLayout(input["panelLayout"], next.hiddenPanels, next.gridOverflow);
   }
 
   if ("alarms" in input) {
@@ -515,6 +509,9 @@ export function updateSettings(patch: unknown): Settings {
     next.hideNextAlarm = value;
   }
 
+  if (next.gridOverflow === "fit" && PANEL_IDS.some(id => !next.hiddenPanels.includes(id) && ((next.panelLayout ?? defaultPanelLayout)[id].row + (next.panelLayout ?? defaultPanelLayout)[id].rowSpan - 1 > GRID_ROWS))) {
+    throw new SettingsValidationError("Sovitus ei mahdu ruudulle. Siirrä näkyvät paneelit kahdeksan ensimmäisen rivin sisään tai säilytä ylivuoto.");
+  }
   assertNoVisibleOverlap(next.panelLayout ?? defaultPanelLayout, next.hiddenPanels);
   setSetting(KEY, next);
   return next;
@@ -665,7 +662,7 @@ function assertNoVisibleOverlap(layout: PanelLayout, hiddenPanels: readonly Pane
  * tarkistusta varten (ks. assertNoVisibleOverlap). Ilman sitä kaikkia
  * käsitellään näkyvinä, mikä on tiukin tulkinta ja siksi turvallinen oletus.
  */
-export function parsePanelLayout(value: unknown, hiddenPanels: readonly PanelId[] = []): PanelLayout | null {
+export function parsePanelLayout(value: unknown, hiddenPanels: readonly PanelId[] = [], overflow: GridOverflow = "fit"): PanelLayout | null {
   if (value === null) return null;
   if (typeof value !== "object") {
     throw new SettingsValidationError("panelLayout: objekti tai null");
@@ -680,9 +677,9 @@ export function parsePanelLayout(value: unknown, hiddenPanels: readonly PanelId[
     }
     const item = raw as Record<string, unknown>;
     const col = positiveInt(item["col"], `${id}.col`, GRID_COLUMNS);
-    const row = positiveInt(item["row"], `${id}.row`, GRID_ROWS);
+    const row = positiveInt(item["row"], `${id}.row`, MAX_LAYOUT_ROWS);
     const colSpan = positiveInt(item["colSpan"], `${id}.colSpan`, GRID_COLUMNS);
-    const rowSpan = positiveInt(item["rowSpan"], `${id}.rowSpan`, GRID_ROWS);
+    const rowSpan = positiveInt(item["rowSpan"], `${id}.rowSpan`, MAX_LAYOUT_ROWS);
 
     if (colSpan < MIN_PANEL_SPAN || rowSpan < MIN_PANEL_SPAN) {
       throw new SettingsValidationError(
@@ -693,7 +690,7 @@ export function parsePanelLayout(value: unknown, hiddenPanels: readonly PanelId[
     if (col + colSpan - 1 > GRID_COLUMNS) {
       throw new SettingsValidationError(`panelLayout.${id}: ei mahdu leveyssuunnassa`);
     }
-    if (row + rowSpan - 1 > GRID_ROWS) {
+    if (row > MAX_LAYOUT_ROWS - rowSpan + 1 || (overflow === "fit" && !hiddenPanels.includes(id) && row + rowSpan - 1 > GRID_ROWS)) {
       throw new SettingsValidationError(`panelLayout.${id}: ei mahdu korkeussuunnassa`);
     }
     layout[id] = { col, row, colSpan, rowSpan };
@@ -951,4 +948,9 @@ function normalizeStoredAlarms(value: unknown): Alarm[] {
 export function parseMenuSchoolIds(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > 8 || value.some(id => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(id))) throw new SettingsValidationError("Valitse enintään kahdeksan koulun ruokalistaa.");
   return [...new Set(value)] as string[];
+}
+
+function parseNewsCategories(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 8 || !value.every(isNewsCategory)) throw new SettingsValidationError("Uutiskategoriat: valitse 1–8 tunnettua kategoriaa");
+  return [...new Set(value as string[])];
 }

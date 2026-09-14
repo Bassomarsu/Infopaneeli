@@ -322,3 +322,9 @@ Windows-riippuvuuksia — jos Surface pettää tai halutaan siirtyä kestävämp
 laitteeseen, sama koodi ajetaan Raspberry Pi:llä sellaisenaan ja Surface (tai
 mikä tahansa näyttö) jää pelkäksi selaimeksi. Vain tämän kansion skriptit ovat
 Windows-kohtaisia.
+
+## Widgettien asetukset
+
+Kortin otsikon hammasratas avaa sen omat asetukset. Yläpalkin asetuksissa
+valitaan näkyvät paneelit, asettelu ja yötila. Katso
+[widgettien asetukset ja uutisten lukeminen](../docs/widget-settings.md).

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, watch } from "vue";
+import { computed, provide, ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 import AlarmsPanel from "./components/AlarmsPanel.vue";
 import CalendarCard, { type CalendarData } from "./components/CalendarCard.vue";
 import EditAccessDialog from "./components/EditAccessDialog.vue";
@@ -19,6 +19,7 @@ import type { HouseholdData } from "./household.ts";
 import type { MenuCollection } from "./publicWidgets.ts";
 import NotesCard from "./components/NotesCard.vue";
 import ScheduleCard from "./components/ScheduleCard.vue";
+import { widgetSettingsKey } from './composables/widgetSettings';
 import SettingsPanel from "./components/SettingsPanel.vue";
 import WeatherCard, { type WeatherData } from "./components/WeatherCard.vue";
 import { describeOccurrenceShort, nextUpcomingAlarm } from "./composables/useAlarms.ts";
@@ -67,6 +68,13 @@ const { dashboard, connected, refresh } = useDashboard();
 const editAccess = useEditAccess();
 
 const settingsOpen = ref(false);
+const settingsWidget = ref<PanelId | undefined>();
+const pendingWidget = ref<PanelId | undefined>();
+provide(widgetSettingsKey, (id) => {
+  if (!canEdit.value) { pendingWidget.value = id; editAccessOpen.value = true; return; }
+  settingsWidget.value = id;
+  settingsOpen.value = true;
+});
 const alarmsOpen = ref(false);
 const editAccessOpen = ref(false);
 // Ei sidottu canEditiin eikä isTrustedClientiin: kioskista poistuminen on
@@ -294,6 +302,12 @@ const editAccessBadgeModifier = computed(() => {
 // jonka jokainen tallennus vain epäonnistuisi selittämättä. Suljetaan se ja,
 // jos syy oli nimenomaan vanhentunut PIN, avataan heti pyyntö uudelle.
 watch(canEdit, (isEditable, wasEditable) => {
+  if (isEditable && pendingWidget.value) {
+    settingsWidget.value = pendingWidget.value;
+    pendingWidget.value = undefined;
+    editAccessOpen.value = false;
+    settingsOpen.value = true;
+  }
   if (wasEditable && !isEditable) {
     settingsOpen.value = false;
     alarmsOpen.value = false;
@@ -310,7 +324,38 @@ const panelLayoutSetting = computed<PanelLayout | null>(() => settings.value?.pa
 // Puuttuva avain vanhassa tallennetussa asetusoliossa tarkoittaa "kaikki
 // näkyy" — ks. hiddenPanelsin kommentti types.ts:ssä.
 const hiddenPanelsSetting = computed<readonly unknown[] | null>(() => settings.value?.hiddenPanels ?? defaultHiddenPanels);
-const panelLayout = usePanelLayout(panelLayoutSetting, hiddenPanelsSetting, canEdit, refresh);
+const panelLayout = usePanelLayout(panelLayoutSetting, hiddenPanelsSetting, canEdit, refresh, gridScrolls);
+
+// Both modes use the same eight-row viewport geometry. Extra rows only extend the page.
+const viewportRowHeight = ref(1);
+function measureGridRows(): void {
+  const grid = gridEl.value;
+  if (!grid || window.innerWidth <= 900) return;
+  const app = grid.parentElement!;
+  const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
+  const bottom = parseFloat(getComputedStyle(app).paddingBottom) || 0;
+  const top = grid.getBoundingClientRect().top + window.scrollY;
+  viewportRowHeight.value = Math.max(1, (window.innerHeight - top - bottom - gap * 7) / 8);
+}
+const gridGeometry = computed(() => {
+  const occupied = Math.max(8, ...Object.entries(panelLayout.layout.value)
+    .filter(([id]) => !panelLayout.hiddenPanels.value.includes(id as PanelId))
+    .map(([, p]) => p.row + p.rowSpan - 1));
+  const rows = gridScrolls.value ? occupied + (panelLayout.editing.value ? 2 : 0) : 8;
+  return { '--layout-row-height': viewportRowHeight.value + 'px', '--layout-rows': rows };
+});
+let gridObserver: ResizeObserver | undefined;
+onMounted(() => {
+  gridObserver = new ResizeObserver(measureGridRows);
+  if (gridEl.value?.parentElement) {
+    for (const child of gridEl.value.parentElement.children) if (child !== gridEl.value) gridObserver.observe(child);
+  }
+  window.addEventListener('resize', measureGridRows);
+  measureGridRows();
+});
+watch([gridScrolls, panelLayout.editing], async () => { await nextTick(); measureGridRows(); });
+onUnmounted(() => { gridObserver?.disconnect(); window.removeEventListener('resize', measureGridRows); });
+
 
 /**
  * Renderöidäänkö paneeli ruudukossa. Sama vastaus myös muokkaustilassa: pois
@@ -531,7 +576,7 @@ const isNight = computed(() => {
           class="topbar__settings"
           type="button"
           title="Asetukset"
-          @click="settingsOpen = true"
+          @click="settingsWidget = undefined; settingsOpen = true"
         >
           <!-- Oikea hammasratas: ympyrä ja säteittäiset viivat olisivat aurinko,
                ei ratas — hampaiden pitää olla kehällä, ei siitä ulos osoittavia. -->
@@ -570,7 +615,7 @@ const isNight = computed(() => {
 
     <p v-if="panelLayout.error.value" class="layout-error">{{ panelLayout.error.value }}</p>
 
-    <main ref="gridEl" class="grid" :class="{ 'grid--editing': panelLayout.editing.value }">
+    <main ref="gridEl" class="grid" :style="gridGeometry" :class="{ 'grid--editing': panelLayout.editing.value }">
       <LayoutEditor
         v-if="renders('schedule')"
         class="grid__slot--schedule"
@@ -716,6 +761,7 @@ const isNight = computed(() => {
       :can-preview-schedule="canPreviewSchedule"
       :current-level="currentPinLevel"
       :open="settingsOpen"
+      :widget="settingsWidget"
       @close="settingsOpen = false"
       @saved="refresh"
       @edit-layout="panelLayout.startEditing()"
@@ -744,7 +790,7 @@ const isNight = computed(() => {
     <EditAccessDialog
       :open="editAccessOpen"
       :current-level="currentPinLevel"
-      @close="editAccessOpen = false"
+      @close="editAccessOpen = false; pendingWidget = undefined"
       @authorized="refresh"
     />
 
@@ -754,6 +800,8 @@ const isNight = computed(() => {
 </template>
 
 <style scoped>
+:global(html) { scrollbar-gutter: stable; }
+
 .app {
   /* Ks. style.css:n #app — `100vh` jättää sisällön puhelimen alapalkin alle. */
   height: 100vh;
@@ -1310,28 +1358,13 @@ const isNight = computed(() => {
   display: grid;
   gap: var(--gap);
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  grid-template-rows: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(var(--layout-rows, 8), var(--layout-row-height));
+  grid-auto-rows: var(--layout-row-height);
+  align-content: start;
 }
 
-/*
- * VIERITYSTILA (Settings.gridOverflow === "scroll").
- *
- * Oletustilassa kahdeksan riviä jakaa ruudun korkeuden keskenään, joten kaikki
- * on aina näkyvissä mutta rivi kutistuu sitä matalammaksi mitä enemmän
- * kortteja on. Vieritystilassa rivillä on VÄHIMMÄISKORKEUS: kortit pysyvät
- * luettavina, ja jos ruudukko ei mahdu, sivu vierittyy.
- *
- * Rivimäärä ei muutu (ks. Settings.gridOverflow) — vain rivin korkeuden
- * käytös. Sama asettelu kelpaa siis molemmissa tiloissa, eikä asetuksen
- * vaihtaminen voi hylätä käyttäjän asettelua.
- *
- * YLÄPALKKI ON TARTTUVA, JA SE ON PAKOLLISTA EIKÄ KOSMEETTISTA.
- * KioskExitHotspot elää yläpalkin päivämäärän kohdalla ja on ainoa tapa
- * poistua kioskitilasta. Jos palkki vierittyisi näkyvistä, poistumisalue
- * katoaisi sen mukana ja laitteen saisi auki vain näppäimistöllä tai
- * virtanapista. Tausta on läpinäkymätön samasta syystä: läpikuultavan palkin
- * alta kulkeva kortti tekisi näkymättömästä alueesta sattumanvaraisen.
- */
+/* Vieritystila jatkaa ruudukkoa alaspäin samoilla solumitoilla.
+ * Yläpalkki ja kioskin poistumisalue pysyvät näkyvissä vieritettäessä. */
 .app--scroll {
   height: auto;
   min-height: 100vh;
@@ -1339,7 +1372,7 @@ const isNight = computed(() => {
 }
 
 .app--scroll .grid {
-  grid-template-rows: repeat(8, minmax(5.5rem, auto));
+  flex: none;
 }
 
 .app--scroll .topbar {
@@ -1347,10 +1380,8 @@ const isNight = computed(() => {
   top: 0;
   z-index: 70;
   background: var(--page-bg);
-  /* Palkin oma yläpehmuste tulee .appin täytteestä, joka ei vieritä mukana —
-     ilman tätä kortti kurkistaisi palkin yläpuolelta sitä vieritettäessä. */
-  padding-top: 1.1rem;
-  margin-top: -1.1rem;
+  padding-top: 0;
+  margin-top: 0;
 }
 
 /*

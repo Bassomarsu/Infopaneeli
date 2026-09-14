@@ -1,3 +1,5 @@
+import { newsCategories } from "../core/news-categories.ts";
+import { projectNewsSnapshot } from "../providers/news.ts";
 import { registerWasteRoutes } from "./waste.ts";
 import { projectWasteSnapshot } from "../core/waste-service.ts";
 import { selectedMenuData } from "../providers/menu.ts";
@@ -182,6 +184,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/dashboard", async (request) => {
     const snapshots = registry.snapshots();
+    if (snapshots.news) snapshots.news = projectNewsSnapshot(snapshots.news);
     if (snapshots.waste) snapshots.waste = projectWasteSnapshot(snapshots.waste);
     if (snapshots.menu) snapshots.menu = { ...snapshots.menu, data: selectedMenuData(snapshots.menu.data, getSettings().menuSchoolIds, snapshots.menu.fetchedAt) };
     const local = isTrustedRequest(request);
@@ -333,14 +336,18 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     catch { return reply.code(502).send({error:"Koululuetteloa ei saatu ladattua. Yritä uudelleen."}); }
   });
 
+  app.get("/api/news/categories", async () => ({ categories: newsCategories.map(({id, name}) => ({id, name})) }));
+
   app.get("/api/settings", async () => getSettings());
 
   app.put("/api/settings", async (request, reply) => {
     if (!requireEditAccess(request, reply)) return reply;
     try {
+      const beforeNews = getSettings().newsCategories;
       const before = getSettings().menuSchoolIds;
       const settings = updateSettings(request.body);
       if (JSON.stringify(before) !== JSON.stringify(settings.menuSchoolIds)) void registry.get("menu")?.runOnce();
+      if (JSON.stringify(beforeNews) !== JSON.stringify(settings.newsCategories)) void registry.get("news")?.runOnce();
       return settings;
     } catch (err) {
       if (err instanceof SettingsValidationError) {

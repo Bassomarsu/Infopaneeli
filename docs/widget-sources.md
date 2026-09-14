@@ -4,7 +4,7 @@ Tarkistettu 13.9.2026.
 
 ## Ruokalista
 
-Kortti näyttää asetuksista valittujen koulujen ateriat. Lähde on [kouluruoka.fi](https://kouluruoka.fi/). Asetusten **Ruokalistan koulut** -kohdassa haetaan koulua tai kuntaa ja valitaan enintään kahdeksan listaa. Samalla listalla oleville sisaruksille riittää yksi valinta. Tyhjä valinta ei hae mitään. Version 0.4.0 Karstula-oletus säilyy, kunnes käyttäjä muuttaa sitä.
+Kortti näyttää asetuksista valittujen koulujen ateriat. Lähde on [kouluruoka.fi](https://kouluruoka.fi/). Ruokalistan hammasrattaan **Ruokalistan koulut** -kohdassa haetaan koulua tai kuntaa ja valitaan enintään kahdeksan listaa. Samalla listalla oleville sisaruksille riittää yksi valinta. Tyhjä valinta ei hae mitään. Version 0.4.0 Karstula-oletus säilyy, kunnes käyttäjä muuttaa sitä.
 Sivun oma julkinen Gatsby-aineisto on `https://kouluruoka.fi/page-data/menu/karstula_koulut/page-data.json`; seuraava viikko on saman polun `2/page-data.json`.
 Kouluhakemisto luetaan etusivun page-data/index/page-data.json-tiedoston ilmoittamista staticQueryHashes-kyselyistä. Hash-numeroita ei ole kiinnitetty koodiin. Hakemisto sisältää koulun nimen, kunnan ja lähteen tunnisteen; 13.9.2026 siinä oli 1361 eri listaa. Koulujen viikkopolussa Karstulan tunniste korvataan valitun koulun tunnisteella.
 

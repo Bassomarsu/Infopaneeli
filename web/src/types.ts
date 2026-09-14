@@ -295,6 +295,8 @@ export interface NewsData {
 /** Pidettävä samana kuin server/src/core/settings.ts. */
 export const GRID_COLUMNS = 6;
 export const GRID_ROWS = 8;
+/** Generous safety bound for browser CSS grid tracks, independent of viewport capacity. */
+export const MAX_LAYOUT_ROWS = 10_000;
 
 /**
  * Tätä pienempi paneeli leikkaisi sisältönsä piiloon otsikkoa ja
@@ -568,13 +570,9 @@ export interface Settings {
    */
   hiddenPanels: PanelId[];
   /**
-   * Mahtuuko ruudukko aina ruudulle ("fit", oletus) vai saako se vuotaa
-   * pystysuunnassa jolloin sivu vierittyy ("scroll"). Pidettävä samana kuin
-   * server/src/core/settings.ts:n GridOverflow.
-   *
-   * Rivimäärä on sama molemmissa tiloissa — vain rivin korkeuden käytös
-   * muuttuu. Jos "scroll" sallisi enemmän rivejä, siinä tehty asettelu olisi
-   * kelvoton "fit"-tilassa ja asetuksen vaihtaminen takaisin hylkäisi sen.
+   * "fit" näyttää kahdeksan riviä. "scroll" säilyttää rivien ja korttien
+   * koon, mutta sallii lisärivit alaspäin. Paluu sovitukseen hylätään
+   * tallennusta muuttamatta, jos näkyviä kortteja on kahdeksan rivin alla.
    */
   gridOverflow: GridOverflow;
   alarms: Alarm[];
@@ -588,6 +586,7 @@ export interface Settings {
    */
   weatherPostalCode: string | null;
   menuSchoolIds?: string[];
+  newsCategories?: string[];
 }
 
 export interface Dashboard {

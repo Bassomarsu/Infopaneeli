@@ -3,6 +3,7 @@ import { useEditAccess } from "./useEditAccess.ts";
 import {
   GRID_COLUMNS,
   GRID_ROWS,
+  MAX_LAYOUT_ROWS,
   MIN_PANEL_SPAN,
   PANEL_IDS,
   defaultHiddenPanels,
@@ -72,7 +73,7 @@ function isValidPlacement(value: unknown): value is PanelPlacement {
   }
   const placement = value as PanelPlacement;
   if (placement.col + placement.colSpan - 1 > GRID_COLUMNS) return false;
-  if (placement.row + placement.rowSpan - 1 > GRID_ROWS) return false;
+  if (placement.row > MAX_LAYOUT_ROWS - placement.rowSpan + 1) return false;
   return true;
 }
 
@@ -215,10 +216,11 @@ export function resolveMove(
   pointerRow: number,
   /** Piilotetut paneelit eivät ole ruudulla eivätkä siksi tiellä — ks. visibleIds. */
   hiddenPanels: readonly unknown[] | null | undefined = [],
+  scroll = false,
 ): MoveOutcome {
   const current = layout[id];
 
-  const ownerId = cellOwner(layout, id, clamp(pointerCol, 1, GRID_COLUMNS), clamp(pointerRow, 1, GRID_ROWS), hiddenPanels);
+  const ownerId = cellOwner(layout, id, clamp(pointerCol, 1, GRID_COLUMNS), clamp(pointerRow, 1, scroll ? MAX_LAYOUT_ROWS : GRID_ROWS), hiddenPanels);
   if (ownerId !== null) {
     const owner = layout[ownerId];
     if (!sameSize(owner, current)) {
@@ -231,7 +233,7 @@ export function resolveMove(
   }
 
   const col = clamp(targetCol, 1, GRID_COLUMNS - current.colSpan + 1);
-  const row = clamp(targetRow, 1, GRID_ROWS - current.rowSpan + 1);
+  const row = clamp(targetRow, 1, (scroll ? MAX_LAYOUT_ROWS : GRID_ROWS) - current.rowSpan + 1);
   if (col === current.col && row === current.row) return { layout, rejected: null };
 
   const candidate: PanelPlacement = { ...current, col, row };
@@ -261,10 +263,11 @@ export function resolveResize(
   targetRowSpan: number,
   /** Piilotetut paneelit eivät ole ruudulla eivätkä siksi tiellä — ks. visibleIds. */
   hiddenPanels: readonly unknown[] | null | undefined = [],
+  scroll = false,
 ): PanelLayout {
   const current = layout[id];
   let colSpan = clamp(targetColSpan, MIN_PANEL_SPAN, GRID_COLUMNS - current.col + 1);
-  let rowSpan = clamp(targetRowSpan, MIN_PANEL_SPAN, GRID_ROWS - current.row + 1);
+  let rowSpan = clamp(targetRowSpan, MIN_PANEL_SPAN, (scroll ? MAX_LAYOUT_ROWS : GRID_ROWS) - current.row + 1);
 
   const others = visibleIds(hiddenPanels)
     .filter((otherId) => otherId !== id)
@@ -306,11 +309,17 @@ export function findFreeSpot(
   id: PanelId,
   colSpan: number,
   rowSpan: number,
+  scroll = false,
 ): PanelPlacement | null {
   const others = visibleIds(hiddenPanels)
     .filter((otherId) => otherId !== id)
     .map((otherId) => layout[otherId]);
-  for (let row = 1; row <= GRID_ROWS - rowSpan + 1; row++) {
+  // The first free placement starts at row one or immediately below a panel.
+  // Candidate boundaries avoid scanning empty rows in widely spaced layouts.
+  const rows = [...new Set([1, ...others.map(p => p.row + p.rowSpan)])]
+    .filter(row => row <= (scroll ? MAX_LAYOUT_ROWS : GRID_ROWS) - rowSpan + 1)
+    .sort((a, b) => a - b);
+  for (const row of rows) {
     for (let col = 1; col <= GRID_COLUMNS - colSpan + 1; col++) {
       const candidate: PanelPlacement = { col, row, colSpan, rowSpan };
       if (!others.some((other) => overlaps(candidate, other))) return candidate;
@@ -362,6 +371,7 @@ export function enablePanel(
   layout: PanelLayout,
   hiddenPanels: readonly unknown[] | null | undefined,
   id: PanelId,
+  scroll = false,
 ): EnableOutcome {
   const stored = sanitizeHiddenPanels(hiddenPanels);
   const remaining = stored.filter((entry) => entry !== id);
@@ -372,11 +382,11 @@ export function enablePanel(
     .filter((otherId) => otherId !== id)
     .map((otherId) => layout[otherId]);
 
-  if (!others.some((other) => overlaps(parked, other))) {
+  if ((scroll || parked.row + parked.rowSpan - 1 <= GRID_ROWS) && !others.some((other) => overlaps(parked, other))) {
     return { layout, hiddenPanels: remaining, rejected: null, relocated: false };
   }
 
-  const spot = findFreeSpot(layout, remaining, id, parked.colSpan, parked.rowSpan);
+  const spot = findFreeSpot(layout, remaining, id, parked.colSpan, parked.rowSpan, scroll);
   if (spot === null) {
     return { layout, hiddenPanels: stored, rejected: "no-room", relocated: false };
   }
@@ -414,6 +424,7 @@ export function usePanelLayout(
   settingsHidden: Ref<readonly unknown[] | null | undefined>,
   canEdit: Ref<boolean>,
   onSaved?: () => void,
+  settingsScroll: Ref<boolean> = ref(false),
 ) {
   const editAccess = useEditAccess();
   const editing = ref(false);
@@ -581,7 +592,7 @@ export function usePanelLayout(
 
   function movePanel(id: PanelId, col: number, row: number, pointerCol: number, pointerRow: number): void {
     if (!editing.value) return;
-    const outcome = resolveMove(draft.value, id, col, row, pointerCol, pointerRow, hiddenDraft.value);
+    const outcome = resolveMove(draft.value, id, col, row, pointerCol, pointerRow, hiddenDraft.value, settingsScroll.value);
     draft.value = outcome.layout;
     setNotice(outcome.rejected !== null ? MOVE_REJECTION_MESSAGES[outcome.rejected] : null);
   }
@@ -589,7 +600,7 @@ export function usePanelLayout(
   function resizePanel(id: PanelId, colSpan: number, rowSpan: number): void {
     if (!editing.value) return;
     const before = draft.value[id];
-    const next = resolveResize(draft.value, id, colSpan, rowSpan, hiddenDraft.value);
+    const next = resolveResize(draft.value, id, colSpan, rowSpan, hiddenDraft.value, settingsScroll.value);
     draft.value = next;
 
     // Kahva (LayoutEditor) päästää raa'an, typistämättömän pyynnön asti tänne
@@ -625,7 +636,7 @@ export function usePanelLayout(
    */
   function showPanel(id: PanelId): void {
     if (!editing.value || !hiddenDraft.value.includes(id)) return;
-    const outcome = enablePanel(draft.value, hiddenDraft.value, id);
+    const outcome = enablePanel(draft.value, hiddenDraft.value, id, settingsScroll.value);
     if (outcome.rejected !== null) {
       setNotice(ENABLE_NO_ROOM_MESSAGE);
       return;

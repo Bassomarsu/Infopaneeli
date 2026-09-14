@@ -5,15 +5,19 @@
  * koon muutoskahvan — kortin oma sisältö pysyy koskemattomana, se vain
  * lakkaa reagoimasta kosketukseen niin kauan kuin muokataan.
  */
-import { computed, inject, ref } from "vue";
-import { GRID_COLUMNS, GRID_ROWS, PANEL_TITLES, type PanelId, type PanelPlacement } from "../types";
+import { computed, inject, provide, ref } from "vue";
+import { GRID_COLUMNS, GRID_ROWS, MAX_LAYOUT_ROWS, PANEL_TITLES, type PanelId, type PanelPlacement } from "../types";
 import { panelGridKey } from "../composables/usePanelLayout";
+
+import { widgetPanelKey } from '../composables/widgetSettings';
 
 const props = defineProps<{
   panelId: PanelId;
   placement: PanelPlacement;
   editing: boolean;
 }>();
+
+provide(widgetPanelKey, computed(() => props.panelId));
 
 const emit = defineEmits<{
   /**
@@ -53,13 +57,17 @@ function gridRect(): { rect: DOMRect; w: number; h: number } | null {
   if (!el) return null;
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
-  return { rect, w: rect.width / GRID_COLUMNS, h: rect.height / GRID_ROWS };
+  const style = getComputedStyle(el);
+  const columnGap = parseFloat(style.columnGap) || 0;
+  const rowGap = parseFloat(style.rowGap) || 0;
+  const rowHeight = parseFloat(style.getPropertyValue("--layout-row-height")) || rect.height / GRID_ROWS;
+  return { rect, w: (rect.width + columnGap) / GRID_COLUMNS, h: rowHeight + rowGap };
 }
 
 /** Ruudukon solu suoraan annetun pisteen alla (1-pohjainen, typistetty rajoihin). */
 function pointerCell(event: PointerEvent, size: { rect: DOMRect; w: number; h: number }): { col: number; row: number } {
   const col = clamp(Math.floor((event.clientX - size.rect.left) / size.w) + 1, 1, GRID_COLUMNS);
-  const row = clamp(Math.floor((event.clientY - size.rect.top) / size.h) + 1, 1, GRID_ROWS);
+  const row = clamp(Math.floor((event.clientY - size.rect.top) / size.h) + 1, 1, gridEl.value?.closest(".app--scroll") ? MAX_LAYOUT_ROWS : GRID_ROWS);
   return { col, row };
 }
 
@@ -79,7 +87,7 @@ function onDragDown(event: PointerEvent): void {
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   dragPointerId = event.pointerId;
   dragOriginX = event.clientX;
-  dragOriginY = event.clientY;
+  dragOriginY = event.clientY + window.scrollY;
   dragStartCol = props.placement.col;
   dragStartRow = props.placement.row;
   lastMoveCol = dragStartCol;
@@ -90,12 +98,13 @@ function onDragDown(event: PointerEvent): void {
 
 function onDragMove(event: PointerEvent): void {
   if (dragPointerId !== event.pointerId) return;
+  if (gridEl.value?.closest(".app--scroll") && event.clientY > window.innerHeight - 70) window.scrollBy(0, 30);
   const size = gridRect();
   if (!size) return;
   const deltaCol = Math.round((event.clientX - dragOriginX) / size.w);
-  const deltaRow = Math.round((event.clientY - dragOriginY) / size.h);
+  const deltaRow = Math.round((event.clientY + window.scrollY - dragOriginY) / size.h);
   const col = clamp(dragStartCol + deltaCol, 1, GRID_COLUMNS);
-  const row = clamp(dragStartRow + deltaRow, 1, GRID_ROWS);
+  const row = clamp(dragStartRow + deltaRow, 1, gridEl.value?.closest(".app--scroll") ? MAX_LAYOUT_ROWS : GRID_ROWS);
   const pointer = pointerCell(event, size);
   if (col === lastMoveCol && row === lastMoveRow && pointer.col === lastPointerCol && pointer.row === lastPointerRow) {
     return;
@@ -128,7 +137,7 @@ function onResizeDown(event: PointerEvent): void {
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   resizePointerId = event.pointerId;
   resizeOriginX = event.clientX;
-  resizeOriginY = event.clientY;
+  resizeOriginY = event.clientY + window.scrollY;
   resizeStartColSpan = props.placement.colSpan;
   resizeStartRowSpan = props.placement.rowSpan;
   lastColSpan = resizeStartColSpan;
@@ -141,13 +150,13 @@ function onResizeMove(event: PointerEvent): void {
   const size = gridRect();
   if (!size) return;
   const deltaCol = Math.round((event.clientX - resizeOriginX) / size.w);
-  const deltaRow = Math.round((event.clientY - resizeOriginY) / size.h);
+  const deltaRow = Math.round((event.clientY + window.scrollY - resizeOriginY) / size.h);
   // Typistetään vain ruudukon ulkorajaan, EI MIN_PANEL_SPANiin: raaka pyyntö
   // päästetään läpi asti usePanelLayoutiin asti, jotta se voi näyttää
   // "Pienin koko on..." -vihjeen kun käyttäjä yrittää kutistaa liikaa.
   // Typistäminen tässä jo piilottaisi sen yrityksen kokonaan.
   const colSpan = clamp(resizeStartColSpan + deltaCol, 1, GRID_COLUMNS);
-  const rowSpan = clamp(resizeStartRowSpan + deltaRow, 1, GRID_ROWS);
+  const rowSpan = clamp(resizeStartRowSpan + deltaRow, 1, gridEl.value?.closest(".app--scroll") ? MAX_LAYOUT_ROWS : GRID_ROWS);
   if (colSpan === lastColSpan && rowSpan === lastRowSpan) return;
   lastColSpan = colSpan;
   lastRowSpan = rowSpan;

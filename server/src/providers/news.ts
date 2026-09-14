@@ -23,7 +23,8 @@
  *
  * XML puretaan tässä tiedostossa ilman uutta riippuvuutta, ks. parseNewsFeed.
  */
-import { Provider } from "../core/provider.ts";
+import { newsCategories } from "../core/news-categories.ts";
+import { Provider, type ProviderSnapshot } from "../core/provider.ts";
 import { getSettings } from "../core/settings.ts";
 
 /**
@@ -32,11 +33,10 @@ import { getSettings } from "../core/settings.ts";
  *
  * Vakio eikä ympäristömuuttuja, samoin kuin Open-Meteon ja porssisahko.netin
  * osoitteet omissa providereissaan: asennus ei kysy tästä mitään eikä
- * oletuksen muuttamiselle ole käyttötapausta, jota ei ratkaisisi yhden rivin
- * muokkaus. Maakuntasyöte on saman muotoinen, esim.
- * https://yle.fi/rss/uutiset/alueet/keski-suomi — jäsennin ei välitä kummasta.
+ * aihealueiden osoitteet ovat virallisesta RSS-hakemistosta
+ * core/news-categories.ts-tiedostossa.
  */
-const FEED_URL = "https://yle.fi/rss/uutiset/paauutiset";
+
 
 /**
  * Syötteen oma `ttl` on 5 minuuttia, mutta tämä on seinänäyttö jota katsotaan
@@ -77,6 +77,7 @@ export interface NewsItem {
 
 export interface NewsData {
   items: NewsItem[];
+  categories?: string[];
 }
 
 /**
@@ -402,7 +403,26 @@ async function fetchNews(): Promise<NewsData> {
     networkAttemptsWhileHidden++;
   }
 
-  const response = await fetch(FEED_URL, {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const categories = [...getSettings().newsCategories];
+    let feeds: NewsItem[][];
+    try { feeds = await Promise.all(categories.map(id => fetchNewsCategory(id))); }
+    catch (error) {
+      if (categoryKey(categories) !== categoryKey(getSettings().newsCategories)) continue;
+      throw error;
+    }
+    if (categoryKey(categories) !== categoryKey(getSettings().newsCategories)) continue;
+    const items = [...new Map(feeds.flat().map(item => [item.id, item])).values()]
+      .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, MAX_ITEMS);
+    return { items, categories };
+  }
+  throw new Error("Uutisvalinnat muuttuivat haun aikana. Yritetään uudelleen.");
+}
+
+async function fetchNewsCategory(id: string): Promise<NewsItem[]> {
+  const url = newsCategories.find(category => category.id === id)?.url;
+  if (!url) throw new Error("Tuntematon uutiskategoria");
+  const response = await fetch(url, {
     headers: { accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8" },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
@@ -429,7 +449,7 @@ async function fetchNews(): Promise<NewsData> {
     throw new Error("Ylen uutissyötteestä ei löytynyt yhtään juttua");
   }
 
-  return { items };
+  return items;
 }
 
 export function createNewsProvider(): Provider<NewsData> {
@@ -440,8 +460,18 @@ export function createNewsProvider(): Provider<NewsData> {
     // 10 s, Päikky 15 s): uutiset ovat näistä se, jonka viivästyminen
     // muutamalla sekunnilla käynnistyksessä haittaa vähiten.
     initialDelayMs: 20_000,
-    timeoutMs: 30_000,
+    timeoutMs: 70_000,
     shouldRun: shouldFetchNews,
     fetch: fetchNews,
   });
+}
+
+function categoryKey(ids: string[]): string { return [...ids].sort().join(","); }
+
+/** Vanhan valinnan otsikoita ei esitetä uuden valinnan tuloksena. */
+export function projectNewsSnapshot(snapshot: ProviderSnapshot<unknown>): ProviderSnapshot<unknown> {
+  const data = snapshot.data as NewsData | null;
+  const selected = getSettings().newsCategories;
+  if (!data || categoryKey(data.categories ?? ["paauutiset"]) === categoryKey(selected)) return snapshot;
+  return { ...snapshot, data: null, fetchedAt: null, status: snapshot.status === "failed" || snapshot.status === "stale" ? "failed" : "idle" };
 }

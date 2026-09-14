@@ -364,3 +364,50 @@ console.log("ok  null palauttaa koko oletusasettelun");
   }
   console.log("ok  kaikkien 12 paneelin 132 paikanvaihtoa ja kasvun esto ilman piilotuksia");
 }
+
+// Scroll adds space without resizing or moving existing panels.
+{
+  const { enablePanel } = await import('../src/composables/usePanelLayout.ts');
+  let layout = structuredClone(defaultPanelLayout);
+  let hidden = [...defaultHiddenPanels];
+  for (const id of defaultHiddenPanels) {
+    const before = structuredClone(layout);
+    const outcome = enablePanel(layout, hidden, id, true);
+    assert.equal(outcome.rejected, null);
+    assert.equal(outcome.layout[id].rowSpan, before[id].rowSpan);
+    assert.equal(outcome.layout[id].colSpan, before[id].colSpan);
+    for (const other of PANEL_IDS.filter(p => p !== id)) assert.deepEqual(outcome.layout[other], before[other]);
+    layout = outcome.layout; hidden = outcome.hiddenPanels;
+  }
+  assert.equal(hidden.length, 0);
+  assert.ok(Object.values(layout).some(p => p.row > GRID_ROWS));
+  assertNoOverlaps(layout, 'scroll all panels', []);
+  assert.deepEqual(mergeWithDefaults(layout), layout, 'reload preserves extended rows');
+  const moved = resolveMove(layout, 'waste', 1, 100, 1, 100, [], true);
+  assert.equal(moved.layout.waste.row, 100);
+  const grown = resolveResize(moved.layout, 'waste', 2, 6, [], true);
+  assert.equal(grown.waste.rowSpan, 6);
+  assert.deepEqual(grown.weather, layout.weather);
+  console.log('ok  scroll enables every panel unchanged, persists extra rows and moves/resizes below row eight');
+}
+
+{
+  const { findFreeSpot } = await import('../src/composables/usePanelLayout.ts');
+  const layout = structuredClone(defaultPanelLayout);
+  layout.schedule = {col:1,row:1,colSpan:6,rowSpan:8_000};
+  const hidden = PANEL_IDS.filter(id => id !== 'schedule');
+  const spot = findFreeSpot(layout, hidden, 'waste', 2, 2, true);
+  assert.deepEqual(spot, {col:1,row:8_001,colSpan:2,rowSpan:2});
+  console.log('ok  sparse tall layouts locate the next free boundary directly');
+}
+
+{
+ const layout = structuredClone(defaultPanelLayout);
+ layout.waste = {col:1,row:9999,colSpan:2,rowSpan:2};
+ const hidden = PANEL_IDS.filter(id => id !== 'waste');
+ const moved=resolveMove(layout,'waste',1,100000,1,100000,hidden,true);
+ assert.equal(moved.layout.waste.row,9999);
+ layout.waste.row=10000;
+ assert.deepEqual(mergeWithDefaults(layout).waste,defaultPanelLayout.waste);
+ console.log('ok  browser grid track safety limit rejects overflow without clipping stored cards');
+}

@@ -9,7 +9,7 @@
 import "./test-env.ts";
 import assert from "node:assert/strict";
 import { Provider } from "../src/core/provider.ts";
-import { createNewsProvider, parseNewsFeed, resetHiddenFetchGuard, shouldFetchNews } from "../src/providers/news.ts";
+import { createNewsProvider, projectNewsSnapshot, parseNewsFeed, resetHiddenFetchGuard, shouldFetchNews } from "../src/providers/news.ts";
 import { defaultHiddenPanels, updateSettings } from "../src/core/settings.ts";
 import { db, writeCache } from "../src/core/store.ts";
 
@@ -564,3 +564,50 @@ await testHiddenCardMakesAtMostOneNetworkAttempt();
 await testHiddenCardWithCachedDataMakesNoRequests();
 
 console.log("\nuutissyötteen jäsennys ok");
+
+async function testCategorySelection(): Promise<void> {
+  const realFetch = globalThis.fetch;
+  db.exec("DELETE FROM provider_cache WHERE id = 'news'");
+  updateSettings({ newsCategories: ["kotimaa", "urheilu", "kotimaa"] });
+  assert.throws(() => updateSettings({newsCategories: []}));
+  assert.throws(() => updateSettings({newsCategories: ["https://evil.example"]}));
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    urls.push(String(url));
+    return new Response(REAL_SAMPLE, {status:200});
+  }) as typeof fetch;
+  const provider = createNewsProvider();
+  try {
+    await provider.runOnce();
+    assert.equal(urls.length, 2, "päällekkäinen kategoria haetaan vain kerran");
+    assert.ok(urls.includes("https://yle.fi/rss/t/18-34837/fi"));
+    assert.ok(urls.includes("https://yle.fi/rss/urheilu"));
+    const snapshot = provider.snapshot();
+    assert.equal(snapshot.data?.items.length, 2, "sama juttu eri kategorioissa yhdistetään");
+    assert.ok(snapshot.data!.items[0]!.publishedAt > snapshot.data!.items[1]!.publishedAt);
+    updateSettings({newsCategories: ["keski-suomi"]});
+    assert.equal(projectNewsSnapshot(snapshot).data, null, "vanhat kategoriat eivät näy uusina");
+    globalThis.fetch = (async () => {throw new Error("katkos");}) as typeof fetch;
+    await provider.runOnce();
+    const failed = projectNewsSnapshot(provider.snapshot());
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.data, null);
+    assert.equal(failed.fetchedAt, null);
+    globalThis.fetch = (async () => new Response(REAL_SAMPLE)) as typeof fetch;
+    await provider.runOnce();
+    assert.equal(projectNewsSnapshot(provider.snapshot()).status,"ok");
+    let changed = false;
+    globalThis.fetch = (async () => {
+      if (!changed) { changed = true; updateSettings({newsCategories:["talous"]}); throw new Error("vanha syöte epäonnistuu"); }
+      return new Response(REAL_SAMPLE);
+    }) as typeof fetch;
+    await provider.runOnce();
+    assert.deepEqual(provider.snapshot().data?.categories, ["talous"], "kesken haun vaihdettu valinta haetaan samalla kierroksella myös vanhan haun epäonnistuessa");
+  } finally {
+    provider.stop(); globalThis.fetch = realFetch;
+    updateSettings({newsCategories:["paauutiset"]});
+    db.exec("DELETE FROM provider_cache WHERE id = 'news'");
+  }
+  console.log("ok  kategoriavalinta, yhdistäminen, järjestys, välimuisti ja kesken haun muuttuva valinta");
+}
+await testCategorySelection();
