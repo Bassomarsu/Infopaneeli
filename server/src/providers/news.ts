@@ -388,6 +388,29 @@ export function resetHiddenFetchGuard(): void {
   networkAttemptsWhileHidden = 0;
 }
 
+/**
+ * MIKSI AIHEALUEET HAETAAN RINNAKKAIN EIKÄ SARJASSA.
+ *
+ * Alkuperäinen määrittely pyysi sarjassa hakemista kohteliaisuudesta lähdettä
+ * kohtaan. Sitä ei tehdä, ja syy on mitattavissa eikä makuasia:
+ *
+ *   - Kohteliaisuus on pyyntöjen TAHTI, ei rinnakkaisuus. Katto on 8
+ *     aihealuetta ja kierros on 15 minuutin välein, eli enintään 32 pyyntöä
+ *     tunnissa kumpanakin tapana. Sarja ei vähennä yhtäkään pyyntöä; se vain
+ *     levittää samat pyynnöt pidemmälle. Kahdeksan rinnakkaista pyyntöä
+ *     vartissa ei ole kuorma yhdellekään CDN:lle.
+ *
+ *   - Sarja rikkoisi juuri sen takuun, jonka vuoksi `allSettled` otettiin
+ *     käyttöön. Yksi HTTP-haku saa kestää HTTP_TIMEOUT_MS = 15 s, ja koko
+ *     kierroksen katto on providerin `timeoutMs` = 70 s. Kahdeksan peräkkäistä
+ *     jumittunutta hakua on 8 × 15 s = 120 s > 70 s, jolloin providerin oma
+ *     aikakatkaisu laukeaa ja HYLKÄÄ KOKO KIERROKSEN — myös ne aihealueet,
+ *     jotka ehtivät palauttaa kelvollisia juttuja. Rinnakkain pahin tapaus on
+ *     15 s, reilusti katon alla.
+ *
+ * Jos sarja joskus halutaan, `timeoutMs` on nostettava samalla yli
+ * 8 × HTTP_TIMEOUT_MS:n — muuten osittainen onnistuminen katoaa hiljaisesti.
+ */
 async function fetchNews(): Promise<NewsData> {
   if (shouldFetchNews()) {
     networkAttemptsWhileHidden = 0;
@@ -405,13 +428,30 @@ async function fetchNews(): Promise<NewsData> {
 
   for (let attempt = 0; attempt < 4; attempt++) {
     const categories = [...getSettings().newsCategories];
-    let feeds: NewsItem[][];
-    try { feeds = await Promise.all(categories.map(id => fetchNewsCategory(id))); }
-    catch (error) {
-      if (categoryKey(categories) !== categoryKey(getSettings().newsCategories)) continue;
-      throw error;
-    }
+    // `allSettled` eikä `all`: yhden aihealueen kaatuminen ei saa viedä
+    // muiden juttuja mukanaan. Mitattuna vanhalla `Promise.all`illa: kun
+    // kahdesta valitusta aihealueesta toinen kaatui, kortti jäi kylmällä
+    // käynnistyksellä TYHJÄKSI (status `failed`) vaikka toinen oli palauttanut
+    // kelvollisia juttuja, ja lämpimällä välimuistilla se näytti vanhaa dataa.
+    const settled = await Promise.allSettled(categories.map(id => fetchNewsCategory(id)));
     if (categoryKey(categories) !== categoryKey(getSettings().newsCategories)) continue;
+    const feeds = settled.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+
+    // Sama sääntö kuin ruokalistaproviderissa: virhe nousee ylös vasta kun
+    // JOKAINEN valittu syöte epäonnistui. Vasta silloin providerin
+    // perääntyminen, katkaisija ja lokitus kuuluvat laueta.
+    if (categories.length && !feeds.length) {
+      const reasons = [...new Set(settled.flatMap(result =>
+        result.status === "rejected" ? [result.reason instanceof Error ? result.reason.message : String(result.reason)] : []))];
+      if (categories.length === 1) throw new Error(reasons[0] ?? "Ylen uutissyötteen haku epäonnistui");
+      throw new Error(`Yhdenkään valitun uutissyötteen haku ei onnistunut: ${reasons.join(" / ")}`);
+    }
+
+    // Yhdistäminen koskee VAIN jo hyväksyttyjä juttuja: jokainen turvatarkistus
+    // (vain https, isäntä yle.fi tai *.yle.fi, lineaarinen jäsennin, tavukatto)
+    // tehdään syötekohtaisesti fetchNewsCategoryssa, eikä tässä ole polkua joka
+    // ohittaisi ne. Kaksoiskappaleet pois `guid`illa, järjestys julkaisuajan
+    // mukaan, katto MAX_ITEMS — kuten ennenkin.
     const items = [...new Map(feeds.flat().map(item => [item.id, item])).values()]
       .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, MAX_ITEMS);
     return { items, categories };

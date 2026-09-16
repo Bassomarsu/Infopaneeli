@@ -611,3 +611,87 @@ async function testCategorySelection(): Promise<void> {
   console.log("ok  kategoriavalinta, yhdistäminen, järjestys, välimuisti ja kesken haun muuttuva valinta");
 }
 await testCategorySelection();
+
+/**
+ * YHDEN SYÖTTEEN KATKO EI SAA TYHJENTÄÄ KORTTIA — eikä kaikkien syötteiden
+ * katko saa jäädä huomaamatta. Sama virheraja kuin ruokalistaproviderilla,
+ * testattuna molempiin suuntiin.
+ *
+ * Vanhalla `Promise.all`illa ensimmäinen tapaus jäi kylmällä käynnistyksellä
+ * tilaan `failed` ja kortti tyhjäksi, vaikka toinen aihealue oli palauttanut
+ * kelvollisia juttuja.
+ */
+function oneItemFeed(id: string, link = `https://yle.fi/a/${id}?origin=rss`): string {
+  return `<rss version="2.0"><channel><title>Yle</title><item><title>Juttu ${id}</title>` +
+    `<link>${link}</link><guid isPermaLink="false">https://yle.fi/a/${id}</guid>` +
+    `<pubDate>Sat, 12 Sep 2026 09:00:00 +0300</pubDate></item></channel></rss>`;
+}
+
+async function testOneFeedDownDoesNotEmptyTheCard(): Promise<void> {
+  const realFetch = globalThis.fetch;
+  db.exec("DELETE FROM provider_cache WHERE id = 'news'");
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
+  resetHiddenFetchGuard();
+  updateSettings({ newsCategories: ["kotimaa", "urheilu"] });
+  let everythingDown = false;
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    if (everythingDown || String(url).includes("urheilu")) return new Response("<html>virhe</html>", { status: 503 });
+    // Sama syöte sisältää myös luvattoman linkin: yhdistämisvaihe ei saa
+    // päästää sitä läpi, vaikka se tulee onnistuneesta syötteestä.
+    return new Response(oneItemFeed("74-1") .replace("</channel>",
+      `<item><title>Väärennös</title><link>https://evil.example/a/1</link>` +
+      `<guid isPermaLink="false">https://evil.example/a/1</guid>` +
+      `<pubDate>Sat, 12 Sep 2026 12:00:00 +0300</pubDate></item></channel>`));
+  }) as typeof fetch;
+  const provider = createNewsProvider();
+  try {
+    await provider.runOnce();
+    let snapshot = provider.snapshot();
+    assert.equal(snapshot.status, "ok", "yksi toimiva syöte riittää onnistuneeseen kierrokseen");
+    assert.equal(snapshot.error, null);
+    assert.deepEqual(snapshot.data?.items.map(item => item.id), ["https://yle.fi/a/74-1"],
+      "toimivan syötteen jutut näkyvät, luvaton linkki ei");
+    assert.deepEqual(snapshot.data?.categories, ["kotimaa", "urheilu"]);
+
+    everythingDown = true;
+    await provider.runOnce();
+    snapshot = provider.snapshot();
+    assert.equal(snapshot.status, "stale", "aiemmat otsikot jäävät ruudulle");
+    assert.match(snapshot.error!.message, /Yhdenkään valitun uutissyötteen haku ei onnistunut/);
+    assert.match(snapshot.error!.message, /503/);
+  } finally {
+    provider.stop();
+    globalThis.fetch = realFetch;
+    updateSettings({ newsCategories: ["paauutiset"] });
+    db.exec("DELETE FROM provider_cache WHERE id = 'news'");
+  }
+  console.log("ok  yhden syötteen katko ei tyhjennä korttia, kaikkien katko nostaa virheen");
+}
+await testOneFeedDownDoesNotEmptyTheCard();
+
+async function testEveryFeedDownOnColdStartFails(): Promise<void> {
+  const realFetch = globalThis.fetch;
+  db.exec("DELETE FROM provider_cache WHERE id = 'news'");
+  updateSettings({ hiddenPanels: [...defaultHiddenPanels] });
+  resetHiddenFetchGuard();
+  updateSettings({ newsCategories: ["kotimaa", "urheilu"] });
+  globalThis.fetch = (async (url: string | URL | Request) =>
+    new Response(null, { status: String(url).includes("urheilu") ? 500 : 503 })) as typeof fetch;
+  const provider = createNewsProvider();
+  try {
+    await provider.runOnce();
+    const snapshot = provider.snapshot();
+    assert.equal(snapshot.status, "failed", "kylmällä käynnistyksellä täysi katko on failed, ei ok");
+    assert.equal(snapshot.data, null);
+    // Molempien syiden on näyttävä: muuten lokista ei näe kumpi syöte kaatui.
+    assert.match(snapshot.error!.message, /503/);
+    assert.match(snapshot.error!.message, /500/);
+  } finally {
+    provider.stop();
+    globalThis.fetch = realFetch;
+    updateSettings({ newsCategories: ["paauutiset"] });
+    db.exec("DELETE FROM provider_cache WHERE id = 'news'");
+  }
+  console.log("ok  kaikkien syötteiden katko näkyy providerin tilassa ja virheviestissä");
+}
+await testEveryFeedDownOnColdStartFails();

@@ -14,7 +14,15 @@ export function parseMenuSchools(body: unknown): MenuSchoolOption[] {
  return [...found.values()].sort((a,b)=>(a.city+' '+a.name).localeCompare(b.city+' '+b.name,'fi'));
 }
 export async function fetchMenuSchools(fetcher:typeof fetch=fetch):Promise<MenuSchoolOption[]> {
- async function json(url:string){const r=await fetcher(url,{signal:AbortSignal.timeout(15000),headers:{accept:'application/json'}});if(!r.ok)throw Error('Koululuettelon haku epäonnistui');return r.json();}
+ // Sama kokoraja kuin news.ts:llä ja providers/menu.ts:llä, samasta syystä:
+ // hakemisto oli 311 kt 16.9.2026, mutta rajaton `r.json()` puskuroisi mitä
+ // tahansa mitä osoitteen takaa vastataankin — ja tämä haetaan kymmenelle
+ // hash-osoitteelle kerralla, joten katto on per vastaus.
+ const LIMIT=4*1024*1024;
+ async function json(url:string){const r=await fetcher(url,{signal:AbortSignal.timeout(15000),headers:{accept:'application/json'}});if(!r.ok)throw Error('Koululuettelon haku epäonnistui');
+  if(Number(r.headers.get('content-length'))>LIMIT){await r.body?.cancel();throw Error('Koululuettelo on odottamattoman suuri');}
+  const body=await r.text();if(body.length>LIMIT)throw Error('Koululuettelo on odottamattoman suuri');
+  try{return JSON.parse(body) as unknown;}catch{throw Error('Koululuetteloa ei voi lukea');}}
  const index=await json('https://kouluruoka.fi/page-data/index/page-data.json') as {staticQueryHashes?:unknown};
  if(!Array.isArray(index.staticQueryHashes)||index.staticQueryHashes.length>10)throw Error('Koululuettelon rakenne muuttui');
  const results=await Promise.all(index.staticQueryHashes.map(async hash=>{

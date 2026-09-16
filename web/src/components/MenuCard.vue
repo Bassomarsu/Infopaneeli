@@ -7,16 +7,46 @@ import type { MenuCollection } from "../publicWidgets.ts";
 const props = defineProps<{ snapshot?: ProviderSnapshot<MenuCollection>; selectedIds: string[]; linkable?: boolean }>();
 const { now } = useClock();
 const today = computed(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Helsinki" }).format(now.value));
+/**
+ * Luettava nimi koulutunnisteesta, kun lähde ei ole ehtinyt kertoa oikeaa.
+ * Yleinen muunnos eikä pelkkä Karstulan erikoistapaus, koska kortilla voi olla
+ * kahdeksan eri koulua: `porin_lyseo` -> "Porin lyseo".
+ */
+function fallbackName(id: string): string {
+  if (id === "karstula_koulut") return "Karstulan koulut";
+  const pretty = id.replace(/[_-]+/g, " ").trim();
+  return pretty ? pretty[0]!.toUpperCase() + pretty.slice(1) : id;
+}
 const schools = computed(() => props.selectedIds.map(id => {
   const school = props.snapshot?.data?.schools?.find(s => s.locationId === id);
-  return school ?? { locationId: id, locationName: id === "karstula_koulut" ? "Karstulan koulut" : id, sourceUrl: "", days: [], status: "loading" as const, error: null, fetchedAt: null };
+  const base = school ?? { locationId: id, locationName: id, sourceUrl: "", days: [], status: "loading" as const, error: null, fetchedAt: null };
+  // Varanimi pätee MYÖS silloin kun kouluolio on olemassa mutta palvelin ei
+  // ole saanut lähteestä nimeä: selectedMenuData täyttää silloin
+  // `locationName`in tunnisteella, ja ilman tätä kortilla luki raaka
+  // `karstula_koulut` aina kun ensihaku epäonnistui ilman välimuistia.
+  return base.locationName && base.locationName !== id ? base : { ...base, locationName: fallbackName(id) };
 }));
 function label(date: string): string {
   return (date === today.value ? "Tänään · " : "") + new Intl.DateTimeFormat("fi-FI", { weekday: "short", day: "numeric", month: "numeric", timeZone: "UTC" }).format(new Date(date));
 }
 </script>
 <template>
-  <CardShell title="Ruokalista" accent="var(--accent-calendar)" status="ok" note="kouluruoka.fi">
+  <!--
+    Tila tulee providerilta eikä ole kiinteä "ok". Kiinteänä kortti väitti
+    ruokalistaa tuoreeksi silloinkin kun haku oli ollut poikki päiviä: nyt
+    kaikkien koulujen kaatuminen nostaa virheen providerille asti (ks.
+    providers/menu.ts), ja CardShell näyttää sen samalla tavalla kuin muillakin
+    korteilla — "vanhentunut" vanhan listan päällä tai "Tietoja ei saatu" kun
+    mitään näytettävää ei ole.
+  -->
+  <CardShell
+    title="Ruokalista"
+    accent="var(--accent-calendar)"
+    :status="snapshot?.status"
+    :fetched-at="snapshot?.fetchedAt"
+    :error="snapshot?.error"
+    note="kouluruoka.fi"
+  >
     <div class="menu">
       <p v-if="!selectedIds.length" class="hint">Valitse lasten koulut asetusten kohdasta Ruokalistan koulut.</p>
       <section v-for="school in schools" :key="school.locationId" class="school">
