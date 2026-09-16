@@ -1,9 +1,18 @@
 import type { FastifyInstance } from "fastify";
 import { requireEditAccess } from "./access.ts";
-import { deleteHousehold, readHousehold, saveHousehold } from "../core/household.ts";
+import { clearDoneShopping, deleteHousehold, readHousehold, saveHousehold } from "../core/household.ts";
 
 export function registerHouseholdRoutes(app: FastifyInstance): void {
   app.get("/api/household", async () => readHousehold());
+  /**
+   * Tehtyjen tyhjennys yhdellä pyynnöllä. Staattinen `/done` voittaa Fastifyn
+   * reitityksessä saman tason `/:id`-parametrin, eikä se voi peittää oikeaa
+   * merkintää: tunnisteet ovat randomUUID-muotoisia.
+   */
+  app.delete("/api/household/shopping/done", async (request, reply) => {
+    if (!requireEditAccess(request, reply)) return reply;
+    return reply.send({ removed: clearDoneShopping() });
+  });
   for (const kind of ["waste", "shopping", "seasonal", "anniversaries"] as const) {
     for (const method of ["POST", "PATCH"] as const) {
       app.route<{ Params: { id?: string } }>({ method, url: `/api/household/${kind}${method === "PATCH" ? "/:id" : ""}`, handler: async (request, reply) => {

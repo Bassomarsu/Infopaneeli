@@ -32,8 +32,51 @@ export async function fetchMenuSchools(fetcher:typeof fetch=fetch):Promise<MenuS
  const schools=[...new Map(results.flat().map(s=>[s.id,s])).values()];
  if(!schools.length)throw Error('Koululuettelo puuttuu');return schools;
 }
-let cache:MenuSchoolOption[]|undefined;let expires=0;let pending:Promise<MenuSchoolOption[]>|undefined;
-export function getMenuSchools():Promise<MenuSchoolOption[]> {
- if(cache&&Date.now()<expires)return Promise.resolve(cache);
- return pending??=fetchMenuSchools().then(s=>{cache=s;expires=Date.now()+6*60*60*1000;return s;}).finally(()=>{pending=undefined;});
+/**
+ * VÄLIMUISTI KOSKEE MYÖS EPÄONNISTUMISTA.
+ *
+ * Reitti `/api/menu-schools` on tunnistautumaton, ja yksi onnistunut haku on
+ * 1 + N pyyntöä ja satoja kilotavuja kouluruoka.fi:ltä (306 kt / 11 pyyntöä
+ * 16.9.2026). Ennen tätä VAIN onnistuminen muistettiin: kun lähde oli nurin,
+ * viisi peräkkäistä pyyntöä teki viisi täyttä kierrosta ylävirtaan — mitattu.
+ * Silmukointi oli siis kutsujalle ilmaista ja lähteelle kallista, ja juuri
+ * epäonnistuva lähde on se tilanne jossa sitä vähiten kestää.
+ *
+ * Kolme suojaa yhdessä:
+ *  - onnistuminen muistetaan vuorokauden. Hakemisto muuttuu lukukausien
+ *    rajoilla, ei tunneittain (1361 listaa 13.9.2026), joten tuoreempi tieto
+ *    ei ole minkään arvoinen suhteessa sen hintaan.
+ *  - epäonnistuminen muistetaan viisi minuuttia. Lyhyempi kuin onnistuminen,
+ *    koska ohimenevä katko ei saa jäädä päiväksi päälle — mutta riittävä
+ *    katkaisemaan tiukan silmukan enintään 12 kierrokseen tunnissa.
+ *  - lennossa on korkeintaan yksi haku; rinnakkaiset pyynnöt odottavat sitä.
+ *
+ * `requireEditAccess`ia EI vaadita, tietoisesti. Hakemisto on julkisen
+ * sivuston julkista tietoa (koulun nimi ja kunta) eikä kuulu
+ * SENSITIVE_PROVIDERSiin, joten tunnistautuminen ei suojaisi mitään
+ * arkaluontoista. Perusteltu haitta on ylävirran kuorma, ja sen leikkaa
+ * välimuisti — tunnistautuneenakin silmukoiva laite saisi täsmälleen saman
+ * määrän kierroksia läpi. Vaatimus taas rikkoisi koulunvalitsimen jokaiselta
+ * laitteelta joka ei ole avannut lukkoa, ja ohjaisi tunnistautumattomat
+ * pyynnöt jaettuun PIN-yritysrajoittimeen, joka suojaa FULL_PINiä.
+ *
+ * `now` ja `fetcher` ovat injektoitavissa vain testejä varten; reitti kutsuu
+ * ilman argumentteja.
+ */
+const OK_TTL = 24 * 60 * 60 * 1000;
+const FAIL_TTL = 5 * 60 * 1000;
+let cache:MenuSchoolOption[]|undefined; let cacheExpires=0;
+let failure:Error|undefined; let failureExpires=0;
+let pending:Promise<MenuSchoolOption[]>|undefined;
+export function getMenuSchools(fetcher:typeof fetch=fetch, now:()=>number=Date.now):Promise<MenuSchoolOption[]> {
+ if(cache&&now()<cacheExpires)return Promise.resolve(cache);
+ if(failure&&now()<failureExpires)return Promise.reject(failure);
+ return pending??=fetchMenuSchools(fetcher).then(schools=>{
+   cache=schools;cacheExpires=now()+OK_TTL;failure=undefined;failureExpires=0;return schools;
+  },error=>{
+   // Sama virheolio palautetaan koko negatiivisen jakson ajan: pino säilyy
+   // siitä hausta joka oikeasti kaatui, eikä jokaiselle torjutulle pyynnölle
+   // tarvitse keksiä uutta.
+   failure=error instanceof Error?error:new Error(String(error));failureExpires=now()+FAIL_TTL;throw failure;
+  }).finally(()=>{pending=undefined;});
 }

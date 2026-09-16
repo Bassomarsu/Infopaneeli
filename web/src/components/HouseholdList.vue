@@ -19,7 +19,13 @@ function save() { const body:Record<string,unknown>=props.kind==='shopping' ? {t
 </script>
 <template>
  <div class="household">
-  <button v-if="canEdit && !open" @click="edit()" :disabled="busy">Lisää</button>
+  <div v-if="canEdit && !open" class="actions">
+   <button @click="edit()" :disabled="busy">Lisää</button>
+   <template v-if="kind==='shopping' && rows.some(row=>row.done)">
+    <template v-if="deleting==='done'"><span>Poistetaanko tehdyt?</span><button :disabled="busy" @click="run('DELETE',undefined,'done')">Kyllä, tyhjennä</button><button :disabled="busy" @click="deleting=null">Peruuta</button></template>
+    <button v-else :disabled="busy" @click="deleting='done'">Tyhjennä tehdyt</button>
+   </template>
+  </div>
   <p v-if="!canEdit" class="hint">Muokkaa avaamalla lukko yläpalkista.</p>
   <p v-if="error" role="alert" class="error">{{error}}</p>
   <form v-if="open && canEdit" @submit.prevent="save">

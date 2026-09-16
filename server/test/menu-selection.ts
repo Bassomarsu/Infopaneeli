@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { parseMenuSchoolIds, getSettings, updateSettings } from '../src/core/settings.ts';
 import { fetchSelectedMenus, selectedMenuData } from '../src/providers/menu.ts';
-import { parseMenuSchools, fetchMenuSchools } from '../src/core/menu-schools.ts';
+import { parseMenuSchools, fetchMenuSchools, getMenuSchools } from '../src/core/menu-schools.ts';
 import { registerApiRoutes } from '../src/routes/api.ts';
 const now=new Date('2026-12-29T12:00:00Z');
 const page=(id:string)=>({result:{pageContext:{menu:{RestaurantId:id,RestaurantName:'Koulu '+id,Start:'2026-12-28',Days:[{Date:'maanantai 28.12.',Meals:[{MealType:'Lounas',Name:'Keitto '+id}]}]}}}});
@@ -55,8 +55,59 @@ const catalog={data:{allAzureJson:{nodes:[{WeekMenu:[{RestaurantId:'a',Restauran
 assert.deepEqual(parseMenuSchools(catalog),[{id:'a',name:'Koulu A',city:'Kunta'}]);
 assert.equal((await fetchMenuSchools((async url=>Response.json(String(url).includes('/index/')?{staticQueryHashes:['12','34']}:String(url).includes('/12.')?catalog:{})) as typeof fetch)).length,1);
 await assert.rejects(()=>fetchMenuSchools((async()=>Response.json({staticQueryHashes:['https://evil']})) as typeof fetch));
+
+/**
+ * YLÄVIRRAN PYYNTÖJEN MÄÄRÄ.
+ *
+ * `/api/menu-schools` on tunnistautumaton, ja yksi kierros on 1 + N pyyntöä
+ * kouluruoka.fi:lle. Mitattu lähtötaso ennen korjausta: viisi peräkkäistä
+ * pyyntöä nurin olevaa lähdettä vasten teki VIISI kierrosta, koska vain
+ * onnistuminen välimuistitettiin. Nämä testit laskevat kierrokset; jos
+ * välimuisti puretaan kummasta päästä tahansa, luvut kasvavat ja testi kaatuu.
+ */
+let upstream=0; let upstreamDown=true;
+const schoolCatalogue={data:{allAzureJson:{nodes:[{WeekMenu:[{RestaurantId:'a',RestaurantName:'Koulu A',CityName:'Kunta'}]}]}}};
+const counting=(async(url:string|URL|Request)=>{upstream++;return upstreamDown?new Response(null,{status:503}):Response.json(String(url).includes('/index/')?{staticQueryHashes:['11','22','33']}:schoolCatalogue);}) as typeof fetch;
+let clock=0; const fakeNow=()=>clock;
+const MIN=60_000;
+
+// Viisi peräkkäistä pyyntöä nurin olevaa lähdettä vasten -> yksi kierros.
+for(let i=0;i<5;i++) await assert.rejects(()=>getMenuSchools(counting,fakeNow));
+assert.equal(upstream,1,'epäonnistuminen välimuistitetaan: 5 pyyntöä, 1 kierros (ennen: 5)');
+clock+=4*MIN; await assert.rejects(()=>getMenuSchools(counting,fakeNow));
+assert.equal(upstream,1,'negatiivinen välimuisti on yhä voimassa neljän minuutin kohdalla');
+clock+=2*MIN; await assert.rejects(()=>getMenuSchools(counting,fakeNow));
+assert.equal(upstream,2,'negatiivinen välimuisti vanhenee viidessä minuutissa — katko ei jää päiväksi päälle');
+
+// Viisi RINNAKKAISTA pyyntöä -> yksi kierros, ei viittä.
+clock+=6*MIN; upstreamDown=false;
+const parallel=await Promise.all(Array.from({length:5},()=>getMenuSchools(counting,fakeNow)));
+assert.equal(upstream,6,'rinnakkaiset pyynnöt odottavat samaa hakua: 1 indeksi + 3 hashia');
+assert.deepEqual(parallel.map(list=>list.length),[1,1,1,1,1]);
+
+// Onnistuminen välimuistitetaan vuorokaudeksi.
+for(let i=0;i<5;i++) assert.equal((await getMenuSchools(counting,fakeNow)).length,1);
+assert.equal(upstream,6,'onnistunut koululista tarjoillaan välimuistista');
+clock+=23*60*MIN; await getMenuSchools(counting,fakeNow);
+assert.equal(upstream,6,'23 tunnin päästä yhä välimuistista');
+clock+=2*60*MIN; await getMenuSchools(counting,fakeNow);
+assert.equal(upstream,10,'vuorokauden jälkeen haetaan uudelleen');
+
 const app=Fastify();await registerApiRoutes(app);
+
+/**
+ * Sama mittaus REITIN läpi: varmistaa ettei reitti ohita välimuistia.
+ * Ajetaan injektoidun kellon jälkeen, jolloin moduulin välimuisti on
+ * todellisessa ajassa vanhentunut ja mittaus alkaa kylmältä.
+ */
+const realFetch=globalThis.fetch;
+upstream=0; upstreamDown=true; globalThis.fetch=counting;
+try {
+ for(let i=0;i<5;i++) assert.equal((await app.inject('/api/menu-schools')).statusCode,502);
+ assert.equal(upstream,1,'reitti: 5 pyyntöä nurin olevaan lähteeseen -> 1 kierros ylävirtaan (ennen: 5)');
+} finally { globalThis.fetch=realFetch; }
+
 const denied=await app.inject({method:'PUT',url:'/api/settings',remoteAddress:'203.0.113.25',payload:{menuSchoolIds:['c']}});assert.equal(denied.statusCode,403);assert.deepEqual(getSettings().menuSchoolIds,['a','b']);
 const saved=await app.inject({method:'PUT',url:'/api/settings',remoteAddress:'127.0.0.1',payload:{menuSchoolIds:[]}});assert.equal(saved.statusCode,200);assert.deepEqual(saved.json().menuSchoolIds,[]);
 await app.close();
-console.log('Menu selection: validation, settings/auth, multiple schools, partial failures, legacy cache, in-flight change, empty selection, all-sources-down error boundary and dynamic catalogue passed');
+console.log('Menu selection: validation, settings/auth, multiple schools, partial failures, legacy cache, in-flight change, empty selection, all-sources-down error boundary, dynamic catalogue and upstream request budget passed');

@@ -4,7 +4,7 @@ process.env.DB_PATH='data/infonaytto-test-household-'+process.pid+'.db';
 process.env.LOG_DIR='data/logs-test-household-'+process.pid;
 process.env.EDIT_PIN='4242';
 process.env.TRUSTED_HOSTS='';
-const {validDate,nextWasteDate,seasonalOccurrence,helsinkiToday,saveHousehold,readHousehold}=await import('../src/core/household.ts');
+const {validDate,nextWasteDate,seasonalOccurrence,helsinkiToday,saveHousehold,readHousehold,clearDoneShopping}=await import('../src/core/household.ts');
 const {registerHouseholdRoutes}=await import('../src/routes/household.ts');
 const {default:Fastify}=await import('fastify');
 assert.equal(validDate('2025-02-29'),false);
@@ -56,5 +56,93 @@ assert.throws(()=>saveHousehold('seasonal',{done:true},task.id));
 assert.throws(()=>saveHousehold('seasonal',{done:true,occurrenceDate:'2029-12-01'},task.id));
 assert.equal(saveHousehold('shopping',{text:'Missing'},'unknown'),null);
 assert.equal(readHousehold().shopping.length,0);
+
+/**
+ * KAUSIMUISTUTUSTEN KIINNIOTTO.
+ *
+ * Mitattu vika: vuosittainen muistutus, kuitattu 2020, näytti vuonna 2026
+ * päivämäärää 1.5.2021, ja yksi kuittaus siirsi sitä yhden vuoden — viisi
+ * väliin jäänyttä vuotta vaati viisi klikkausta. Seuraava esiintymä lasketaan
+ * nyt nykyhetkestä, joten yksi kuittaus riittää aina.
+ */
+const annual = (date:string, completedDate:string|null) => ({id:'x',label:'Renkaat',date,annual:true,completedDate});
+assert.equal(seasonalOccurrence(annual('2020-05-01','2020-05-01'),'2026-09-16'),'2026-05-01','2020 kuitattuna ei jää roikkumaan vuoteen 2021');
+assert.equal(seasonalOccurrence(annual('2020-05-01','2026-05-01'),'2026-09-16'),'2027-05-01','yksi kuittaus riittää viiden väliin jääneen vuoden jälkeen');
+assert.equal(seasonalOccurrence(annual('2020-05-01',null),'2026-09-16'),'2026-05-01','kuittaamattomanakaan vuodet eivät kasaannu');
+assert.equal(seasonalOccurrence(annual('2026-05-01',null),'2026-04-30'),'2026-05-01','tuleva esiintymä näkyy sellaisenaan');
+assert.equal(seasonalOccurrence(annual('2028-05-01',null),'2026-09-16'),'2028-05-01','tulevaisuuteen luotu merkintä alkaa omasta vuodestaan');
+assert.equal(seasonalOccurrence(annual('2028-05-01','2028-05-01'),'2026-09-16'),'2029-05-01','tulevakin merkintä siirtyy kuitattuna seuraavaan');
+assert.equal(seasonalOccurrence({...annual('2020-05-01','2020-05-01'),annual:false},'2026-09-16'),'2020-05-01','kertaluonteinen ei siirry mihinkään');
+
+// 29.2. EI-KARKAUSVUONNA: leikkautuu 28.2:een, ei koskaan valu maaliskuulle.
+for (const year of [2025,2026,2027,2028,2029,2030,2031]) {
+ const occurrence = seasonalOccurrence(annual('2024-02-29',`${year-1}-02-${year-1===2024||year-1===2028?'29':'28'}`),`${year}-06-01`);
+ assert.equal(occurrence.slice(0,7),`${year}-02`,'karkauspäivä pysyy helmikuussa vuonna '+year);
+ assert.equal(occurrence.slice(8),year%4===0?'29':'28','29.2. -> 28.2. ei-karkausvuonna, 29.2. karkausvuonna ('+year+')');
+}
+assert.equal(seasonalOccurrence(annual('2024-02-29','2024-02-29'),'2028-03-01'),'2028-02-29','kiinniotto karkausvuoteen antaa oikean 29.2:n');
+assert.equal(seasonalOccurrence(annual('2024-02-29',null),'2025-03-05'),'2025-02-28','kuittaamaton karkauspäivä on myöhässä helmikuulta, ei maaliskuulta');
+
+/**
+ * KESÄAIKA. Kaikki päivämäärälaskenta on merkkijono- ja UTC-aritmetiikkaa,
+ * joten vaihtopäivä ei ole erikoistapaus — mutta juuri sen oletuksen
+ * rikkoutuminen oli hälytysten kesäaikavika, joten se todetaan tässä.
+ * Helsingin vaihtohetket: 29.3.2026 klo 03 ja 25.10.2026 klo 04 (paikallista).
+ */
+assert.equal(helsinkiToday(new Date('2026-03-29T00:30:00Z')),'2026-03-29','kesäaikaan siirtymisen aamu');
+assert.equal(helsinkiToday(new Date('2026-10-24T21:30:00Z')),'2026-10-25','talviaikaan siirtymisen yö on jo seuraavaa päivää Helsingissä');
+assert.equal(seasonalOccurrence(annual('2020-03-29','2020-03-29'),'2026-06-01'),'2026-03-29','kesäajan vaihtopäivälle osuva muistutus ei siirry');
+assert.equal(seasonalOccurrence(annual('2020-10-25',null),'2026-10-25'),'2026-10-25','talviajan vaihtopäivä on ajankohtainen samana päivänä');
+assert.equal(seasonalOccurrence(annual('2020-10-25','2026-10-25'),'2026-10-25'),'2027-10-25','kuitattuna vaihtopäivä siirtyy täsmälleen vuodella');
+
+// Sama polku tallennuksen läpi: yksi kuittaus, viisi väliin jäänyttä vuotta.
+const missed = saveHousehold('seasonal',{label:'Renkaat',date:'2020-05-01',annual:true});
+assert.ok(missed);
+saveHousehold('seasonal',{done:true,occurrenceDate:'2020-05-01'},missed.id,new Date('2020-05-01T09:00:00Z'));
+const syksy = new Date('2026-09-16T09:00:00Z');
+const seasonalRow=(id:string)=>readHousehold(syksy).seasonal.find(item=>item.id===id);
+assert.equal(seasonalRow(missed.id)?.occurrenceDate,'2026-05-01','kiinniotto näkyy listalla');
+saveHousehold('seasonal',{done:true,occurrenceDate:'2026-05-01'},missed.id,syksy);
+assert.equal(seasonalRow(missed.id)?.occurrenceDate,'2027-05-01','yksi klikkaus vie seuraavaan vuoteen, ei vuoteen 2021');
+saveHousehold('seasonal',{done:false,occurrenceDate:'2026-05-01'},missed.id,syksy);
+assert.equal(seasonalRow(missed.id)?.occurrenceDate,'2026-05-01','kuittauksen peruminen palauttaa saman esiintymän');
+
+/**
+ * KAUPPALISTAN KATTO JA TEHTYJEN TYHJENNYS.
+ *
+ * Tehdyt ostokset eivät enää syö tekemättömien tilaa, ja ne saa pois yhdellä
+ * pyynnöllä. Aiemmin 200:n katto laski tehdyt mukaan, joten lista lukkiutui
+ * vaikka tekemättömiä olisi ollut kourallinen.
+ */
+const shoppingIds:string[]=[];
+for (let i=0;i<200;i++) shoppingIds.push((saveHousehold('shopping',{text:'Ostos '+i}) as {id:string}).id);
+assert.throws(()=>saveHousehold('shopping',{text:'Yli katon'}),/enintään 200 tekemätöntä/);
+for (const id of shoppingIds.slice(0,150)) saveHousehold('shopping',{done:true},id);
+const lisatty = saveHousehold('shopping',{text:'Mahtuu kun tehdyt eivät laske'});
+assert.ok(lisatty,'tehdyt eivät enää täytä kattoa');
+assert.equal(readHousehold().shopping.length,201);
+assert.equal(clearDoneShopping(),150,'tyhjennys poistaa vain tehdyt');
+assert.equal(readHousehold().shopping.length,51);
+assert.equal(clearDoneShopping(),0,'tyhjennys ilman tehtyjä on ei-operaatio');
+assert.ok(readHousehold().shopping.every(item=>!item.done));
+
+// Tallennetun listan kova katto: tehtyjä ei voi kerätä loputtomiin.
+for (const item of readHousehold().shopping) saveHousehold('shopping',{done:true},item.id);
+while (readHousehold().shopping.length < 500) {
+ const id=(saveHousehold('shopping',{text:'Täyte'}) as {id:string}).id;
+ saveHousehold('shopping',{done:true},id);
+}
+assert.throws(()=>saveHousehold('shopping',{text:'Ei mahdu'}),/Lista on täynnä/);
+// Reitti: tyhjennys vaatii muokkausoikeuden, ja kertoo montako poistui.
+const clearDenied=await app.inject({method:'DELETE',url:'/api/household/shopping/done',remoteAddress:'192.0.2.50'});
+assert.equal(clearDenied.statusCode,401,'tyhjennys vaatii muokkausoikeuden');
+assert.equal(readHousehold().shopping.length,500,'torjuttu pyyntö ei poista mitään');
+const cleared=await app.inject({method:'DELETE',url:'/api/household/shopping/done'});
+assert.equal(cleared.statusCode,200);assert.deepEqual(cleared.json(),{removed:500});
+assert.equal(readHousehold().shopping.length,0);
+// Staattinen /done ei saa peittää tavallista poistoa.
+const kept=saveHousehold('shopping',{text:'Jää jäljelle'}) as {id:string};
+const removedOne=await app.inject({method:'DELETE',url:'/api/household/shopping/'+kept.id});
+assert.equal(removedOne.statusCode,204);assert.equal(readHousehold().shopping.length,0);
 await app.close();
-console.log('Household: date boundaries, CRUD, validation and all mutation authorization checks passed');
+console.log('Household: date boundaries, CRUD, validation, seasonal catch-up, 29 February, shopping limits and all mutation authorization checks passed');
