@@ -276,11 +276,59 @@ export function getSettings(): Settings {
   merged.menuSchoolIds = parseMenuSchoolIds(merged.menuSchoolIds);
   merged.alarms = normalizeStoredAlarms(merged.alarms);
   merged.hiddenPanels = normalizeStoredHiddenPanels(merged.hiddenPanels);
-  // Vanhan oletusasettelun hiddenPanels: [] ei saa paljastaa uusia parkkipaikkoja.
-  // Kaikkien paneelien näyttäminen vaatii erikseen tallennetun kelvollisen asettelun.
-  if (merged.panelLayout === null) {
+  // Oletuspiilotukset yhdistetään VAIN kun tallennetusta oliosta puuttuu
+  // `hiddenPanels`-avain kokonaan — ei aina kun asettelua ei ole tallennettu.
+  //
+  // Ehto oli aiemmin `panelLayout === null`, ja se luki asetukset uusiksi
+  // JOKAISELLA haulla: käyttäjä otti paneelin käyttöön, tallennus onnistui
+  // ilman varoitusta, ja seuraava luku piilotti sen takaisin. Mitattuna
+  // käyttöliittymässä rasti katosi heti kun asetusikkuna avattiin uudelleen.
+  //
+  // Vika oli erityisen ilkeä siksi, että RAJAPINNASTA MITATTUNA SE NÄYTTI
+  // TOIMIVAN: `PUT` palautti 200 ja uuden tilan, ja vasta levylle katsomalla
+  // näki ettei `hiddenPanels` sisältänyt paneelia — se lisättiin takaisin
+  // vasta luvussa. Todenna tämä siis levyltä, älä vastauksesta.
+  //
+  // Tuore asennus saa oletuspiilotukset yhä: silloin tallennettua oliota ei
+  // ole lainkaan, joten avain puuttuu. Päivityspolku on erikseen
+  // adoptNewPanelsissa eikä muutu tästä.
+  // Kun asettelua EI ole tallennettu, käytössä on defaultPanelLayout — ja
+  // siinä viisi uusinta paneelia ovat PARKKIPAIKOILLA toisten päällä (ks.
+  // defaultHiddenPanels). Ne voivat siis näkyä vain jos niille löytyy paikka.
+  //
+  // Tässä on kaksi vaatimusta jotka ovat helposti ristiriidassa, ja molemmat
+  // on mitattu rikki:
+  //
+  //  1. Käyttäjän valinta on säilyttävä. Aiemmin oletuspiilotukset lisättiin
+  //     takaisin JOKAISELLA luvulla, jolloin asetuslistasta käyttöön otettu
+  //     paneeli katosi heti kun ikkuna avattiin uudelleen — eikä vikaa näkynyt
+  //     rajapinnasta, koska PUT palautti oikean tilan ja piilotus tapahtui
+  //     vasta luvussa.
+  //  2. Näkyvät paneelit eivät saa mennä päällekkäin. Pelkkä tallennetun
+  //     listan kunnioittaminen päästäisi parkkipaikalla olevan paneelin
+  //     näkyviin toisen kortin päälle.
+  //
+  // Sääntö joka täyttää molemmat: paneeli pysyy piilossa VAIN jos sille ei ole
+  // paikkaa. Silloin piilotus ei ole mielivaltainen vaan sama asia jonka
+  // käyttöliittymä kertoo ("ei mahdu ruudukkoon, pienennä jotakin korttia").
+  //
+  // Roska-arvo (esim. merkkijono taulukon sijaan) ei ole valinta vaan
+  // rikkinäinen rivi, ja se normalisoidaan oletuksiin.
+  if (stored === null || !Array.isArray(stored.hiddenPanels)) {
     merged.hiddenPanels = [...new Set([...merged.hiddenPanels, ...defaultHiddenPanels])];
+  } else if (merged.panelLayout === null) {
+    const piilossa = new Set(merged.hiddenPanels);
+    for (const id of defaultHiddenPanels) {
+      if (piilossa.has(id)) continue;
+      const oma = defaultPanelLayout[id];
+      const osuu = PANEL_IDS.some(
+        (muu) => muu !== id && !piilossa.has(muu) && placementsOverlap(oma, defaultPanelLayout[muu]),
+      );
+      if (osuu) piilossa.add(id);
+    }
+    merged.hiddenPanels = [...piilossa];
   }
+
   adoptNewPanels(merged);
   return merged;
 }
