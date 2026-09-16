@@ -59,7 +59,33 @@ const props = defineProps<{
 }>();
 
 const dialogTitle = computed(() => props.widget ? PANEL_TITLES[props.widget] + ': asetukset' : 'Yleiset asetukset');
+/** Näkyy VAIN nimetyn kortin hammasrattaan takana — kortin oma sisältövalinta. */
 const inWidget = (...ids: PanelId[]) => props.widget !== undefined && ids.includes(props.widget);
+/**
+ * Näkyy yleisissä asetuksissa JA nimettyjen korttien hammasrattaan takana.
+ *
+ * Tämä on se ero jonka takia molempia tarvitaan: piilotetulla kortilla EI OLE
+ * hammasratasta, joten `inWidget` yksin tekee asetuksesta tavoittamattoman
+ * heti kun kortti kytketään pois. Mitattuna käyttäjän omassa kannassa kuusi
+ * paneelia piilossa = nolla hammasratasta, ja sitä kautta piiloon jäivät mm.
+ * aamupala-aika (joka on HÄLYTYSTEN ankkuri, ks. AlarmTrigger anchor:
+ * "breakfast", eikä kuulu lukujärjestyskorttiin lainkaan), päivän
+ * vaihtumisaika, lapsivalinnat, sään postinumero, viestien esikatselu ja
+ * Wilma-yhteystesti — juuri se testi jota tarvitaan silloin kun Wilma on
+ * rikki ja kortti voi olla piilotettuna.
+ *
+ * Sääntö: yleiset asetukset näyttää jokaisen ryhmän JOTA EI VOI PÄÄTELLÄ
+ * yhden kortin sisällöksi; hammasratas näyttää ne jotka koskevat kyseistä
+ * korttia. Ryhmä saa olla molemmissa — sama `draft` ja sama tallennus, ei
+ * kahta totuutta.
+ *
+ * HUOM: jos lisäät ryhmän tähän, lisää sen avain myös
+ * `GENERAL_SETTING_KEYS`iin (widgetSettings.ts). Dialogi tallentaa vain
+ * listassa olevat avaimet, joten ilman sitä kenttä näkyy mutta ei tallennu.
+ */
+const inSettings = (...ids: PanelId[]) => props.widget === undefined || ids.includes(props.widget);
+/** Näkyykö sään postinumerokenttä — sekä kentän alustus että tallennuksen esto riippuvat tästä. */
+const postalShown = computed(() => props.widget === undefined || props.widget === "weather");
 const emit = defineEmits<{ close: []; saved: [Settings]; "edit-layout": [] }>();
 
 /**
@@ -219,11 +245,18 @@ const currentLocationLoading = ref(false);
 
 onUnmounted(() => postalLookup.dispose());
 
-/** Avatessa aloitetaan tallennetusta arvosta. Taustapollaus ei nollaa luonnosta. */
+/**
+ * Avatessa aloitetaan tallennetusta arvosta. Taustapollaus ei nollaa luonnosta.
+ *
+ * Ehtona `postalShown` eikä `widget === "weather"`: kenttä on nyt myös
+ * yleisissä asetuksissa, ja alustamatta jäänyt kenttä olisi tila "tyhjä" —
+ * joka tarkoittaa nimenomaan "palaa .env:n sijaintiin". Yleisten asetusten
+ * tallennus olisi siis pyyhkinyt tallennetun postinumeron joka kerta.
+ */
 watch(
   () => props.open,
   (open) => {
-    if (!open || props.widget !== "weather") return;
+    if (!open || !postalShown.value) return;
     postalInput.value = postalLookup.setInput(props.settings.weatherPostalCode ?? "");
     void loadCurrentLocation();
   },
@@ -385,7 +418,7 @@ async function persistDraft(): Promise<boolean> {
   // Sama este kuin Tallenna-napin `disabled`illa, mutta tässä myös
   // "Muokkaa asettelua" -polulle — ja tämä on se paikka joka oikeasti
   // estää ratkaisemattoman sijainnin menemästä palvelimelle.
-  if (props.widget === "weather" && postalBlocksSave.value !== null) {
+  if (postalShown.value && postalBlocksSave.value !== null) {
     error.value = postalBlocksSave.value;
     return false;
   }
@@ -438,10 +471,10 @@ async function save(): Promise<void> {
       </header>
 
       <div class="panel__body">
-        <p v-if="inWidget('schedule', 'messages')" class="group__hint">Lapsivalinnat koskevat sekä lukujärjestystä että viestejä.</p>
+        <p v-if="inSettings('schedule', 'messages')" class="group__hint">Lapsivalinnat koskevat sekä lukujärjestystä että viestejä.</p>
         <!-- Kaksi lapsivalintaa peräkkäin, kummallakin oma lähteensä: otsikot
              nimeävät lähteen, jotta ryhmiä ei lueta saman listan jatkoksi. -->
-        <fieldset v-if="inWidget('schedule', 'messages')" class="group">
+        <fieldset v-if="inSettings('schedule', 'messages')" class="group">
           <legend>Näytettävät lapset — Wilma</legend>
           <p v-if="!canPreviewSchedule" class="group__hint">Oppilasvalinta näkyy vain näyttölaitteella.</p>
           <p v-else-if="students.length === 0" class="group__hint">
@@ -457,7 +490,7 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <fieldset v-if="inWidget('schedule', 'messages') && paikkyConfigured" class="group">
+        <fieldset v-if="inSettings('schedule', 'messages') && paikkyConfigured" class="group">
           <legend>Näytettävät lapset — Päikky</legend>
           <p v-if="!canPreviewSchedule" class="group__hint">Lapsivalinta näkyy vain näyttölaitteella.</p>
           <p v-else-if="paikkyChildren.length === 0" class="group__hint">
@@ -506,7 +539,7 @@ async function save(): Promise<void> {
         <fieldset v-if="!widget" class="group">
           <legend>Paneelien asettelu</legend>
           <p class="group__hint">Siirrä paneeleja ja muuta niiden kokoa suoraan näytöllä.</p>
-          <button type="button" class="btn" :disabled="isNarrow || saving || (widget === 'weather' && postalBlocksSave !== null)" @click="editLayout">
+          <button type="button" class="btn" :disabled="isNarrow || saving || (postalShown && postalBlocksSave !== null)" @click="editLayout">
             {{ saving ? "Tallennetaan…" : "Muokkaa asettelua" }}
           </button>
           <p v-if="isNarrow" class="group__hint">Asettelua muokataan infonäytöllä — näkymä on nyt liian kapea.</p>
@@ -537,7 +570,7 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <fieldset v-if="inWidget('schedule')" class="group">
+        <fieldset v-if="inSettings('schedule')" class="group">
           <legend>Päivän vaihtuminen</legend>
           <p class="group__hint">
             Tähän kellonaikaan asti näkyy kuluva päivä, sen jälkeen seuraava koulupäivä.
@@ -548,7 +581,12 @@ async function save(): Promise<void> {
           </label>
         </fieldset>
 
-        <fieldset v-if="inWidget('schedule')" class="group">
+        <!-- VAIN yleisissä asetuksissa, ei lukujärjestyksen hammasrattaassa:
+             tämä on hälytysten ankkuri (AlarmTrigger anchor: "breakfast"),
+             ei lukujärjestyskortin asetus. Kortin takana se katosi näkyvistä
+             aina kun lukujärjestys oli piilotettuna, vaikka hälytykset
+             soivat silti. -->
+        <fieldset v-if="!widget" class="group">
           <legend>Aamupala</legend>
           <p class="group__hint">
             Käytetään hälytysten "aamupala"-ankkurina (ks. Hälytykset) niinä päivinä kun lapsi menee kouluun
@@ -564,7 +602,7 @@ async function save(): Promise<void> {
              näytetään erikseen kentän yläpuolella, koska tyhjä kenttä ei
              tarkoita "ei sijaintia" vaan ".env:n arvo" — ks. types.ts:n
              weatherPostalCode. -->
-        <fieldset v-if="inWidget('weather')" class="group">
+        <fieldset v-if="inSettings('weather')" class="group">
           <legend>Sään sijainti</legend>
           <p class="group__hint">{{ currentLocationText }}</p>
           <label class="field">
@@ -626,7 +664,7 @@ async function save(): Promise<void> {
           </div>
         </fieldset>
 
-        <fieldset v-if="inWidget('messages')" class="group">
+        <fieldset v-if="inSettings('messages')" class="group">
           <legend>Yksityisyys</legend>
           <label class="check">
             <input v-model="draft.hideMessagePreviews" type="checkbox" />
@@ -655,8 +693,13 @@ async function save(): Promise<void> {
              Peruuta kumoa sitä. Siksi myös oma selite alla — muuten
              käyttäjä olettaisi paneelin muun logiikan pätevän tähänkin.
              Fieldset ja legend tässä eikä ConnectionTestissä, jotta
-             paneelin omat .group/legend-tyylit pätevät sellaisenaan. -->
-        <fieldset v-if="inWidget('schedule', 'messages')" class="group">
+             paneelin omat .group/legend-tyylit pätevät sellaisenaan.
+
+             Myös yleisissä asetuksissa (inSettings): yhteystestiä tarvitaan
+             nimenomaan silloin kun Wilma on rikki, ja silloin kortit voivat
+             hyvin olla piilotettuina — kortin hammasratas on juuri se tie
+             joka silloin puuttuu. -->
+        <fieldset v-if="inSettings('schedule', 'messages')" class="group">
           <legend>Wilma-yhteys</legend>
           <ConnectionTest />
         </fieldset>
@@ -667,9 +710,9 @@ async function save(): Promise<void> {
       <footer v-if="widget !== 'waste'" class="panel__foot">
         <!-- Syy näkyy tässä eikä vain sään ryhmässä: Tallenna on paneelin
              pohjalla, eikä harmaa nappi ilman selitystä kerro mitään. -->
-        <p v-if="widget === 'weather' && postalBlocksSave" class="panel__blocked">{{ postalBlocksSave }}</p>
+        <p v-if="postalShown && postalBlocksSave" class="panel__blocked">{{ postalBlocksSave }}</p>
         <button type="button" class="btn" @click="emit('close')">Peruuta</button>
-        <button type="button" class="btn btn--primary" :disabled="saving || (widget === 'weather' && postalBlocksSave !== null)" @click="save">
+        <button type="button" class="btn btn--primary" :disabled="saving || (postalShown && postalBlocksSave !== null)" @click="save">
           {{ saving ? "Tallennetaan…" : "Tallenna" }}
         </button>
       </footer>

@@ -2,16 +2,24 @@
 
 Widgetin otsikon hammasratas avaa sen omat asetukset:
 
-- Lukujärjestys: lapset, asettelu, päivän vaihtumisaika ja aamupala.
+- Lukujärjestys: lapset, asettelu ja päivän vaihtumisaika.
 - Wilma-viestit: lapset ja viestien sisällön piilotus. Lapsivalinnat ovat yhteiset lukujärjestyksen kanssa.
 - Sää: sijainti postinumerolla.
 - Ruokalista: lasten koulut.
 - Roskien nouto: jätehuollon yhteys ja kiinteistö.
 - Uutiset: 1–8 Ylen aihe- tai maakuntakategoriaa. Samat jutut näkyvät vain kerran.
 
-Yläpalkin yleisiin asetuksiin jäävät paneelien näkyvyys, asettelu, yötila,
-seuraavan hälytyksen näyttö ja tallennetun käyttöoikeuskoodin poistaminen.
-Piilotetun widgetin voi ottaa sieltä takaisin näkyviin. Listojen merkintöjä
+Yläpalkin yleisistä asetuksista löytyvät paneelien näkyvyys, asettelu, yötila,
+seuraavan hälytyksen näyttö, tallennetun käyttöoikeuskoodin poistaminen **ja
+kaikki yllä olevat paitsi yhden kortin omat sisältövalinnat** (uutiskategoriat,
+lasten koulut, jätehuollon kiinteistö ja lukujärjestyksen asettelu). Piilotetulla
+kortilla ei ole hammasratasta, joten muuten esimerkiksi sään postinumero,
+lapsivalinnat, päivän vaihtumisaika, viestien esikatselu ja Wilma-yhteystesti
+jäisivät tavoittamattomiin juuri silloin kun kortti on kytketty pois.
+
+Aamupala-aika on **vain** yleisissä asetuksissa: se on hälytysten
+"aamupala"-ankkuri, ei lukujärjestyskortin asetus.
+Piilotetun widgetin voi ottaa yleisistä asetuksista takaisin näkyviin. Listojen merkintöjä
 muokataan edelleen suoraan korteissa. Puhelimella hammasratas pyytää tarvittaessa PIN-koodin.
 
 Uutisen painallus avaa otsikkomodaalin. **Koko Ylen juttua ei voi näyttää

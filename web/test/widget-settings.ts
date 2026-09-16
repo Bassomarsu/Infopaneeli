@@ -7,9 +7,16 @@ assert.deepEqual(settingsPatch(settings,'weather'), {weatherPostalCode:'43500'})
 assert.deepEqual(settingsPatch(settings,'menu'), {menuSchoolIds:['school-a']});
 assert.deepEqual(settingsPatch(settings,'waste'), {});
 const general = settingsPatch(settings);
-for(const key of ['newsCategories','menuSchoolIds','weatherPostalCode','alarms','visibleStudents','hideMessagePreviews']) assert.ok(!(key in general),key+' must not be saved by general settings');
+// Yhden kortin sisältövalinnat eivat nay yleisissa asetuksissa, joten niita ei
+// myoskaan saa kirjoittaa sielta paalle.
+for(const key of ['newsCategories','menuSchoolIds','scheduleLayout','alarms']) assert.ok(!(key in general),key+' must not be saved by general settings');
+// Nama nakyvat yleisissa asetuksissa, koska piilotetulla kortilla ei ole
+// hammasratasta jonka takaa ne loytyisivat — siis niiden on myos tallennuttava.
+for(const key of ['visibleStudents','visiblePaikkyChildren','rolloverTime','breakfastTime','weatherPostalCode','hideMessagePreviews']) assert.ok(key in general,key+' must be reachable from general settings');
 const scheduled = settingsPatch(settings,'schedule');
-assert.ok('visibleStudents' in scheduled && 'breakfastTime' in scheduled);
+assert.ok('visibleStudents' in scheduled && 'rolloverTime' in scheduled);
+// Aamupala on halytysten ankkuri eika lukujarjestyskortin asetus.
+assert.ok(!('breakfastTime' in scheduled));
 assert.ok(!('hideMessagePreviews' in scheduled));
 assert.deepEqual(Object.keys(WIDGET_SETTING_KEYS).sort(),['menu','messages','news','schedule','waste','weather']);
 console.log('PASS: widget settings patches are scoped and cannot overwrite unrelated settings');
