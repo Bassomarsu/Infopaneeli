@@ -1,5 +1,16 @@
 <script setup lang="ts">
+/**
+ * PIN-koodin syöttö muokkausoikeutta (EDIT_PIN) tai täysiä oikeuksia
+ * (FULL_PIN) varten.
+ *
+ * KEHYS ON `ModalDialog` (`<dialog showModal>`), EI OMA `position: fixed`
+ * -overlay — ÄLÄ PALAUTA OVERLAYTÄ. Perustelu ja mitatut poikkeamat ovat
+ * KioskExitDialog.vuen alussa: yötilan `filter` tekee `.app`ista
+ * sijoitussäiliön myös `fixed`ille, jolloin overlay seuraa dokumenttia eikä
+ * näkymää ja liukuu vieritetyllä sivulla ruudun ulkopuolelle.
+ */
 import { computed, nextTick, ref, watch } from "vue";
+import ModalDialog from "./ModalDialog.vue";
 import { useEditAccess, type PinLevel } from "../composables/useEditAccess.ts";
 
 const props = defineProps<{
@@ -87,17 +98,9 @@ watch(
   },
 );
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") emit("close");
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) window.addEventListener("keydown", onKeydown);
-    else window.removeEventListener("keydown", onKeydown);
-  },
-);
+// Escapelle ei ole omaa kuuntelijaa: `<dialog showModal>` lähettää
+// `cancel`-tapahtuman, jonka ModalDialog kääntää `close`-emitiksi. Oma
+// window-kuuntelija sulkisi saman dialogin toiseen kertaan.
 
 async function submit(): Promise<void> {
   const pin = draft.value.trim();
@@ -126,7 +129,7 @@ function forget(): void {
 </script>
 
 <template>
-  <div v-if="open" class="overlay" @click.self="emit('close')">
+  <ModalDialog v-if="open" label="Muokkausoikeus" @close="emit('close')">
     <section class="panel">
       <header class="panel__head">
         <h2>Muokkausoikeus</h2>
@@ -198,22 +201,13 @@ function forget(): void {
         </template>
       </div>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 65;
-  padding: 1.5rem;
-}
-
+/* Taustan tummennus, sumennus, keskitys ja täyte tulevat ModalDialogin
+   `.modal`/`::backdrop`-säännöistä — tässä ei ole omaa overlaytä, ks.
+   komponentin alun perustelu. */
 .panel {
   background: #141821;
   border: 1px solid var(--border);

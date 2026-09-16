@@ -13,8 +13,25 @@
  * kahden sisällä — ruutu katoaa itsestään, joten dialogissa ei ole erillistä
  * "onnistui"-näkymää, ainoastaan "Suljetaan…"-tila joka jää näkyviin siihen
  * asti kun sivu lakkaa olemasta.
+ *
+ * KEHYS ON `ModalDialog` (`<dialog showModal>`), EI OMA `position: fixed`
+ * -overlay — ÄLÄ PALAUTA OVERLAYTÄ. Yötila on `.app`-elementillä
+ * `filter: brightness(...)` (ks. style.css), ja suodatin tekee elementistä
+ * sijoitussäiliön myös `position: fixed`ille. Silloin overlay asemoitui
+ * dokumenttiin eikä näkymään, ja mitä kauemmas sivu oli vieritetty, sitä
+ * kauemmas dialogi lipui: mitattuna poikkeama oli tasan puolet vierityksestä
+ * (901 px:llä −116, 1280:llä −177, 1920:llä −247, 2736:lla −433), ja
+ * 800 × 480:n paneelilla — Raspberry Pi:n virallisella näytöllä, jossa
+ * vieritystä oli 2434 px — dialogi jäi kokonaan ruudun ulkopuolelle.
+ * Selain vieritti itse PIN-kenttään (2434 → 1348) EIKÄ palauttanut
+ * vieritystä dialogin sulkemisen jälkeen, joten kioskiruutu jäi väärään
+ * kohtaan. Ylätason `<dialog>` on ainoa kehys joka ei ole suodattimen
+ * armoilla: se piirretään top layerissa, jolloin sekä sijainti että
+ * kirkkaus tulevat näkymästä eivätkä `.app`ista. Sama kehys kuin
+ * SettingsPanelilla (ks. ModalDialog.vue).
  */
 import { nextTick, ref, watch } from "vue";
+import ModalDialog from "./ModalDialog.vue";
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
@@ -48,16 +65,9 @@ watch(
   },
 );
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") emit("close");
-}
-watch(
-  () => props.open,
-  (open) => {
-    if (open) window.addEventListener("keydown", onKeydown);
-    else window.removeEventListener("keydown", onKeydown);
-  },
-);
+// Escapelle ei ole omaa kuuntelijaa: `<dialog showModal>` lähettää
+// `cancel`-tapahtuman, jonka ModalDialog kääntää `close`-emitiksi. Oma
+// window-kuuntelija sulkisi saman dialogin toiseen kertaan.
 
 async function submit(): Promise<void> {
   const pin = draft.value.trim();
@@ -88,7 +98,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="open" class="overlay" @click.self="emit('close')">
+  <ModalDialog v-if="open" label="Poistu kioskitilasta" @close="emit('close')">
     <section class="panel">
       <header class="panel__head">
         <h2>Poistu kioskitilasta</h2>
@@ -126,22 +136,13 @@ async function submit(): Promise<void> {
         </p>
       </div>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 65;
-  padding: 1.5rem;
-}
-
+/* Taustan tummennus, sumennus, keskitys ja täyte tulevat ModalDialogin
+   `.modal`/`::backdrop`-säännöistä — tässä ei ole omaa overlaytä, ks.
+   komponentin alun perustelu. */
 .panel {
   background: #141821;
   border: 1px solid var(--border);
