@@ -18,7 +18,8 @@
     "test:weather-location": "node test/weather-location.ts",
     "test:panel-visibility": "node test/panel-visibility.ts",
     "test:news-card": "node test/news-card.ts",
-    "test:widget-settings": "node test/widget-settings.ts"
+    "test:widget-settings": "node test/widget-settings.ts",
+    "test:waste-settings": "node test/waste-settings.ts"
   },
   "dependencies": {
     "vue": "^3.5.13"

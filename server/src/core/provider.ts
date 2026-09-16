@@ -197,6 +197,25 @@ export class Provider<T = unknown> {
     this.timer = null;
   }
 
+  /**
+   * Avaa katkaisijan heti, ilman koeyritystä. Tarkoitettu yhteen tilanteeseen:
+   * käyttäjä on vaihtanut ne tunnukset joiden takia katkaisija meni kiinni.
+   * Ilman tätä seuraava `runOnce()` palaisi jäähdytyksen takia saman tien
+   * yrittämättä mitään, ja vasta korjatut tunnukset näyttäisivät yhä rikkinäisiltä
+   * tuntikausia. Ei kosketa `data`an, `error`iin eikä `status`een — tämä ei väitä
+   * että haku onnistuisi, vaan että se saa taas yrittää.
+   *
+   * `manualTest()` tekee saman ohituksen omalla kutsukerrallaan, mutta sillä on
+   * oma tiheysrajansa ja vuorokausikattonsa; tunnusten vaihto ei saa kuluttaa
+   * niitä eikä jäädä niiden taakse.
+   */
+  resetBreaker(): void {
+    this.breakerOpen = false;
+    this.consecutiveFatal = 0;
+    this.probeCooldownMs = 0;
+    this.nextProbeAt = null;
+  }
+
   private schedule(delayMs: number): void {
     if (this.stopped) return;
     // Always replace rather than add, so a manual runOnce() interleaved with

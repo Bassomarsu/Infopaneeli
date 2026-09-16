@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createVingoClient, WasteAuthError } from '../src/integrations/waste-vingo.ts';
+import { createVingoClient, WasteAuthError, WasteServiceError } from '../src/integrations/waste-vingo.ts';
 const base='https://example.test/portal';
 const groups={first:[{asiakasnro:42,katu:'Testikatu 1',posti:'00100 Testi'},{asiakasnro:41,katu:'Testikatu 1',posti:'00100 Testi'}]};
 const services=[{id:{ASTAsnro:41,ASTPos:1},tariff:{name:'Sekajäte'}}];
@@ -36,9 +36,46 @@ const denied=fixture({'j_acegi_security_check':()=>Response.json({response:'FAIL
 await assert.rejects(()=>denied.client.listProperties(),WasteAuthError);
 await assert.rejects(()=>denied.client.listProperties(),WasteAuthError);
 assert.equal(denied.calls.length,1);
-for(const response of [new Response('<html>terms</html>',{headers:{'content-type':'text/html'}}),new Response(null,{status:302,headers:{location:'https://other.test/'}})]){
- const test=fixture({'j_acegi_security_check':()=>response});await assert.rejects(()=>test.client.listProperties(),WasteAuthError);assert.equal(test.calls.length,1);
+// Vain hylätty kirjautuminen on tunnusvirhe. Yhtiön huoltosivu (HTTP 200 + text/html)
+// ja suojamuurin 403 eivät kerro tunnuksista mitään, joten ne eivät saa näyttää
+// väärältä salasanalta: juuri se ero ratkaisee lukkiutuuko perheen jätehuoltotili.
+// POSTin uudelleenohjaus on yhä tunnusvirhe — se on ehtojen hyväksyntä tai pakotettu
+// salasanan vaihto, eikä tunnuksia saa toistaa toiseen osoitteeseen.
+const authCases:Record<string,()=>Response>={
+ 'kirjautuminen hylättiin':()=>Response.json({response:'FAILED'}),
+ 'HTTP 401':()=>new Response(null,{status:401}),
+ 'POST ohjattiin muualle':()=>new Response(null,{status:302,headers:{location:'https://other.test/'}}),
+};
+for(const [name,response] of Object.entries(authCases)){
+ const test=fixture({'j_acegi_security_check':response});
+ await assert.rejects(()=>test.client.listProperties(),WasteAuthError,name+' on tunnusvirhe');
+ assert.equal(test.calls.length,1,name+': kirjautumisen jälkeen ei saa jatkaa');
 }
+const serviceCases:Record<string,()=>Response>={
+ 'huoltosivu':()=>new Response('<html>Huoltokatko</html>',{headers:{'content-type':'text/html'}}),
+ 'suojamuuri 403':()=>new Response(null,{status:403}),
+};
+const serviceErrors:Error[]=[];
+for(const [name,response] of Object.entries(serviceCases)){
+ const test=fixture({'j_acegi_security_check':response});
+ const error=await test.client.listProperties().then(()=>null,(e:Error)=>e);
+ assert.ok(error instanceof WasteServiceError,name+' on palveluhäiriö, ei tunnusvirhe');
+ assert.ok(!(error instanceof WasteAuthError),name+' ei saa olla WasteAuthError');
+ serviceErrors.push(error);assert.equal(test.calls.length,1);
+}
+const broken=fixture({'j_acegi_security_check':()=>new Response(null,{status:500})});
+serviceErrors.push(await broken.client.listProperties().then(()=>null,(e:Error)=>e)!);
+const offline=fixture({'j_acegi_security_check':()=>{throw new TypeError('fetch failed');}});
+serviceErrors.push(await offline.client.listProperties().then(()=>null,(e:Error)=>e)!);
+assert.match(serviceErrors.at(-2)!.message,/HTTP 500/);
+assert.match(serviceErrors.at(-1)!.message,/ei saada yhteyttä/);
+// Yksikään palveluhäiriön viesti ei saa puhua tunnuksista. Kehotus tarkistaa ne
+// silloin kun vika on yhtiön päässä on se mikä ajaa salasanojen kokeiluun.
+for(const error of serviceErrors){
+ assert.ok(!(error instanceof WasteAuthError),'palveluhäiriö ei saa olla tunnusvirhe: '+error.message);
+ assert.ok(!/tunnu|salasan/i.test(error.message),'palveluhäiriön viesti puhuu tunnuksista: '+error.message);
+}
+assert.match(new WasteAuthError().message,/tunnu/i);
 const wrong=fixture();await assert.rejects(()=>wrong.client.schedule('vingo:99'),/ei kuulu/);assert.equal(wrong.calls.length,2);
 const empty=fixture({'get_collection_schedule.do':()=>Response.json([])});assert.deepEqual(await empty.client.schedule('vingo:41,42'),[]);
 for(const value of [null,{},['2026-02-30'],['2026-02-30T00:00:00Z'],['2026-01-01T99:00:00'],['tomorrow'],[null]]){
@@ -59,4 +96,4 @@ const redirectClient=createVingoClient(base,'u','p',(async(url,init)=>{
 }) as typeof fetch);
 assert.equal((await redirectClient.listProperties()).length,1);assert.equal(redirectCalls.length,3);
 assert.throws(()=>createVingoClient('http://example.test','u','p'),/palveluosoite/);
-console.log('Vingo: lazy single login, scoped cookies, verified property, grouped IDs, Helsinki dates, empty/invalid/partial schedules, auth/redirect and response bounds passed');
+console.log('Vingo: lazy single login, scoped cookies, verified property, grouped IDs, Helsinki dates, empty/invalid/partial schedules, auth vs. service-outage split (401/redirect vs. html/403/500/offline) and response bounds passed');

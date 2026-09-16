@@ -20,6 +20,16 @@ Kaikkien kolmen julkisesta selainohjelmasta tarkistettiin sama Vingo Asioinnin r
 
 Tarkistus tehtiin julkisilla GET-pyynnöillä ilman asiakastunnuksia tai kirjautumisyrityksiä. Yhteensopiva julkinen selainohjelma ei yksin takaa jokaisen asiakastilin toimintaa; oikean kiinteistön onnistunut haku varmistuu vasta käyttäjän omilla tunnuksilla. Palvelut eivät ole dokumentoituja vakaita julkisia API-rajapintoja, joten muutokset voivat vaatia sovittimen päivityksen.
 
+## Kirjautumisten rajoittaminen
+
+Asiointitunnus on sama jolla huoltaja itse asioi, ja liian monta hylättyä kirjautumista lukitsee sen. Siksi vain yhtiön hylkäämä kirjautuminen (HTTP 401 tai kirjautumisvastauksen `response != OK`) pysäyttää haun ja kehottaa tarkistamaan tunnukset. Huoltosivu (HTTP 200 + `text/html`), suojamuurin 403, muu HTTP-virhe ja katkennut verkko ovat palveluhäiriöitä: ne eivät koskaan merkitse tunnuksia hylätyiksi eivätkä koskaan kehota tarkistamaan niitä.
+
+Hylkäyksen jälkeen `blocked` pysäyttää automaattisen haun kokonaan, ja kiinteistöhaku sallii yhden yrityksen puolen tunnin välein. Kiinteistöhaku on tarkoituksella myös ainoa tapa purkaa lukitustila ilman tunnusten syöttämistä uudelleen: onnistunut haku nollaa sekä `blocked`in että providerin katkaisijan. Yritysten väli tallennetaan kantaan (`waste.login-attempt`), joten palvelimen uudelleenkäynnistys ei anna uutta yritystä.
+
+Mitatut luvut (server/test/waste-lockout.ts) väärillä tunnuksilla: 60 kertaa painettu "Hae kiinteistöt" tuottaa 2 kirjautumista tunnissa, tunnin automaattihaku 1, ja kuusi käynnistystä 1,4 sekunnissa yhden. Yhtiön huoltokatkossa käsin haettaessa raja on yksi yritys minuutissa — häiriötä ei jäähdytetä, koska tili ei ole vaarassa eikä toipumisen tietä saa sulkea.
+
+Tunnukset salataan levylle avaimella, joka on omassa tiedostossaan tietokannan vieressä (`data/infonaytto.db.waste-key`). Jos avain katoaa tai vaihtuu, tallennettuja tunnuksia ei voi purkaa; asetusnäkymä kertoo sen erikseen (`keyMissing`) eikä väitä tunnusten olevan tallessa.
+
 ## Käyttörajoitukset
 
 Automaattiseen hakuun tarvitaan tuetun yhtiön olemassa olevat asiointitunnukset ja oikean kohteen valinta. Osoite yksin ei riitä henkilökohtaisen aikataulun lukemiseen. Sovellus ei tee tilauksia, muuta tyhjennysvälejä tai hyväksy uusia asiointiehtoja käyttäjän puolesta. Manuaaliset aikataulut säilyvät varatilana. Niiden toistoväli ei huomioi pyhäpäiväsiirtoja automaattisesti.

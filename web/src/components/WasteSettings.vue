@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useEditAccess } from '../composables/useEditAccess.ts';
-import { safeWasteUrl, type WasteCompany, type WasteConfig, type WasteProperty } from '../waste.ts';
+import { safeWasteUrl, wasteBlockedNotice, wasteRequestError, type WasteCompany, type WasteConfig, type WasteProperty } from '../waste.ts';
 const props = defineProps<{ allowed: boolean; linkable?: boolean }>();
 const access = useEditAccess();
 const companies = ref<WasteCompany[]>([]);
@@ -17,13 +17,31 @@ const suggestions = computed(() => {
 });
 const dirty = computed(() => !config.value || companyId.value !== config.value.companyId || municipality.value !== config.value.municipality || address.value !== config.value.address || !!username.value || !!password.value);
 const serviceUrl = computed(() => safeWasteUrl(company.value?.website));
+const now = ref(Date.now()), blockedUntil = ref(0);
+const blockedFor = computed(() => Math.max(0, Math.ceil((blockedUntil.value - now.value) / 1000)));
+let ticker: ReturnType<typeof setInterval> | undefined;
+// Kello käy VAIN jäähdytyksen ajan. Ilman sitä "Hae kiinteistöt" jäisi harmaaksi
+// vielä senkin jälkeen kun uusi yritys on jo sallittu, ja ainoaksi näkyväksi
+// ulospääsyksi jäisi salasanan syöttäminen uudelleen — sama umpikuja jota koko
+// tämä korjaus purkaa. Ajastin puretaan itse kun jäähdytys loppuu.
+watch(blockedUntil, until => {
+  clearInterval(ticker); ticker = undefined;
+  if (until <= Date.now()) return;
+  ticker = setInterval(() => { now.value = Date.now(); if (blockedUntil.value <= now.value) { clearInterval(ticker); ticker = undefined; } }, 1000);
+});
+onUnmounted(() => clearInterval(ticker));
 async function request<T>(path: string, method = 'GET', body?: object): Promise<T> {
   const response = await access.editFetch('/api/waste/' + path, { method, cache: 'no-store', ...(body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}) });
-  if (!response.ok) throw new Error(response.status === 429 ? 'Hakuja tehtiin liian tiheästi. Odota minuutti ennen uutta yritystä.' : response.status === 403 ? 'Tarvitset täyden käyttöoikeuden jätehuollon yhteyden asetuksiin.' : 'Jätehuollon pyyntö epäonnistui. Tarkista yhteys ja tunnukset ja yritä uudelleen.');
+  // Palvelimen `error`-kenttä näytetään sellaisenaan: se on ainoa kerros joka tietää
+  // oliko kyse huoltokatkosta vai hylätyistä tunnuksista (ks. wasteRequestError).
+  if (!response.ok) throw new Error(wasteRequestError(response.status, await response.json().catch(() => null)));
   return response.json();
 }
 function apply(value: WasteConfig) {
   config.value = value; companyId.value = value.companyId; municipality.value = value.municipality; address.value = value.address; propertyId.value = value.propertyId;
+  // `|| 0`: vanhempi palvelin ei kerro jäljellä olevaa aikaa, ja NaN jättäisi napin
+  // pysyvästi harmaaksi — mieluummin yksi turha yritys kuin lukko jota ei voi avata.
+  now.value = Date.now(); blockedUntil.value = value.blocked ? now.value + (value.blockedForSeconds || 0) * 1000 : 0;
 }
 async function run(action: () => Promise<void>) {
   if (busy.value) return;
@@ -95,6 +113,7 @@ watch(() => props.allowed, allowed => {
         <label>Kiinteistön osoite<input v-model="address" autocomplete="street-address" :disabled="busy" /></label>
         <template v-if="company?.adapter === 'vingo'">
           <p v-if="config?.configured && companyId === config.companyId">Tunnukset on tallennettu. Jätä kentät tyhjiksi säilyttääksesi ne.</p>
+          <p v-else-if="config?.keyMissing && companyId === config.companyId" role="alert">Tallennettuja tunnuksia ei voi enää purkaa: salausavain (data/infonaytto.db.waste-key) on kadonnut tai vaihtunut. Syötä käyttäjätunnus ja salasana uudelleen ja tallenna yhteys.</p>
           <label>Jätehuollon käyttäjätunnus<input v-model="username" autocomplete="username" :disabled="busy" /></label>
           <label>Jätehuollon salasana<input v-model="password" type="password" autocomplete="current-password" :disabled="busy" /></label>
         </template>
@@ -103,8 +122,8 @@ watch(() => props.allowed, allowed => {
         <button type="button" :disabled="busy || !companyId" @click="saveConnection">Tallenna jätehuollon yhteys</button>
         <template v-if="company?.adapter === 'vingo'">
           <p v-if="dirty">Tallenna yhteys ennen kiinteistöjen hakemista. Tallennus pysäyttää automaattisen haun, kunnes valitset kiinteistön uudelleen.</p>
-          <p v-if="config?.blocked">Kirjautuminen on estynyt. Tarkista tunnukset, tallenna yhteys ja hae kiinteistöt uudelleen.</p>
-          <button type="button" :disabled="busy || dirty || !config?.configured" @click="loadProperties">Hae kiinteistöt</button>
+          <p v-if="config?.blocked" role="status">{{ wasteBlockedNotice(blockedFor) }}</p>
+          <button type="button" :disabled="busy || dirty || !config?.configured || blockedFor > 0" @click="loadProperties">Hae kiinteistöt</button>
           <template v-if="properties.length">
             <label>Jätehuollon kiinteistö<select aria-label="Jätehuollon kiinteistö" v-model="propertyId" :disabled="busy"><option value="">Valitse kiinteistö</option><option v-for="item in properties" :key="item.id" :value="item.id">{{ item.address }}</option></select></label>
             <button type="button" :disabled="busy || dirty || !propertyId" @click="enable">Ota automaattinen haku käyttöön</button>

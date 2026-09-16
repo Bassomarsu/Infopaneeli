@@ -366,6 +366,10 @@ tee_testipaketti "$KOHDE"
 kirjoita_tiedosto "$KOHDE/.env" '# säilytä tämä täsmälleen'
 chmod 600 "$KOHDE/.env"
 kirjoita_tiedosto "$KOHDE/data/infonaytto.db" 'perheen tietokanta'
+# Jätehuollon tunnusten salausavain on oma tiedostonsa tietokannan vierellä. Jos
+# peilaus vie sen, kanta jää paikalleen mutta tunnukset muuttuvat purkukelvottomiksi
+# -- eli asetusnäkymä pyytää ne uudelleen, ja perhe luulee että salasana on vaihtunut.
+kirjoita_tiedosto "$KOHDE/data/infonaytto.db.waste-key" 'jätehuollon salausavain'
 kirjoita_tiedosto "$KOHDE/data/infonaytto-ennen-viestilahteita.db" 'paluuversio'
 kirjoita_tiedosto "$KOHDE/data/logs/palvelin.log" 'lokia'
 kirjoita_tiedosto "$KOHDE/server/src/poistunut.ts" 'vanha koodi'
@@ -393,8 +397,9 @@ peilaa_paketti "$LAHDE" "$KOHDE"
     || kaadu '.env muuttui peilauksessa'
 [[ "$(cat "$KOHDE/data/infonaytto.db")" == 'perheen tietokanta' \
    && "$(cat "$KOHDE/data/infonaytto-ennen-viestilahteita.db")" == 'paluuversio' \
+   && "$(cat "$KOHDE/data/infonaytto.db.waste-key")" == 'jätehuollon salausavain' \
    && -f "$KOHDE/data/logs/palvelin.log" ]] \
-    && ok 'Peilaus säilyttää data/-kansion, paluutietokannan ja lokit' \
+    && ok 'Peilaus säilyttää data/-kansion, paluutietokannan, jätehuollon salausavaimen ja lokit' \
     || kaadu 'data/-kansio kärsi peilauksessa'
 
 [[ ! -e "$KOHDE/$(basename "$LAHDE")" ]] \

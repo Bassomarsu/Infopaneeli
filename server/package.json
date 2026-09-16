@@ -32,7 +32,7 @@
     "test:household": "node test/household.ts",
     "test:menu": "node test/menu.ts && node test/menu-selection.ts",
     "test:namedays": "node test/namedays.ts",
-    "test:waste": "node test/waste-vingo.ts && node test/waste-service.ts"
+    "test:waste": "node test/waste-vingo.ts && node test/waste-service.ts && node test/waste-lockout.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",

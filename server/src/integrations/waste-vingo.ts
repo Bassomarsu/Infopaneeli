@@ -6,6 +6,18 @@ export class WasteAuthError extends Error {
     super(message); this.name = 'WasteAuthError';
   }
 }
+/**
+ * Palveluhäiriö, EI tunnusvirhe. Ero on se joka ratkaisee lukkiutuuko perheen
+ * jätehuoltotili: vain WasteAuthError pysäyttää kirjautumisen ja kehottaa
+ * tarkistamaan tunnukset, ja juuri se kehotus ajaa käyttäjän kokeilemaan
+ * salasanoja. Huoltosivu ja suojamuurin torjunta eivät kerro tunnuksista
+ * mitään, joten ne eivät saa näyttää väärältä salasanalta.
+ */
+export class WasteServiceError extends Error {
+  constructor(message = 'Jätehuoltopalvelu ei juuri nyt vastaa odotetusti (huolto tai häiriö). Yritä myöhemmin uudelleen.') {
+    super(message); this.name = 'WasteServiceError';
+  }
+}
 export interface WasteProperty { id: string; address: string }
 export interface WasteCollection { id: string; label: string; date: string }
 type Group = WasteProperty & { customers: string[] };
@@ -79,7 +91,14 @@ export function createVingoClient(baseUrl: string, username: string, password: s
         if (!target || redirects === 3) throw new WasteAuthError();
         await response.body?.cancel(); url = new URL(target,url); continue;
       }
-      if (response.status === 401 || response.status === 403 || response.headers.get('content-type')?.includes('text/html')) throw new WasteAuthError();
+      // Vain 401 on aito tunnusvirhe. Huoltosivu palautuu koodilla 200 ja
+      // `text/html`:llä, ja suojamuuri vastaa 403:lla — kumpikaan ei kerro
+      // tunnuksista mitään. Aiemmin kaikki kolme olivat WasteAuthError, jolloin
+      // yhtiön huoltokatko pysäytti kirjautumisen ja käyttöliittymä käski
+      // tarkistaa tunnukset. Tunnusten hylkääminen tunnistetaan oikeasti
+      // kirjautumisvastauksen `response !== 'OK'` -kentästä (ks. authenticate).
+      if (response.status === 401) throw new WasteAuthError();
+      if (response.status === 403 || response.headers.get('content-type')?.includes('text/html')) throw new WasteServiceError();
       if (!response.ok) throw new Error('Jätehuoltopalvelu palautti virheen (HTTP ' + response.status + ').');
       if (Number(response.headers.get('content-length')) > LIMIT) {await response.body?.cancel(); throw new Error('Jätehuollon vastaus on liian suuri.');}
       const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let length = 0;
