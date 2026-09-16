@@ -28,10 +28,12 @@
  *    puhelinten piilotetut kehittäjävalikot käyttävät pitkää painallusta
  *    eivätkä napautusta.
  *
- * Kosketusalue ulottuu päivämäärätekstin oman rivikorkeuden yli (ks. tyylin
- * top/bottom-arvot) käytettävyyden vuoksi — position:absolute pitää sen
- * silti kokonaan pois dokumentin virtauksesta, joten se ei voi työntää
- * kelloa/päivämäärää sivuun eikä muuttaa yläpalkin rivin korkeutta.
+ * Kosketusalue on TÄSMÄLLEEN päivämäärän laatikko (tyyleissä `inset: 0`).
+ * Riittävä korkeus tulee päivämäärän omasta rivikorkeudesta, jonka App.vue
+ * asettaa `--kiosk-exit-target`ista — EI tämän elementin ylityksestä, ks.
+ * tyylin perustelu alempana. position:absolute pitää alueen silti kokonaan
+ * pois dokumentin virtauksesta, joten se ei voi työntää kelloa/päivämäärää
+ * sivuun.
  */
 import { createLongPressTracker } from "../composables/useLongPress.ts";
 
@@ -74,19 +76,37 @@ const tracker = createLongPressTracker(HOLD_MS, MOVE_TOLERANCE_PX, () => emit("t
  * alue ulottui 21 px ruudun yli).
  *
  * Ala ei tästä pienene liikaa: päivämäärä on levein kapeallakin ruudulla
- * (mitattu 155 px yhdellä rivillä, kapeimmillaan pisimmän sanan verran),
- * ja pysty­suunnassa 0.9rem ylä- ja alapuolelle antaa n. 52 px korkeutta.
- * Mitattu vähintään 44x44 px jokaisella leveydellä 320–2736, molemmissa
- * bannerin tiloissa ja molemmilla päiväyspituuksilla.
+ * (mitattu 155 px yhdellä rivillä, kapeimmillaan pisimmän sanan verran).
  *
  * Vahinkolaukaisun riski ei kasva: päivämäärä on pelkkää tekstiä, jota ei
  * paineta mistään muusta syystä, eikä se ole ruudun reunassa kuten alun perin
  * hylätty nurkkasijainti. Ele on yhä kolmen sekunnin PAIKALLAAN pysyvä
  * painallus ja PIN kysytään edelleen erikseen.
+ *
+ * `inset: 0` — EI YLITYSTÄ, EIKÄ SITÄ SAA PALAUTTAA.
+ *
+ * Tässä oli `inset: -0.9rem 0`, eli alue ulottui 0.9rem päivämäärän laatikon
+ * ala- ja yläpuolelle saadakseen riittävän korkeuden. Alaspäin ylitys oli
+ * täsmälleen `.app`in `gap: 0.9rem`, eli yläpalkin ja ruudukon välin kokoinen.
+ * Kaksi samaa lukua kahdessa eri tiedostossa, eikä kummassakaan lukenut että
+ * ne on pidettävä synkassa — ja mitattu vara ensimmäiseen korttiin oli tasan
+ * 0.00 px jokaisella leveydellä 901–2736, jokaisella dpr:llä.
+ *
+ * Sovitustilassa se piti nipin napin, mutta vieritystilassa yläpalkki on
+ * tarttuva ja ruudukko liukuu sen ALLE, jolloin ylitys jäi näkyvän kortin
+ * päälle: kolmen sekunnin painallus "Merkitse kaikki luetuiksi" -napin
+ * yläreunassa avasi poistumisdialogin (mitattu 901, 1024, 1280, 1920 ja
+ * 2736 px). Sama vikaluokka kolmatta kertaa.
+ *
+ * Korkeus otetaan nyt päivämäärän OMASTA rivikorkeudesta (ks. App.vuen
+ * `.topbar__date`, `--kiosk-exit-target`), ei laatikon ylityksestä. Silloin
+ * alue on määritelmän mukaan täsmälleen päivämäärän laatikko: se ei voi
+ * ulottua yläpalkin ulkopuolelle, koska päivämäärä itse ei voi, eikä
+ * synkassa pidettäviä lukuja jää yhtään.
  */
 .hotspot {
   position: absolute;
-  inset: -0.9rem 0;
+  inset: 0;
   z-index: 50;
   background: transparent;
   touch-action: none;

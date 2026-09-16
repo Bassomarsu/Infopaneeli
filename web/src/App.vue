@@ -858,6 +858,13 @@ const isNight = computed(() => {
  * `row-gap` ei vaikuta mihinkään.
  */
 .topbar {
+  /*
+   * Pienin hyväksyttävä kosketuskohde. Ainoa paikka jossa tämä luku on:
+   * `.topbar__date` tekee siitä päivämäärän rivikorkeuden, ja
+   * KioskExitHotspot ottaa koko laatikon sellaisenaan (`inset: 0`). Alue ei
+   * siis voi olla tätä pienempi eikä ulottua palkin ulkopuolelle.
+   */
+  --kiosk-exit-target: 2.75rem;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -881,10 +888,34 @@ const isNight = computed(() => {
   letter-spacing: -0.01em;
 }
 
+/*
+ * `line-height` EI OLE TÄSSÄ TYPOGRAFIAA VAAN KOSKETUSKOHTEEN KOKO.
+ *
+ * KioskExitHotspot on tämän laatikon kokoinen (`inset: 0`), ja kioskista ei
+ * pääse ulos muuten kuin sitä painamalla, joten laatikon on oltava vähintään
+ * pienin hyväksyttävä kosketuskohde. Päivämäärän oma rivilaatikko on 1rem:n
+ * fontilla vain n. 24 px, eikä yläpalkki yhden rivin tilassa ole kuin 42.6 px
+ * korkea — alue EI siis mahdu 44 px:iin ilman että jokin kasvaa.
+ *
+ * Kasvatettava on nimenomaan tämä rivikorkeus eikä hotspotin `inset`:
+ *
+ *  - Ylitys (`inset: -0.9rem 0`) vei alueen yläpalkin laatikon ULKOPUOLELLE
+ *    ruudukon päälle. Ks. KioskExitHotspot.vuen tyylikommentti — se on juuri
+ *    se vika joka tässä korjataan, eikä sitä saa tuoda takaisin.
+ *  - `min-height` laatikolle siirtäisi tekstin laatikon yläreunaan ja rikkoisi
+ *    kellon kanssa jaetun perusviivan (`.topbar__time { align-items: baseline }`).
+ *
+ * Rivikorkeus jakaa lisätilan tasan tekstin ylä- ja alapuolelle, joten kello
+ * ja päivämäärä pysyvät PIKSELILLEEN paikallaan; vain yläpalkin laatikko
+ * kasvaa alaspäin (mitattu 42.6 px -> 52.6 px), ja ruudukko seuraa mukana.
+ * Kahdelle riville kääriytyvä päivämäärä (320 px) saa kaksinkertaisen
+ * laatikon, jolloin alue kasvaa mukana eikä erikoistapausta synny.
+ */
 .topbar__date {
   font-size: 1rem;
   color: var(--text-dim);
   text-transform: capitalize;
+  line-height: var(--kiosk-exit-target);
 }
 
 /* Ankkuri KioskExitHotspotille (ks. topbar__time-templaatin kommentti) —
