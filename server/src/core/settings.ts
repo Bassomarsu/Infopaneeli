@@ -12,8 +12,6 @@ import { isPostalCode } from "./postal-codes.ts";
 export const GRID_COLUMNS = 6;
 export const GRID_ROWS = 8;
 /** Generous safety bound for browser CSS grid tracks, independent of viewport capacity. */
-export const MAX_LAYOUT_ROWS = 10_000;
-
 /**
  * Kortti leikkaa ylivuotavan sisältönsä piiloon (`overflow: hidden`), eikä
  * otsikko voi kutistua. Liian pieneksi kutistettu paneeli ei siis kaadu vaan
@@ -39,6 +37,22 @@ export const PANEL_IDS = [
 ] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
+
+/**
+ * Rivien yläraja VIERITYSTILASSA (gridOverflow: "scroll"). Sovitustilassa
+ * raja on GRID_ROWS, ja se tarkistetaan erikseen parsePanelLayoutissa.
+ *
+ * Luku on JOHDETTU eikä valittu: pahin mielekäs asettelu on jokainen paneeli
+ * omalla rivillään yhdessä sarakkeessa, kukin kaksinkertaisena
+ * vähimmäiskorkeuteensa nähden. Sitä pidemmälle venytetty ruudukko ei ole
+ * asettelu vaan vahinko.
+ *
+ * Aiemmin tässä luki 10 000 ilman perustelua. Katselmoija asetti yhden
+ * paneelin riville 300: palvelin hyväksyi sen ja sivun korkeudeksi tuli
+ * 37 769 px. Muokkaustilan automaattivieritys (scrollBy 30 px per liike)
+ * tekee siitä helpon vahingossa, eikä seinänäyttöä vieritetä takaisin.
+ */
+export const MAX_LAYOUT_ROWS = PANEL_IDS.length * MIN_PANEL_SPAN * 2;
 
 /** Ks. Settings.gridOverflow. Pidettävä samana kuin web/src/types.ts. */
 export type GridOverflow = "fit" | "scroll";

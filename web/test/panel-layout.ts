@@ -13,6 +13,7 @@ import { mergeWithDefaults, overlaps, resolveMove, resolveResize } from "../src/
 import {
   GRID_COLUMNS,
   GRID_ROWS,
+  MAX_LAYOUT_ROWS,
   MIN_PANEL_SPAN,
   PANEL_IDS,
   defaultPanelLayout,
@@ -383,10 +384,17 @@ console.log("ok  null palauttaa koko oletusasettelun");
   assert.ok(Object.values(layout).some(p => p.row > GRID_ROWS));
   assertNoOverlaps(layout, 'scroll all panels', []);
   assert.deepEqual(mergeWithDefaults(layout), layout, 'reload preserves extended rows');
+  // Siirto ruudukon ulkopuolelle RAJAUTUU, ei hyväksytä sellaisenaan.
+  // Aiemmin tässä odotettiin riviä 100, koska MAX_LAYOUT_ROWS oli 10 000:
+  // yksi paneeli riville 300 tuotti 37 769 px korkean sivun. Odotus on nyt
+  // johdettu katosta eikä kiinteä luku, jotta se seuraa mukana jos
+  // paneelien määrä muuttuu.
   const moved = resolveMove(layout, 'waste', 1, 100, 1, 100, [], true);
-  assert.equal(moved.layout.waste.row, 100);
+  const ylin = MAX_LAYOUT_ROWS - moved.layout.waste.rowSpan + 1;
+  assert.equal(moved.layout.waste.row, ylin);
+  assert.ok(moved.layout.waste.row + moved.layout.waste.rowSpan - 1 <= MAX_LAYOUT_ROWS);
   const grown = resolveResize(moved.layout, 'waste', 2, 6, [], true);
-  assert.equal(grown.waste.rowSpan, 6);
+  assert.ok(grown.waste.row + grown.waste.rowSpan - 1 <= MAX_LAYOUT_ROWS, 'kasvu ei saa ylittää kattoa');
   assert.deepEqual(grown.weather, layout.weather);
   console.log('ok  scroll enables every panel unchanged, persists extra rows and moves/resizes below row eight');
 }
@@ -394,20 +402,28 @@ console.log("ok  null palauttaa koko oletusasettelun");
 {
   const { findFreeSpot } = await import('../src/composables/usePanelLayout.ts');
   const layout = structuredClone(defaultPanelLayout);
-  layout.schedule = {col:1,row:1,colSpan:6,rowSpan:8_000};
+  // Paneeli joka täyttää ruudukon katon asti: vapaa paikka on sen alapuolella
+  // vain jos kattoa on jäljellä. Luvut on johdettu MAX_LAYOUT_ROWSista, koska
+  // katto on nyt paneelimäärästä laskettu eikä kiinteä 10 000.
+  const korkea = MAX_LAYOUT_ROWS - 2;
+  layout.schedule = {col:1,row:1,colSpan:6,rowSpan:korkea};
   const hidden = PANEL_IDS.filter(id => id !== 'schedule');
   const spot = findFreeSpot(layout, hidden, 'waste', 2, 2, true);
-  assert.deepEqual(spot, {col:1,row:8_001,colSpan:2,rowSpan:2});
+  assert.deepEqual(spot, {col:1,row:korkea + 1,colSpan:2,rowSpan:2});
   console.log('ok  sparse tall layouts locate the next free boundary directly');
 }
 
 {
  const layout = structuredClone(defaultPanelLayout);
- layout.waste = {col:1,row:9999,colSpan:2,rowSpan:2};
+ // Ylin sallittu rivi 2x2-paneelille, ja sen ylitys. Johdettu katosta.
+ const ylin = MAX_LAYOUT_ROWS - 1;
+ layout.waste = {col:1,row:ylin,colSpan:2,rowSpan:2};
  const hidden = PANEL_IDS.filter(id => id !== 'waste');
  const moved=resolveMove(layout,'waste',1,100000,1,100000,hidden,true);
- assert.equal(moved.layout.waste.row,9999);
- layout.waste.row=10000;
+ assert.equal(moved.layout.waste.row,ylin);
+ // Katon yli menevä tallennettu sijoitus hylätään ja korvataan oletuksella,
+ // eikä kortti katoa hiljaa.
+ layout.waste.row=MAX_LAYOUT_ROWS + 1;
  assert.deepEqual(mergeWithDefaults(layout).waste,defaultPanelLayout.waste);
  console.log('ok  browser grid track safety limit rejects overflow without clipping stored cards');
 }

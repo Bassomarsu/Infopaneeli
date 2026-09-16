@@ -295,9 +295,6 @@ export interface NewsData {
 /** Pidettävä samana kuin server/src/core/settings.ts. */
 export const GRID_COLUMNS = 6;
 export const GRID_ROWS = 8;
-/** Generous safety bound for browser CSS grid tracks, independent of viewport capacity. */
-export const MAX_LAYOUT_ROWS = 10_000;
-
 /**
  * Tätä pienempi paneeli leikkaisi sisältönsä piiloon otsikkoa ja
  * "vanhentunut"-merkkiä myöten, jolloin rikkinäistä lähdettä ei enää huomaisi.
@@ -321,6 +318,17 @@ export const PANEL_IDS = [
 ] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
+
+/**
+ * Rivien yläraja VIERITYSTILASSA. Sovitustilassa raja on GRID_ROWS.
+ * Pidettävä samana kuin server/src/core/settings.ts.
+ *
+ * Johdettu eikä valittu: pahin mielekäs asettelu on jokainen paneeli omalla
+ * rivillään yhdessä sarakkeessa, kukin kaksinkertaisena vähimmäiskorkeuteensa
+ * nähden. Aiemmin tässä luki 10 000 ilman perustelua, ja yksi paneeli riville
+ * 300 tuotti 37 769 px korkean sivun.
+ */
+export const MAX_LAYOUT_ROWS = PANEL_IDS.length * MIN_PANEL_SPAN * 2;
 
 /** Ks. Settings.gridOverflow. Pidettävä samana kuin server/src/core/settings.ts. */
 export type GridOverflow = "fit" | "scroll";

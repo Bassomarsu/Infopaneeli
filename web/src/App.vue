@@ -442,12 +442,21 @@ const isNight = computed(() => {
       </div>
 
       <div class="topbar__editing-actions">
-        <button
-          type="button"
-          class="edit-btn"
-          :disabled="panelLayout.saving.value"
-          @click="panelLayout.cancelEditing()"
-        >
+        <!--
+          PERUUTA EI OLE KOSKAAN POIS KÄYTÖSTÄ, eikä sitä saa kytkeä pois.
+
+          `cancelEditing` on puhtaasti paikallinen: se palauttaa luonnoksen ja
+          sulkee muokkaustilan lähettämättä mitään palvelimelle. Sillä ei siis
+          ole mitään syytä odottaa tallennusta.
+
+          Aiemmin se oli `:disabled="saving"`, ja muokkaustilan palkissa ei ole
+          kioskin poistumisaluetta. Jos palvelin jumittui vastaamatta,
+          `saving` jäi päälle, Peruuta oli harmaana eikä kioskista päässyt
+          ulos lainkaan. Tallennukseen lisättiin myös aikakatkaisu (ks.
+          usePanelLayout.ts), mutta tämä on se suora ulospääsy: napin
+          toimiminen ei saa riippua verkosta.
+        -->
+        <button type="button" class="edit-btn" @click="panelLayout.cancelEditing()">
           Peruuta
         </button>
         <button

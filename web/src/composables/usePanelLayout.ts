@@ -508,6 +508,11 @@ export function usePanelLayout(
       const response = await editAccess.editFetch("/api/settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
+        // Aikakatkaisu, jottei `saving` jää pysyvästi päälle jos palvelin ei
+        // vastaa lainkaan (jumittuu, ei kieltäydy). Ilman tätä muokkaustilasta
+        // tuli umpikuja: `saving` piti Peruuta-napin pois käytöstä, eikä
+        // muokkaustilan palkissa ole kioskin poistumisaluetta.
+        signal: AbortSignal.timeout(15_000),
         // Osittainen PUT: vain nämä kaksi avainta. Muokkaustila ei tiedä
         // mitään muista asetuksista eikä saa kirjoittaa niiden päälle —
         // asetuspaneeli voi olla auki toisella laitteella samaan aikaan.
