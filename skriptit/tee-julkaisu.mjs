@@ -31,6 +31,48 @@ const isWindows = process.platform === "win32";
 // bsdtar (System32\tar.exe, mukana Windows 10 1803:sta lähtien) osaa nämä
 // polut oikein, joten käytetään sitä suoraan absoluuttisella polulla PATH-
 // järjestyksestä riippumatta.
+/**
+ * Poista tiedosto tai hakemisto. Korvaa `fs.rmSync`in koko tässä skriptissä.
+ *
+ * `fs.rmSync` palaa joissakin ympäristöissä virheettä poistamatta mitään —
+ * tässä projektissa niin käy koko projektilevyllä, todennettu 17.9.2026
+ * erikseen tiedostolla ja hakemistolla, `force`illa ja ilman. `unlinkSync` ja
+ * `rmdirSync` toimivat samalla levyllä.
+ *
+ * Koonnissa tämä ei ole pikkuvika: työtilan tyhjennys, staging-puun karsinta
+ * ja välimuistin siivous nojaavat kaikki poistoon. Hiljaa epäonnistuessaan ne
+ * jättävät vanhat tiedostot matkaamaan pakettiin. Skripti on tähän asti
+ * kiertänyt ongelmaa jättämällä tiedostot pois arkistoinnissa (ks.
+ * ARCHIVE_EXCLUDES) ja tarkistamalla lopputuloksen — ne varmistukset jäävät
+ * paikalleen, koska poiston toimiminen ei ole enää ainoa asia jonka varassa
+ * paketin oikeellisuus on.
+ */
+function poistaPuu(kohde) {
+  let tiedot;
+  try {
+    tiedot = fs.lstatSync(kohde);
+  } catch {
+    return; // Ei ole olemassa — ei mitään poistettavaa.
+  }
+  // Linkkiä EI seurata: sen kohde on toisaalla eikä kuulu tähän. Windowsissa
+  // hakemistolinkki (junction) irtoaa vain `rmdirSync`illä ja tiedostolinkki
+  // vain `unlinkSync`illä, eikä `lstat` erottele niitä — siksi molemmat.
+  if (tiedot.isSymbolicLink()) {
+    try {
+      fs.unlinkSync(kohde);
+    } catch {
+      fs.rmdirSync(kohde);
+    }
+    return;
+  }
+  if (tiedot.isDirectory()) {
+    for (const nimi of fs.readdirSync(kohde)) poistaPuu(path.join(kohde, nimi));
+    fs.rmdirSync(kohde);
+    return;
+  }
+  fs.unlinkSync(kohde);
+}
+
 const TAR_CMD = isWindows ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
 
 // --- Node-versio -----------------------------------------------------------
@@ -212,7 +254,7 @@ async function ensureNodeArchive(platform, shasums) {
 
   const actual = sha256File(dest);
   if (actual !== expected) {
-    fs.rmSync(dest, { force: true }); // ei jätetä viallista tiedostoa välimuistiin
+    poistaPuu(dest); // ei jätetä viallista tiedostoa välimuistiin
     fail(
       `SHA256 EI TÄSMÄÄ tiedostolle ${platform.archiveFile}!\n` +
         `  odotettu (SHASUMS256.txt): ${expected}\n` +
@@ -237,7 +279,7 @@ function extractSingleFile(archivePath, entryName, destFilePath) {
   }
   fs.mkdirSync(path.dirname(destFilePath), { recursive: true });
   fs.copyFileSync(extracted, destFilePath);
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  poistaPuu(tmpDir);
 }
 
 // --- Tuotantoriippuvuudet ----------------------------------------------------
@@ -302,10 +344,10 @@ function installProdDependencies(stagingRoot) {
   // web/node_modules taas syntyisi vain jos jokin riippuvuus ei hoituisi
   // juuren hoiston kautta — tässä projektissa ei synny, mutta poistetaan
   // silti varmuuden vuoksi.
-  fs.rmSync(path.join(nodeModules, "@infonaytto"), { recursive: true, force: true });
-  fs.rmSync(path.join(nodeModules, ".bin"), { recursive: true, force: true });
-  fs.rmSync(path.join(nodeModules, ".package-lock.json"), { force: true });
-  fs.rmSync(path.join(stagingRoot, "web", "node_modules"), { recursive: true, force: true });
+  poistaPuu(path.join(nodeModules, "@infonaytto"));
+  poistaPuu(path.join(nodeModules, ".bin"));
+  poistaPuu(path.join(nodeModules, ".package-lock.json"));
+  poistaPuu(path.join(stagingRoot, "web", "node_modules"));
 
   const nativeModules = findNativeModules(nodeModules);
   if (nativeModules.length > 0) {
@@ -318,9 +360,9 @@ function installProdDependencies(stagingRoot) {
   console.log("✓ Ei natiivimoduuleja tuotantoriippuvuuksissa (node:sqlite on Node 24:n sisäänrakennettu).");
 
   // Väliaikaiset manifestit pois — ne eivät kuulu sitovaan pakettirakenteeseen.
-  fs.rmSync(tempPackageJson, { force: true });
-  fs.rmSync(tempLockfile, { force: true });
-  fs.rmSync(tempWebPackageJson, { force: true });
+  poistaPuu(tempPackageJson);
+  poistaPuu(tempLockfile);
+  poistaPuu(tempWebPackageJson);
 }
 
 // --- Tar-otsikoiden suoritusoikeuden korjaus --------------------------------
@@ -464,7 +506,7 @@ function assertNoStaleAssets(webDist) {
 
 function createArchive(stagingParent, topFolderName, outFile) {
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  fs.rmSync(outFile, { force: true });
+  poistaPuu(outFile);
   const excludeArgs = ARCHIVE_EXCLUDES.flatMap((pattern) => ["--exclude", pattern]);
   // -a: pakkaustapa (zip/gzip) päätellään tiedostopäätteestä.
   // Juuren package.json ja web/package.json suljetaan pois nimenomaisilla
@@ -591,7 +633,7 @@ function verifyArchiveContents(archivePath, topFolderName) {
     if (fs.existsSync(path.join(root, rel))) offenders.push(`ei kuulu pakettiin: ${rel}`);
   }
 
-  fs.rmSync(verifyDir, { recursive: true, force: true });
+  poistaPuu(verifyDir);
 
   if (offenders.length > 0) {
     fail(`Pakettitarkistus epäonnistui:\n${offenders.map((o) => `  - ${o}`).join("\n")}`);
@@ -759,7 +801,7 @@ async function main() {
   // package-lock.json matkasivat valmiiseen arkistoon asti). rmSync ei
   // kuitenkaan aina kerro epäonnistuneensa: joissakin ympäristöissä se palaa
   // virheettä poistamatta mitään. Siksi tulos TARKISTETAAN eikä oleteta.
-  fs.rmSync(workDir, { recursive: true, force: true });
+  poistaPuu(workDir);
   if (fs.existsSync(workDir)) {
     fail(
       `Työtilaa ei saatu tyhjennettyä: ${workDir}\n` +
@@ -889,7 +931,7 @@ async function main() {
 
     // Siivotaan tämän alustan työtila heti pois — ei jätetä isoa node_modulesia
     // makaamaan koko koonnin loppuun asti, ja seuraava alusta saa puhtaan pohjan.
-    fs.rmSync(stagingParent, { recursive: true, force: true });
+    poistaPuu(stagingParent);
   }
 
   // Arkistojen omat tarkisteet arkistojen viereen. VERSIO.txt on paketin
