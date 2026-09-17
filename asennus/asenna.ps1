@@ -684,6 +684,57 @@ function Test-NayttaaAsennukselta {
     return -not (Test-Path -LiteralPath (Join-Path $Polku '.git'))
 }
 
+# Kerro MIKÄ lähteestä puuttuu, älä vain että se ei kelpaa.
+#
+# Yleisin tapa päätyä tähän on kloonata git-repo ja ajaa tämä skripti siitä.
+# Silloin "Lähde ei ole ehjä" on harhaanjohtava: mikään ei ole rikki, vaan
+# kloonissa ei yksinkertaisesti ole niitä osia jotka syntyvät vasta koonnissa
+# (node\, web\dist\, node_modules\). Ilman erittelyä seuraava looginen
+# päätelmä on että lataus epäonnistui, ja se vie etsimään väärää vikaa.
+function Get-PakettiPuutteet {
+    param([string]$Polku)
+    $puuttuu = @()
+    foreach ($merkki in @('node\node.exe', 'VERSIO.txt', 'web\dist\index.html', 'server\src\index.ts', 'server\package.json', 'asennus\kaynnista.ps1')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Polku $merkki) -PathType Leaf)) { $puuttuu += $merkki }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $Polku 'node_modules') -PathType Container)) { $puuttuu += 'node_modules\' }
+    return $puuttuu
+}
+
+function Get-PakettiVirheviesti {
+    param([string]$Polku)
+    $puuttuu = Get-PakettiPuutteet $Polku
+    $onKlooni = (Test-Path -LiteralPath (Join-Path $Polku '.git')) -or
+                ((Test-Path -LiteralPath (Join-Path $Polku 'server\src\index.ts') -PathType Leaf) -and
+                 -not (Test-Path -LiteralPath (Join-Path $Polku 'node') -PathType Container))
+    $rivit = @()
+    if ($onKlooni) {
+        $rivit += 'Tama on Infonayton LAHDEKOODIKOPIO, ei julkaisupaketti.'
+        $rivit += ''
+        $rivit += 'asenna.ps1 asentaa vain valmiin julkaisupaketin, jossa on mukana oma'
+        $rivit += 'Node-ajonaikansa. Git-kloonista puuttuvat ne osat jotka syntyvat vasta'
+        $rivit += 'koonnissa - mikaan ei siis ole rikki.'
+        $rivit += ''
+        $rivit += 'Vaihtoehdot:'
+        $rivit += '  1. Lataa valmis julkaisupaketti (GitHub -> Releases) ja aja asenna.ps1'
+        $rivit += '     sen asennus-kansiosta.'
+        $rivit += '  2. Koosta paketti itse tasta kloonista:  npm install  &&  npm run release'
+        $rivit += '     Paketit tulevat julkaisu\-kansioon.'
+        $rivit += '  3. Aja kehityskopiona ilman asenninta - ks. asennus\KAYTTOONOTTO.md,'
+        $rivit += '     luku "Tapa 2: Kehityskopiosta".'
+    } else {
+        $rivit += 'Lahde ei ole ehja Infonayton julkaisupaketti.'
+        $rivit += 'Pura zip uudelleen; keskeytynyt purku jattaa juuri tallaisen jaljen.'
+    }
+    if ($puuttuu.Count) {
+        $rivit += ''
+        $rivit += ('Puuttuu: ' + ($puuttuu -join ', '))
+    }
+    $rivit += ''
+    $rivit += ('Lahde: ' + $Polku)
+    return ($rivit -join [Environment]::NewLine)
+}
+
 # /MIR saa koskea vain kokonaiseen julkaisupakettiin ja erilliseen tyhjään
 # hakemistoon tai tunnistettuun asennukseen. Linkkejä ei seurata kummassakaan.
 function Assert-EiLinkkeja {
@@ -718,7 +769,7 @@ function Assert-PakettiKohde {
         }
         Assert-EiLinkkeja $polku
     }
-    if (-not (Test-NayttaaAsennukselta $Lahde) -or -not (Test-Path -LiteralPath (Join-Path $Lahde 'web\dist\index.html') -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $Lahde 'node_modules') -PathType Container)) { throw 'Lähde ei ole ehjä Infonäytön julkaisupaketti.' }
+    if (-not (Test-NayttaaAsennukselta $Lahde) -or -not (Test-Path -LiteralPath (Join-Path $Lahde 'web\dist\index.html') -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $Lahde 'node_modules') -PathType Container)) { throw (Get-PakettiVirheviesti $Lahde) }
     $a = Get-NormalisoituPolku $Lahde
     $b = Get-NormalisoituPolku $Kohde
     if ($a -eq $b) { return }
