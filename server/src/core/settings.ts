@@ -11,7 +11,6 @@ import { isPostalCode } from "./postal-codes.ts";
  */
 export const GRID_COLUMNS = 6;
 export const GRID_ROWS = 8;
-/** Generous safety bound for browser CSS grid tracks, independent of viewport capacity. */
 /**
  * Kortti leikkaa ylivuotavan sisältönsä piiloon (`overflow: hidden`), eikä
  * otsikko voi kutistua. Liian pieneksi kutistettu paneeli ei siis kaadu vaan

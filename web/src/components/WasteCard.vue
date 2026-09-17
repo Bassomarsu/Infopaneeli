@@ -30,7 +30,7 @@ function dateLabel(date: string) {
           <p v-else-if="snapshot?.status === 'idle' && automatic?.enabled">Haetaan noutopäiviä…</p>
           <p v-else-if="!automatic?.enabled">Automaattinen haku ei ole käytössä. Yhteyden voi määrittää asetuksista.</p>
           <ul v-if="automatic?.enabled && upcoming.length">
-            <li v-for="event in upcoming.slice(0, 30)" :key="event.id"><span>{{ event.label }}</span><time :datetime="event.date">{{ dateLabel(event.date) }}</time></li>
+            <li v-for="event in upcoming.slice(0, 30)" :key="event.id" data-card-row><span>{{ event.label }}</span><time :datetime="event.date">{{ dateLabel(event.date) }}</time></li>
           </ul>
           <p v-else-if="automatic?.enabled && snapshot?.status === 'ok'">Palvelu ei ilmoita tulevia noutopäiviä.</p>
           <p v-if="snapshot?.fetchedAt && automatic?.enabled">Haettu {{ new Date(snapshot.fetchedAt).toLocaleString('fi-FI') }}. Tarkista myös yhtiön poikkeustiedotteet.</p>
@@ -43,6 +43,13 @@ function dateLabel(date: string) {
 </template>
 <style scoped>
 .waste-content { height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+/* HouseholdListin oma `height: 100%; overflow: auto` on tarkoitettu korttiin
+   jossa lista on koko sisalto. Taalla se on yksi osio kahdesta, ja sen
+   otsikon `h3` verran liian korkea laatikko tyonsi kortin 21 px ylivuotoon
+   ilman etta yksikaan rivi jai piiloon (mitattu 2736 x 1824, koko 2 x 2) —
+   kortti siis varoitti tyhjasta. Vieritys kuuluu tassa .waste-contentille.
+   Sama korjaus kuin NamedayCard.vuessa, samasta syysta. */
+.waste-content :deep(.household) { height: auto; overflow: visible; flex-shrink: 0; }
 h3 { font-size: .85rem; font-weight: 600; margin: 0 0 .5rem; }
 p { font-size: .82rem; color: var(--text-faint); line-height: 1.45; margin: .4rem 0; }
 .automatic { padding-bottom: .7rem; border-bottom: 1px solid var(--border); }

@@ -110,6 +110,7 @@ const isEmpty = computed(() => rows.value.length === 0);
         @click="openNews(row)"
         :style="index < visibleCount ? undefined : { visibility: 'hidden' }"
         :aria-hidden="index < visibleCount ? undefined : 'true'"
+        :data-card-row="index < visibleCount ? '' : 'hidden'"
       >
         <span class="news__title">{{ row.title }}</span>
         <span v-if="row.age" class="news__age tnum">{{ row.age }}</span>

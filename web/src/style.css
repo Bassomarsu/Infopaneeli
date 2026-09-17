@@ -205,6 +205,81 @@ body:has(.app--scroll) #app {
   color: #f3c26b;
 }
 
+/*
+ * "Tästä ei näy kaikkea." Ks. cardOverflow.ts — kortti ei saa leikata
+ * sisältöään hiljaa, koska seinänäyttöä ei vieritetä.
+ *
+ * VÄRI EI OLE VAROITUSVÄRI, eikä se ole huolimattomuutta. Vajaa näkymä on
+ * normaali tila pienessä kortissa, ei vika: jos tämä olisi sama keltainen
+ * kuin `card--stale`, puolet ruudusta hehkuisi varoitusta koko päivän ja
+ * OIKEA varoitus — vanhentunut lähde — hukkuisi joukkoon. Rivi erottuu
+ * muodolla: oma yläviiva ja alaspäin osoittava merkki.
+ *
+ * `flex-shrink: 0` on ehto: tämä rivi ei saa koskaan olla se joka jää
+ * piiloon.
+ */
+/*
+ * Kun ilmoitusrivi on näkyvissä, kortin runko leikkaa ylivuotonsa ITSE.
+ *
+ * Ilman tätä ylivuotava sisältö piirtyi ilmoitusrivin PÄÄLLE: kortti leikkaa
+ * vasta omassa reunassaan (`.card { overflow: hidden }`), eli ilmoitusrivin
+ * alapuolella, joten sää- ja pörssisähkökortissa "Sisältö ei mahdu näkyviin"
+ * jäi lämpötilarivin alle lukukelvottomaksi (mitattu 1920 x 1080). Rivi jonka
+ * itsensä voi peittää ei kerro mitään.
+ *
+ * `:has()` rajaa tämän niihin kortteihin joissa ilmoitus oikeasti on, eikä
+ * muuta muiden korttien leikkausrajaa lainkaan. Sama keino ja sama syy kuin
+ * `html:has(.app--scroll)`illa ylempänä: tilan tietää vain Vue-sovellus.
+ */
+.card:has(.card__clipped) .card__body {
+  overflow: hidden;
+}
+
+.card__clipped {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.45rem -1.35rem -1.15rem;
+  padding: 0.3rem 1.35rem 0.35rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: var(--text-dim);
+  background: var(--surface-strong);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.card__clipped-glyph {
+  font-size: 1.05rem;
+  line-height: 0.6;
+  /* Merkki kantaa viestin myös yötilan himmennyksen jälkeen, jolloin pelkkä
+     harmaa teksti on jo hyvin vaimea. */
+  color: var(--accent-power);
+}
+
+/*
+ * Tiivis kortti (ks. cardOverflow.ts:n COMPACT_CARD_HEIGHT): täytteet ja välit
+ * pienemmiksi. Tämä ei poista sisältöä vaan koristetilaa — mitattuna 17 px
+ * takaisin, eli suunnilleen se minkä yllä oleva ilmoitusrivi vie. Kortti ei
+ * siis menetä sisältörivejä siitä että se alkoi kertoa totuuden.
+ */
+.card--compact {
+  padding: 0.8rem 1rem;
+}
+
+.card--compact .card__head {
+  margin-bottom: 0.5rem;
+}
+
+.card--compact .card__clipped {
+  margin: 0.35rem -1rem -0.8rem;
+  padding: 0.25rem 1rem 0.3rem;
+}
+
 .state {
   display: flex;
   flex-direction: column;

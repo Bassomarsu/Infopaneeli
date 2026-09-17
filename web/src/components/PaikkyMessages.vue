@@ -126,7 +126,7 @@ const state = computed<{ title: string | null; text: string } | null>(() => {
     <p v-if="messagesError" class="notice">Päikyn viestejä ei saatu haettua kokonaan</p>
 
     <ul class="messages">
-      <li v-for="message in messages" :key="message.id" class="message">
+      <li v-for="message in messages" :key="message.id" class="message" data-card-row>
         <div class="message__row">
           <span class="message__sender">{{ message.sender ?? "" }}</span>
           <span class="message__time tnum">{{ sentLabel(message.sentAt) }}</span>

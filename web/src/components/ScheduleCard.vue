@@ -275,7 +275,7 @@ function onSwipeCancel(event: PointerEvent): void {
               <p v-if="group.lessons.length === 0" class="schedule__empty">Ei tunteja</p>
 
               <ol v-else class="lessons">
-                <li v-for="lesson in group.lessons" :key="`${lesson.start}-${lesson.groupId}`" class="lesson">
+                <li v-for="lesson in group.lessons" :key="`${lesson.start}-${lesson.groupId}`" class="lesson" data-card-row>
                   <span class="lesson__time tnum">
                     {{ lesson.start }}<span class="lesson__end">–{{ lesson.end }}</span>
                   </span>

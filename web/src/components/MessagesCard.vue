@@ -447,7 +447,7 @@ function closeDialog(): void {
       </div>
 
       <ul v-else class="messages">
-        <li v-for="message in visibleMessages" :key="message.id" class="message">
+        <li v-for="message in visibleMessages" :key="message.id" class="message" data-card-row>
           <button type="button" class="message__open" @click="openDialog(message)">
             <div class="message__row">
               <!-- The sender only becomes known once the detail has been fetched;
