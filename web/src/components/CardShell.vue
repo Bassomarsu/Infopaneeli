@@ -11,6 +11,7 @@ import {
   clippedRowCount,
   hiddenPixels,
   isCompactCard,
+  noticeFitsInCard,
   type RowBand,
 } from '../cardOverflow';
 import { PANEL_TITLES } from '../types';
@@ -72,39 +73,43 @@ const bodyEl = ref<HTMLElement | null>(null);
 const noticeEl = ref<HTMLElement | null>(null);
 
 const hiddenPx = ref(0);
-/** Rivit jotka jäisivät piiloon myös ilman ilmoitusriviä — ilmoituksen PERUSTE. */
-const hiddenRowsWithoutNotice = ref(0);
-/** Rivit jotka jäävät piiloon sellaisenaan — ilmoituksen LUKU. */
+/** Kortin ITSENSÄ piilottamat rivit (uutiskortti) — ilmoituksen PERUSTE pikselien ohella. */
+const concealedRows = ref(0);
+/** Rivit joita katsoja ei saa luettua: taitteen alla TAI ilmoitusrivin peitossa. */
 const hiddenRows = ref(0);
 const cardHeight = ref(0);
+/** Mahtuuko ilmoitusrivi runkoon peittämättä otsikkoa. */
+const noticeHasRoom = ref(false);
 
 const compact = computed(() => isCompactCard(cardHeight.value));
 provide(cardCompactKey, compact);
 
-const notice = computed(() =>
-  cardIsClipped(hiddenPx.value, hiddenRowsWithoutNotice.value) ? clipNotice(hiddenRows.value) : null,
+/*
+ * Ilmoituksen TEKSTI on aina olemassa; `noticeVisible` päättää näkyykö se.
+ *
+ * Rivi renderöidään DOMiin myös piilotettuna, koska sen korkeus tarvitaan
+ * päätökseen "mahtuuko tämä runkoon peittämättä otsikkoa" — ja korkeutta ei
+ * voi mitata elementistä jota ei ole. Ks. style.css:n `.card__clipped--hidden`.
+ */
+const notice = computed(() => clipNotice(hiddenRows.value));
+const noticeVisible = computed(
+  () => noticeHasRoom.value && cardIsClipped(hiddenPx.value, concealedRows.value),
 );
 const noticeLabel = computed(() => clipNoticeLabel(hiddenRows.value));
 
 /**
- * Kuinka monta pikseliä ilmoitusrivi vie kortin korkeudesta.
+ * Ilmoitusrivin korkeus pikseleinä — myös silloin kun rivi on piilotettu.
  *
- * MARGINAALIT OVAT MUKANA, EIKÄ SE OLE PIKKUTARKKUUTTA. Ilmoitusrivi
- * ulottuu kortin reunoihin negatiivisilla marginaaleilla (ks. style.css), ja
- * `offsetHeight` ei näe niitä: se antoi 24 px kun rivi todellisuudessa vie
- * 17 px. Seitsemän pikselin yliarvio riitti kääntämään `hiddenPixels`in
- * vastauksen nollaksi, jolloin rivi katosi — ja katoamisen jälkeen ylivuoto
- * oli taas 5 px ja rivi palasi. Kortti vilkkui 400 ms:n välein (mitattu
- * roskakortilla 2736 x 1824), eli juuri se heiluri jota vastaan
- * `hiddenPixels`in `noticeHeight`-parametri on olemassa.
+ * Rivi on asemoitu (`position: absolute`), joten tämä EI ole sen viemä tila
+ * kortin korkeudesta: se ei vie yhtään. Tätä käytetään kahteen asiaan:
+ * mahtuuko rivi runkoon peittämättä otsikkoa, ja mikä osa sisällöstä jää sen
+ * PEITTOON kortin alalaidassa.
  *
- * Flex-elementin marginaalit eivät kutistu yhteen, joten summa on tarkka.
+ * `offsetHeight` riittää nyt marginaalien sijaan, koska asemoidulla rivillä
+ * ei ole marginaaleja lainkaan — kortin täyte tulee `--card-pad-x`:stä.
  */
 function noticeSpace(): number {
-  const el = noticeEl.value;
-  if (el === null) return 0;
-  const style = getComputedStyle(el);
-  return el.offsetHeight + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+  return noticeEl.value?.offsetHeight ?? 0;
 }
 
 /**
@@ -118,10 +123,9 @@ function clippingBox(): { el: HTMLElement; hidden: number } | null {
   const card = cardEl.value;
   const body = bodyEl.value;
   if (!card || !body) return null;
-  const noticeHeight = noticeSpace();
   let best: { el: HTMLElement; hidden: number } | null = null;
   const consider = (el: HTMLElement): void => {
-    const hidden = hiddenPixels(el.scrollHeight, el.clientHeight, noticeHeight);
+    const hidden = hiddenPixels(el.scrollHeight, el.clientHeight);
     if (hidden > 0 && (best === null || hidden > best.hidden)) best = { el, hidden };
   };
   // Kortin oma kehys ja runko aina: ne ovat se raja jonka yli sisältö ei näy.
@@ -163,32 +167,41 @@ function measure(): void {
   if (cardRect.height <= 0) return;
   cardHeight.value = cardRect.height;
 
+  const noticeHeight = noticeSpace();
+  noticeHasRoom.value = noticeFitsInCard(body.clientHeight, noticeHeight);
+
   const box = clippingBox();
   hiddenPx.value = box?.hidden ?? 0;
 
-  /*
-   * Rivit lasketaan aina, MYÖS kun pikseliylivuotoa ei ole. Uutiskortti
-   * siivoaa ylivuotonsa itse (`visibility: hidden`), jolloin kortti ei vuoda
-   * yli yhtään — mutta otsikoita jää silti lukematta. Nollasta pikselistä ei
-   * siis saa päätellä että kaikki näkyy.
-   *
-   * Taite otetaan siltä korkeudelta joka kortilla OLISI ilman ilmoitusriviä
-   * (`+ noticeSpace()`), samasta syystä kuin `hiddenPixels`issä: muuten rivi
-   * jonka ilmoitus itse työnsi alas pitäisi ilmoituksen pystyssä silloinkin
-   * kun sisältö on jo kutistunut mahtuvaksi, eikä rivi enää koskaan katoaisi.
-   */
-  const reference = box?.el ?? body;
-  const referenceRect = reference.getBoundingClientRect();
-  const visibleTop = referenceRect.top + reference.clientTop;
-  const visibleBottom = visibleTop + reference.clientHeight;
   const rows: RowBand[] = [];
   for (const el of body.querySelectorAll<HTMLElement>("[data-card-row]")) {
     const rect = el.getBoundingClientRect();
     if (rect.height <= 0) continue;
     rows.push({ top: rect.top, bottom: rect.bottom, concealed: el.dataset.cardRow === "hidden" });
   }
-  hiddenRows.value = clippedRowCount(rows, visibleTop, visibleBottom);
-  hiddenRowsWithoutNotice.value = clippedRowCount(rows, visibleTop, visibleBottom + noticeSpace());
+
+  /*
+   * PERUSTE ja LUKU mitataan eri taitteesta, ja se on tarkoituksellista.
+   *
+   * Peruste (`concealedRows`) on vain kortin itsensä piilottamat rivit:
+   * uutiskortti siivoaa ylivuotonsa `visibility: hidden` -tilaan, jolloin
+   * kortti ei vuoda yli yhtään pikseliä mutta otsikoita jää lukematta.
+   * Nollasta pikselistä ei siis saa päätellä että kaikki näkyy.
+   *
+   * Peruste EI saa sisältää rivejä jotka ilmoitusrivi itse peittää — muuten
+   * ilmoitus pitäisi itsensä pystyssä senkin jälkeen kun sisältö on kutistunut
+   * mahtuvaksi, eikä katoaisi enää koskaan.
+   *
+   * Luku (`hiddenRows`) on rivit jotka eivät mahdu leikkaavaan laatikkoon.
+   * Merkki itse ei kuulu tähän: se on nurkkapilleri eikä koko leveydeltä
+   * kulkeva rivi, joten se ei vie yhdeltäkään riviltä sen luettavuutta.
+   */
+  concealedRows.value = rows.filter((row) => row.concealed === true).length;
+
+  const reference = box?.el ?? body;
+  const referenceRect = reference.getBoundingClientRect();
+  const visibleTop = referenceRect.top + reference.clientTop;
+  hiddenRows.value = clippedRowCount(rows, visibleTop, visibleTop + reference.clientHeight);
 }
 
 /**
@@ -333,7 +346,14 @@ watch(() => [props.status, props.error?.message], () => void nextTick(scheduleMe
       tyyli: rungon sisällä ilmoitus leikkautuisi itse piiloon täsmälleen
       silloin kun sitä tarvitaan.
     -->
-    <p v-if="notice" ref="noticeEl" class="card__clipped" :aria-label="noticeLabel" role="status">
+    <p
+      ref="noticeEl"
+      class="card__clipped"
+      :class="{ 'card__clipped--hidden': !noticeVisible }"
+      :aria-label="noticeLabel"
+      :aria-hidden="noticeVisible ? undefined : 'true'"
+      role="status"
+    >
       <span class="card__clipped-glyph" aria-hidden="true">⌄</span>{{ notice }}
     </p>
   </section>

@@ -30,6 +30,7 @@ import { useEditAccess } from "./composables/useEditAccess.ts";
 import { panelGridKey, usePanelLayout } from "./composables/usePanelLayout";
 import { useScheduleDay } from "./composables/useScheduleDay";
 import { defaultHiddenPanels, PANEL_IDS, panelVisibilityRows, shouldRenderPanel, type PanelId } from "./types";
+import { gridRowHeight } from "./gridGeometry";
 import type {
   ElectricityData,
   NewsData,
@@ -335,7 +336,11 @@ function measureGridRows(): void {
   const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
   const bottom = parseFloat(getComputedStyle(app).paddingBottom) || 0;
   const top = grid.getBoundingClientRect().top + window.scrollY;
-  viewportRowHeight.value = Math.max(1, (window.innerHeight - top - bottom - gap * 7) / 8);
+  // Itse laskutoimitus on gridGeometry.ts:ssä, jotta se on testattavissa ilman
+  // selainta. Sitä vasten mitataan cardOverflow.ts:n COMPACT_CARD_HEIGHT —
+  // kynnys ja korttien todelliset korkeudet eivät saa olla kahdessa eri
+  // maailmassa (ks. gridGeometry.ts:n kommentti).
+  viewportRowHeight.value = gridRowHeight(window.innerHeight, top, bottom, gap);
 }
 const gridGeometry = computed(() => {
   const occupied = Math.max(8, ...Object.entries(panelLayout.layout.value)

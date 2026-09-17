@@ -19,13 +19,15 @@ import {
   clippedRowCount,
   hiddenPixels,
   isCompactCard,
+  noticeFitsInCard,
 } from "../src/cardOverflow.ts";
+import { gridRowHeight, panelPixelHeight } from "../src/gridGeometry.ts";
 
 // --- Kuinka paljon on piilossa ---
 {
-  assert.equal(hiddenPixels(300, 300, 0), 0, "täsmälleen mahtuva ei vuoda yli");
-  assert.equal(hiddenPixels(200, 300, 0), 0, "mahtuva ei vuoda yli");
-  assert.equal(hiddenPixels(400, 300, 0), 100, "sata pikseliä piilossa");
+  assert.equal(hiddenPixels(300, 300), 0, "täsmälleen mahtuva ei vuoda yli");
+  assert.equal(hiddenPixels(200, 300), 0, "mahtuva ei vuoda yli");
+  assert.equal(hiddenPixels(400, 300), 100, "sata pikseliä piilossa");
   console.log("ok  piilossa olevan sisällön määrä");
 }
 
@@ -33,29 +35,49 @@ import {
   // Osapikselit: `scrollHeight` pyöristyy ylöspäin, joten tarkalleen mahtuva
   // sisältö raportoi säännöllisesti 1 px ylivuotoa. Siitä ilmoittaminen olisi
   // väärää tietoa siinä missä vaikeneminenkin.
-  assert.equal(hiddenPixels(301, 300, 0), 0, "yhden pikselin ylivuoto on mittausvirhe");
-  assert.equal(hiddenPixels(302, 300, 0), 0, "toleranssin raja ei vielä ilmoiteta");
-  assert.equal(hiddenPixels(303, 300, 0), 3, "toleranssin yli menevä ilmoitetaan");
+  assert.equal(hiddenPixels(301, 300), 0, "yhden pikselin ylivuoto on mittausvirhe");
+  assert.equal(hiddenPixels(302, 300), 0, "toleranssin raja ei vielä ilmoiteta");
+  assert.equal(hiddenPixels(303, 300), 3, "toleranssin yli menevä ilmoitetaan");
   assert.equal(OVERFLOW_TOLERANCE_PX, 2);
   console.log("ok  osapikselin ylivuoto ei laukaise ilmoitusta");
 }
 
 {
-  // TÄMÄ ON SE HEILURI JOTA VASTAAN `noticeHeight` ON OLEMASSA.
+  // ILMOITUSRIVI EI SAA VIEDÄ SISÄLLÖLTÄ TILAA — tätä ei voi todeta muuten
+  // kuin rajapinnasta: funktiolla EI OLE parametria jolla ilmoituksen korkeus
+  // voisi vaikuttaa vastaukseen. Rivi on `position: absolute` (style.css),
+  // joten kortin rungon korkeus on sama näkyi ilmoitus tai ei.
   //
-  // Ilmoitusrivi vie itse tilaa kortista. Jos mitta otettaisiin sellaisenaan,
-  // juuri mahtuva sisältö jäisi välkkymään: ilmoitus näkyviin -> tila pienenee
-  // -> sisältö ei mahdu -> ilmoitus näkyviin -> ... Kun ilmoituksen korkeus
-  // lisätään takaisin, vastaus riippuu vain sisällöstä ja kortin koosta.
-  const noticeHeight = 22;
-  // Sisältö 300, näkyvää tilaa 300 kun ilmoitusta EI ole.
-  assert.equal(hiddenPixels(300, 300, 0), 0, "ilman ilmoitusta mahtuu");
-  // Sama kortti sen jälkeen kun ilmoitus on ilmestynyt ja syönyt 22 px.
-  assert.equal(hiddenPixels(300, 300 - noticeHeight, noticeHeight), 0, "ilmoitus ei saa ylläpitää itseään");
-  // Ja oikeasti liian suuri sisältö ilmoitetaan kummassakin tilassa samana.
-  assert.equal(hiddenPixels(400, 300, 0), 100);
-  assert.equal(hiddenPixels(400, 300 - noticeHeight, noticeHeight), 100, "sama vastaus ilmoituksen kanssa ja ilman");
-  console.log("ok  ilmoitusrivin oma korkeus ei voi ylläpitää ilmoitusta (ei heiluria)");
+  // Aiempi versio otti korkeuden kolmantena parametrina ja lisäsi sen takaisin
+  // käytettävissä olevaan tilaan. Se esti heilurin (ilmoitus pois -> tilaa
+  // lisää -> ilmoitus takaisin), mutta maksoi rungosta rivin verran korkeutta
+  // joka kortissa: pörssisähkön pylväskaaviosta näkyi ennen 14,5 / 21,8 px ja
+  // sen jälkeen 0 / 21,8 px (mitattu 1920 x 1080, koko 2 x 2). Asemointi
+  // poistaa molemmat ongelmat, ja tämä testi lukitsee sen: kaksi lukua sisään.
+  assert.equal(hiddenPixels.length, 2, "ilmoituksen korkeus ei saa palata parametriksi");
+  console.log("ok  ilmoitusrivin korkeus ei voi vaikuttaa ylivuotomittaan");
+}
+
+// --- Mahtuuko ilmoitus ylipäätään ---
+{
+  // Asemoitu rivi ei voi enää valua kortin ULKOPUOLELLE, mutta matalassa
+  // kortissa se voisi peittää OTSIKON. Otsikko ja "vanhentunut"-merkki ovat
+  // juuri se mitä MIN_PANEL_SPAN lupaa säilyttää (types.ts), ja rikkinäisen
+  // lähteen huomaa vain niistä. Vajaa näkymä on pienempi vahinko kuin kortti
+  // jota ei tunnista.
+  assert.equal(noticeFitsInCard(200, 24), true, "tavallisessa kortissa mahtuu");
+  assert.equal(noticeFitsInCard(24, 24), true, "täsmälleen runkonsa kokoinen mahtuu");
+  assert.equal(noticeFitsInCard(23, 24), false, "runkoa korkeampi ei mahdu");
+  assert.equal(noticeFitsInCard(0, 24), false, "runko kutistunut nollaan: otsikko voittaa");
+  console.log("ok  ilmoitus väistää kun runkoa ei ole tarpeeksi");
+}
+
+{
+  // Mittaamaton rivi (korkeus 0) ei ole "mahtuu hyvin". Ilmoitus renderöidään
+  // aina DOMiin juuri siksi että sen korkeus on mitattavissa; nolla tarkoittaa
+  // ettei mittausta ole vielä tehty, eikä siitä saa päätellä mitään.
+  assert.equal(noticeFitsInCard(500, 0), false, "mittaamattomasta rivistä ei päätellä mitään");
+  console.log("ok  mittaamaton ilmoitusrivi ei ole 'mahtuu'");
 }
 
 // --- Montako riviä jää lukematta ---
@@ -137,67 +159,122 @@ import {
   // Yksikkö erikseen: "+1 riviä ei mahdu" on väärää suomea, ja seinänäytöllä
   // yhden rivin tapaus on tavallisin — juuri se viimeinen rivi joka jäi alle.
   assert.equal(clipNotice(1), "+1 rivi ei mahdu");
-  assert.equal(clipNotice(0), "Sisältö ei mahdu näkyviin", "rivitön kortti saa silti ilmoituksen");
+  assert.equal(clipNotice(0), "Sisältö ei mahdu", "rivitön kortti saa silti ilmoituksen");
   console.log("ok  ilmoituksen teksti kertoo rivimäärän");
 }
 
 {
-  // ILMOITUS EI SAA ALIARVIOIDA. Ilmoitusrivi vie itse tilaa, joten sen
-  // kanssa mitattu rivimäärä on aina vähintään yhtä suuri kuin ilman sitä
-  // mitattu. Peruste otetaan pienemmästä (ettei ilmoitus jää pystyyn omasta
-  // ansiostaan), mutta LUKU suuremmasta — muuten kortti väittäisi kahta
-  // piilossa olevaa riviä kun niitä on kolme, eli tekisi pienempänä juuri sen
-  // mitä tässä korjataan.
+  // ILMOITUS EI SAA ALIARVIOIDA. Asemoitu rivi peittää alimman kaistaleen
+  // sisällöstä, joten LUKU mitataan ilmoituksen yläreunasta — siitä mihin
+  // katsojan luettavissa oleva sisältö oikeasti loppuu. Peruste sen sijaan ei
+  // saa katsoa ilmoituksen peittämiä rivejä lainkaan, muuten ilmoitus pitäisi
+  // itsensä pystyssä senkin jälkeen kun sisältö on kutistunut mahtuvaksi.
   const rows = [
     { top: 0, bottom: 50 },
     { top: 50, bottom: 100 },
     { top: 100, bottom: 150 },
-    { top: 150, bottom: 200 },
   ];
-  const NOTICE = 22;
-  const fold = 128; // kortin taite kun ilmoitusrivi on paikallaan
-  const ilmanIlmoitusta = clippedRowCount(rows, 0, fold + NOTICE);
-  const ilmoituksenKanssa = clippedRowCount(rows, 0, fold);
-  assert.equal(ilmanIlmoitusta, 1, "ilman ilmoitusta alin rivi jää piiloon");
-  assert.equal(ilmoituksenKanssa, 2, "ilmoituksen kanssa kaksi jää piiloon");
-  assert.ok(ilmoituksenKanssa >= ilmanIlmoitusta, "luku ei voi olla perustetta pienempi");
-  assert.equal(cardIsClipped(0, ilmanIlmoitusta), true);
-  assert.equal(clipNotice(ilmoituksenKanssa), "+2 riviä ei mahdu");
-  console.log("ok  ilmoitus kertoo suuremman (todellisen) rivimäärän, ei pienempää");
-}
-
-{
-  // Ruudunlukija saa kokonaisen lauseen, ei "+3 riviä ei mahdu".
-  assert.match(clipNoticeLabel(3), /3 riviä/);
-  assert.match(clipNoticeLabel(3), /Suurenna korttia/);
-  assert.match(clipNoticeLabel(1), /yksi rivi/, "yksikkö myös ruudunlukijalle");
-  assert.doesNotMatch(clipNoticeLabel(1), /1 riviä/);
-  assert.match(clipNoticeLabel(0), /Suurenna korttia/);
-  assert.doesNotMatch(clipNoticeLabel(0), /0 riviä/, "rivitön ilmoitus ei väitä nollaa rivejä");
-  console.log("ok  ruudunlukijan teksti kertoo mitä asialle voi tehdä");
+  const NOTICE = 24;
+  const kortinAlareuna = 150;
+  const ilmoituksenYlareuna = kortinAlareuna - NOTICE;
+  assert.equal(clippedRowCount(rows, 0, kortinAlareuna), 0, "kortin reunaan asti kaikki mahtuisi");
+  assert.equal(clippedRowCount(rows, 0, ilmoituksenYlareuna), 1, "ilmoitus peittää alimman rivin");
+  // Peruste tulee muualta kuin rivilaskurista: pikseliylivuodosta tai kortin
+  // itsensä piilottamista riveistä. Pelkkä ilmoituksen peittämä rivi ei riitä.
+  assert.equal(cardIsClipped(0, 0), false, "peitetty rivi ei yksin perustele ilmoitusta");
+  console.log("ok  ilmoituksen peittämä rivi lasketaan lukuun muttei perusteeseen");
 }
 
 // --- Tiivis kortti ---
 {
   // MITATUT kortin korkeudet koolla 2 x 2, joka on pienin sallittu
   // (MIN_PANEL_SPAN) ja usean kortin oletuskoko:
-  assert.equal(isCompactCard(416), true, "2 x 2 seinänäytöllä (2736 x 1824) on tiivis");
-  assert.equal(isCompactCard(230), true, "2 x 2 näytöllä 1920 x 1080 on tiivis");
-  assert.equal(isCompactCard(152), true, "2 x 2 näytöllä 1366 x 768 on tiivis");
-  // Seuraava koko ylöspäin seinänäytöllä (2 x 3, mitattu ~640 px) ei ole.
-  assert.equal(isCompactCard(640), false, "2 x 3 seinänäytöllä ei ole tiivis");
+  assert.equal(isCompactCard(416), true, "2 x 2 seinanaytolla (2736 x 1824) on tiivis");
+  assert.equal(isCompactCard(230), true, "2 x 2 naytolla 1920 x 1080 on tiivis");
+  assert.equal(isCompactCard(152), true, "2 x 2 naytolla 1366 x 768 on tiivis");
+  // Seuraava koko ylospain seinanaytolla (2 x 3, mitattu 633 px) ei ole.
+  assert.equal(isCompactCard(633), false, "2 x 3 seinanaytolla ei ole tiivis");
   assert.equal(isCompactCard(COMPACT_CARD_HEIGHT), false, "raja itse ei ole tiivis");
   assert.equal(isCompactCard(COMPACT_CARD_HEIGHT - 1), true);
-  console.log("ok  tiiviin kortin raja osuu mitattujen korttikokojen väliin");
+  console.log("ok  tiiviin kortin raja osuu mitattujen korttikokojen valiin");
 }
 
 {
-  // Nolla ei ole "hyvin tiivis" vaan "ei mitattu": kortti joka ei ole vielä
-  // asettunut antaa nollan, eikä siitä saa päätellä mitään. Väärin päin
-  // erehtyminen piilottaisi koristeet kortista jonka kokoa ei tiedetä.
+  // Nolla ei ole "hyvin tiivis" vaan "ei mitattu": kortti joka ei ole viela
+  // asettunut antaa nollan, eika siita saa paatella mitaan. Vaarin pain
+  // erehtyminen piilottaisi koristeet kortista jonka kokoa ei tiedeta.
   assert.equal(isCompactCard(0), false, "mittaamaton kortti ei ole tiivis");
   assert.equal(isCompactCard(-10), false, "mahdoton korkeus ei ole tiivis");
-  console.log("ok  mittaamattomasta kortista ei päätellä tiiviyttä");
+  console.log("ok  mittaamattomasta kortista ei paatella tiiviytta");
+}
+
+/*
+ * KYNNYS EI SAA OLLA KORTIN VIERESSA.
+ *
+ * Tama on se testi jota ei ollut. COMPACT_CARD_HEIGHT oli 420 ja kayttajan
+ * oman seinanayton 2 x 2 -kortti on 416,1 px — 3,9 px paassa. Korttikorkeus
+ * johdetaan nayton korkeudesta, joten 1840 px korkea naytto (16 px enemman)
+ * olisi sammuttanut tiiviin tilan yhta aikaa kaikilta kahdeltatoista
+ * kortilta. Mikaan ei olisi huomannut: kynnys oli yhdessa tiedostossa ja
+ * korttikorkeuden kaava toisessa, eika kumpikaan tiennyt toisesta.
+ *
+ * Nyt kortin korkeus lasketaan tassa SAMASTA kaavasta jota sovellus kayttaa
+ * (gridGeometry.ts, App.vuen measureGridRows), ja testi kaatuu jos kynnys
+ * tulee lahemmas kuin MIN_MARGIN_PX yhtakaan tuettua nayttokorkeutta.
+ */
+{
+  // MITATTU SELAIMESTA, ei arvattu. Samat luvut leveyksilla 2736, 1920 ja
+  // 1366: ruudukon ylareuna 85,98 px sivun ylalaidasta (ylapalkki + vali),
+  // .appin alatayte 20,8 px, ruudukon row-gap 17,6 px (= 1.1rem).
+  //
+  // Kapeammalla naytolla ylapalkki voi kaariytya, jolloin ruudukko alkaa
+  // alempaa ja kortti on MATALAMPI — nama arvot antavat siis kullekin
+  // nayttokorkeudelle SUURIMMAN mahdollisen kortin, mika on oikea suunta:
+  // kynnysta lahestytaan ylhaalta.
+  const GRID_TOP = 85.98;
+  const BOTTOM_PADDING = 20.8;
+  const ROW_GAP = 17.6;
+  const MIN_MARGIN_PX = 20;
+
+  function cardHeight(viewportHeight: number, rowSpan: number): number {
+    const rowHeight = gridRowHeight(viewportHeight, GRID_TOP, BOTTOM_PADDING, ROW_GAP);
+    return panelPixelHeight(rowHeight, ROW_GAP, rowSpan);
+  }
+
+  // Kaava on sama jota sovellus kayttaa, joten sen on tuotettava ne korkeudet
+  // jotka selaimesta on mitattu. Jos tama hajoaa, muut vaitteet tasta
+  // tiedostosta eivat enaa tarkoita mitaan.
+  assert.ok(Math.abs(cardHeight(1824, 2) - 416) < 2, "2 x 2 @1824 = " + cardHeight(1824, 2).toFixed(1) + ", mitattu 416");
+  assert.ok(Math.abs(cardHeight(1080, 2) - 230) < 2, "2 x 2 @1080 = " + cardHeight(1080, 2).toFixed(1) + ", mitattu 230");
+  assert.ok(Math.abs(cardHeight(768, 2) - 152) < 2, "2 x 2 @768 = " + cardHeight(768, 2).toFixed(1) + ", mitattu 152");
+  assert.ok(Math.abs(cardHeight(1824, 3) - 633) < 2, "2 x 3 @1824 = " + cardHeight(1824, 3).toFixed(1) + ", mitattu 633");
+  console.log("ok  ruudukon kaava tuottaa selaimesta mitatut korttikorkeudet");
+
+  // 768 = tavallinen lappari, 1080 = Full HD, 1440 = QHD, 1824 = KAYTTAJAN OMA
+  // seinanaytto, 2160 = 4K. Pienin sallittu kortti (2 x 2) on tiivis jokaisella
+  // naista, ja varaa kynnykseen on reilusti.
+  for (const viewport of [768, 1080, 1440, 1824, 2160]) {
+    const pienin = cardHeight(viewport, 2);
+    assert.equal(isCompactCard(pienin), true, "2 x 2 @" + viewport + " ei ole tiivis (" + pienin.toFixed(1) + " px)");
+    const vara = COMPACT_CARD_HEIGHT - pienin;
+    assert.ok(
+      vara >= MIN_MARGIN_PX,
+      "2 x 2 @" + viewport + " on " + vara.toFixed(1) + " px kynnyksesta — alle " + MIN_MARGIN_PX +
+        " px:n vara tarkoittaa etta pieni muutos nayton tai ylapalkin korkeudessa sammuttaa tiiviin tilan kaikilta korteilta",
+    );
+  }
+  console.log("ok  pienin kortti pysyy tiiviina kaikilla tuetuilla nayttokorkeuksilla");
+
+  {
+    // Kayttajan oma naytto erikseen ja nimella: tama on se laite jolla vika
+    // loydettiin ja jolla korjaus mitattiin.
+    const vara = COMPACT_CARD_HEIGHT - cardHeight(1824, 2);
+    assert.ok(vara > 100, "seinanayton 2 x 2 on vain " + vara.toFixed(1) + " px kynnyksesta");
+    // Ja toinen suunta: 2 x 3 samalla naytolla EI saa olla tiivis, muuten
+    // kynnys on liian korkealla eivatka isot kortit nayta koristeitaan.
+    assert.equal(isCompactCard(cardHeight(1824, 3)), false, "seinanayton 2 x 3 ei saa olla tiivis");
+    console.log("ok  seinanayton 2 x 2 on tiivis reilulla varalla, 2 x 3 ei ole");
+  }
 }
 
 console.log("\nkaikki kortin ylivuototestit läpi");

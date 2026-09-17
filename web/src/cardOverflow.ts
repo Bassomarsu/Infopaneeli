@@ -21,18 +21,38 @@
  * Korkeus jonka alapuolella kortti luopuu koristeistaan (ks. `isCompactCard`).
  *
  * Luku on MITATTU eikä arvattu. Sama 2 × 2 -kortti on eri kokoinen joka
- * näytöllä, koska rivikorkeus johdetaan näkymästä (App.vuen measureGridRows):
+ * näytöllä, koska rivikorkeus johdetaan näkymästä (App.vuen measureGridRows,
+ * laskutoimitus gridGeometry.ts:ssä):
  *
- *   2736 × 1824 (seinänäyttö)  416 px
- *   1920 × 1080                230 px
- *   1366 ×  768                152 px
+ *   2736 × 1824 (seinänäyttö)  2 × 2 = 416 px   2 × 3 = 633 px
+ *   1920 × 1080                2 × 2 = 230 px   2 × 3 = 354 px
+ *   1366 ×  768                2 × 2 = 152 px   2 × 3 = 237 px
  *
- * 420 px asettuu juuri seinänäytön 2 × 2:n yläpuolelle, koska sekin vuotaa yli
- * (ruokalista piilotti siinä 899 px mitattuna). Seuraava koko ylöspäin,
- * 2 × 3 samalla näytöllä, on ~640 px eikä ole enää tiivis. Raja on siis
- * "pienin kortti jonka käyttäjä voi tehdä", ei mielivaltainen pikselimäärä.
+ * TÄMÄ OLI 420, JA SE OLI 3,9 PX PÄÄSSÄ KÄYTTÄJÄN OMASTA KORTISTA.
+ *
+ * Korttikorkeus on suoraan verrannollinen näytön korkeuteen (mitatuista
+ * luvuista: 2 × 2 ≈ näytön korkeus / 4 − 40 px), joten 420 vastasi näytön
+ * korkeutta 1840. Käyttäjän näyttö on 1824. Kuudentoista pikselin korkeampi
+ * näyttö olisi sammuttanut tiiviin tilan yhtä aikaa KAIKILTA kahdeltatoista
+ * kortilta, eikä mikään olisi kertonut siitä — vika olisi näyttänyt siltä
+ * että kortit vain yhtäkkiä näyttävät vähemmän.
+ *
+ * 560 px valittiin niin että kynnyksen kummallakin puolella on varaa
+ * jokaisella yleisellä näyttökorkeudella (test/card-overflow.ts laskee nämä
+ * samasta kaavasta kuin sovellus):
+ *
+ *   näyttö    2 × 2   2 × 3   -> 2 × 2 tiivis, 2 × 3 ei (ellei mainita)
+ *    768 px    152     237       molemmat tiiviitä (kortit ovat pieniä)
+ *   1080 px    230     354       molemmat tiiviitä
+ *   1440 px    320     489       molemmat tiiviitä
+ *   1824 px    416     633       VARA KYNNYKSEEN 144 px / 73 px
+ *   2160 px    500     759       vara 60 px / 199 px  (4K)
+ *
+ * Yläraja on näytön korkeus ~2400, jossa 2 × 2 kasvaisi kynnyksen yli. Se ei
+ * vastaa mitään yleistä näyttöä, kun taas vanha 420 osui 1840:een eli
+ * 16 pikselin päähän tuetusta laitteesta.
  */
-export const COMPACT_CARD_HEIGHT = 420;
+export const COMPACT_CARD_HEIGHT = 560;
 
 /**
  * Onko kortti niin matala että koristeet vievät tilaa sisällöltä.
@@ -61,22 +81,42 @@ export function isCompactCard(heightPx: number): boolean {
 export const OVERFLOW_TOLERANCE_PX = 2;
 
 /**
- * Montako pikseliä sisällöstä on piilossa, KUN ilmoitusriviä ei lasketa.
+ * Montako pikseliä sisällöstä on piilossa.
  *
- * `noticeHeight` lisätään takaisin käytettävissä olevaan tilaan, eikä tämä ole
- * hienosäätöä vaan välttämätöntä. Ilmoitus vie itse tilaa kortista, joten
- * ilman tätä syntyy heiluri: sisältö mahtuu -> ilmoitus pois -> tila kasvaa ->
- * mahtuu yhä... mutta juuri mahtuva sisältö kaataisi sen toisin päin: ilmoitus
- * näkyviin -> tila pienenee -> sisältö ei mahdu -> ilmoitus näkyviin. Kortti
- * jäisi välkkymään ruudulla jota katsotaan koko päivä.
+ * KAKSI LUKUA, EI KOLMEA — ilmoitusrivin korkeus ei ole tässä eikä saa tulla
+ * takaisin. Rivi on `position: absolute` kortin alalaidassa (ks. style.css),
+ * joten se EI vie kortin rungolta yhtään korkeutta: `visibleHeight` on sama
+ * riippumatta siitä näkyykö ilmoitus. Vastaus riippuu siis vain sisällöstä ja
+ * kortin koosta.
  *
- * Kun mitta otetaan aina ilman ilmoitusta, vastaus riippuu vain sisällöstä ja
- * kortin koosta — ei siitä mitä edellinen mittaus päätti.
+ * Aiempi versio otti rivin korkeuden parametrina ja lisäsi sen takaisin,
+ * koska rivi oli silloin normaalissa virrassa ja kutisti runkoa. Se oli
+ * korjaus heiluriin (sisältö mahtuu -> ilmoitus pois -> tilaa lisää ->
+ * ilmoitus takaisin), mutta samalla se söi rungosta rivin verran korkeutta
+ * JOKA KORTISSA jossa ilmoitus näkyi — pörssisähkön kaaviosta se vei
+ * viimeisetkin 14,5 px:stä nollaan. Asemointi poistaa kummankin ongelman
+ * kerralla: heiluria ei voi syntyä jos mitta ei riipu ilmoituksesta.
  */
-export function hiddenPixels(contentHeight: number, visibleHeight: number, noticeHeight: number): number {
-  const available = visibleHeight + Math.max(0, noticeHeight);
-  const hidden = contentHeight - available;
+export function hiddenPixels(contentHeight: number, visibleHeight: number): number {
+  const hidden = contentHeight - visibleHeight;
   return hidden > OVERFLOW_TOLERANCE_PX ? Math.round(hidden) : 0;
+}
+
+/**
+ * Mahtuuko ilmoitusrivi kortin runkoon.
+ *
+ * Rivi on asemoitu kortin alalaitaan, joten se ei voi enää työntyä kortin
+ * ULKOPUOLELLE — mutta liian matalassa kortissa se voisi peittää OTSIKON.
+ * Silloin se rikkoisi juuri sen lupauksen jonka varassa MIN_PANEL_SPAN on
+ * (ks. types.ts): otsikko ja "vanhentunut"-merkki säilyvät aina, jotta
+ * rikkinäisen lähteen huomaa. Vajaa näkymä on pienempi vahinko kuin kortti
+ * jota ei tunnista.
+ *
+ * `bodyHeight` on kortin rungon korkeus, eli se mitä otsikon jälkeen jää.
+ * Ilmoitus näytetään vain jos se mahtuu siihen kokonaan.
+ */
+export function noticeFitsInCard(bodyHeight: number, noticeHeight: number): boolean {
+  return noticeHeight > 0 && bodyHeight >= noticeHeight;
 }
 
 /** Yhden mitatun rivin pystysuora ala kortin leikkaavassa laatikossa. */
@@ -130,10 +170,12 @@ export function clippedRowCount(rows: readonly RowBand[], visibleTop: number, vi
  *    yhtään mutta otsikoita jää silti lukematta. "Ei ylivuotoa" ei siis
  *    tarkoita "kaikki näkyy".
  *
- * MOLEMMAT luvut on mitattava niin kuin ilmoitusriviä EI OLISI — ks.
- * `hiddenPixels`. Muuten ilmoitus voi jäädä pystyyn omasta ansiostaan: se vie
- * tilaa, työntää viimeisen rivin taitteen alle ja lukee siitä perusteen omalle
- * olemassaololleen silloinkin kun sisältö on jo kutistunut mahtuvaksi.
+ * KUMPIKAAN luku ei saa riippua ilmoitusrivistä. `hiddenPx` ei riipu, koska
+ * rivi on asemoitu eikä vie rungolta korkeutta. Rivimäärä tässä on nimenomaan
+ * `concealed`-rivit — kortin ITSENSÄ piilottamat — eikä se mitä ilmoitusrivi
+ * peittää. Muuten ilmoitus jäisi pystyyn omasta ansiostaan: se peittää
+ * alimman rivin ja lukee siitä perusteen omalle olemassaololleen silloinkin
+ * kun sisältö on jo kutistunut mahtuvaksi.
  */
 export function cardIsClipped(hiddenPx: number, hiddenRows: number): boolean {
   return hiddenPx > 0 || hiddenRows > 0;
@@ -145,15 +187,15 @@ export function cardIsClipped(hiddenPx: number, hiddenRows: number): boolean {
  * mitään. Riveistä tietämätön kortti (sää, pörssisähkö) saa silti oman
  * ilmoituksensa — vaiteliaisuus on tässä se yksi vaihtoehto joka ei kelpaa.
  *
- * Tähän annettava rivimäärä on se mitä katsoja OIKEASTI menettää, eli mitattu
- * ilmoitusrivin kanssa. Se on aina vähintään yhtä suuri kuin `cardIsClipped`in
- * luku (ilmoitus vie tilaa, ei anna sitä), joten kortti ei voi aliarvioida
- * piiloon jäänyttä — ja aliarvio olisi tässä sama vika pienempänä.
+ * Tähän annettava rivimäärä on se mitä katsoja OIKEASTI menettää: rivit jotka
+ * jäävät kortin alareunan alle TAI ilmoitusrivin peittoon. Se on aina
+ * vähintään yhtä suuri kuin `cardIsClipped`in luku, joten kortti ei voi
+ * aliarvioida piiloon jäänyttä — ja aliarvio olisi tässä sama vika pienempänä.
  */
 export function clipNotice(hiddenRows: number): string {
   if (hiddenRows === 1) return "+1 rivi ei mahdu";
   if (hiddenRows > 1) return `+${hiddenRows} riviä ei mahdu`;
-  return "Sisältö ei mahdu näkyviin";
+  return "Sisältö ei mahdu";
 }
 
 /**
