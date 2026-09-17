@@ -382,12 +382,29 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
 </template>
 
 <style scoped>
+/*
+ * Sisältö vierittyy, sama kuvio kuin yhdeksällä muulla kortilla
+ * (`.messages`, `.calendar__days`, `.schedule__cols` …).
+ *
+ * Vieritys on TÄSSÄ eikä kortissa: kortin oma `overflow: hidden` pitää
+ * otsikon ja "vanhentunut"-merkin paikallaan (ks. types.ts:n MIN_PANEL_SPAN),
+ * ja vain sisältö saa liikkua. Sisäkkäisiä vierityssäiliöitä ei ole, joten
+ * palkkeja on yksi.
+ *
+ * HUOM `container-type: inline-size`: vierityspalkki kaventaa tämän
+ * sisältölaatikkoa ~15 px, joten alempana olevat `@container power-card`
+ * -rajat (230 px, 170 px) osuvat kapeassa kortissa hitusen aiemmin. Se on
+ * oikea suunta — kapeampi laatikko saa kapean asettelun — mutta se on syytä
+ * tietää jos noita rajoja joskus säätää.
+ */
 .power {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   container-type: inline-size;
   container-name: power-card;
 }
@@ -459,12 +476,23 @@ const trend = computed<{ symbol: string; className: string; title: string } | nu
   color: var(--text-faint);
 }
 
+/*
+ * EI `min-height: 0`, samasta syystä kuin WeatherCardin `.weather__days`issa.
+ *
+ * `min-height: 0` antoi päivälohkon kutistua sisältönsä alle, jolloin kaavio
+ * leikkautui lohkon SISÄLLÄ eikä `.power` vuotanut yli — vierityspalkkia ei
+ * siis olisi tullut vaikka kaaviosta puuttui osa. Mitattu 901 px: `.power`
+ * vuoti 15 px mutta kumpikin päivälohko 43 px.
+ *
+ * Ilman sitä lohkon vähimmäiskorkeus on sen sisällön korkeus, jonka pohjana
+ * on `.power__chart`in `min-height: 2.6rem`. `flex: 1` jää, joten isossa
+ * kortissa kaaviot täyttävät tilan kuten ennenkin.
+ */
 .power__day {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
   flex: 1;
-  min-height: 0;
 }
 
 .power__daylabel {

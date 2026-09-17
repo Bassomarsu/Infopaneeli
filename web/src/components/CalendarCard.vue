@@ -122,7 +122,7 @@ const canBrowseMonths = computed(
       <div v-for="group in groups" :key="group.dateKey" class="calendar__day">
         <h3 class="calendar__day-label">{{ group.label }}</h3>
         <ul class="calendar__events">
-          <li v-for="event in group.events" :key="event.id" class="event" data-card-row>
+          <li v-for="event in group.events" :key="event.id" class="event">
             <span class="event__time tnum">{{ timeLabel(event) }}</span>
             <span class="event__main">
               <span class="event__title-row">

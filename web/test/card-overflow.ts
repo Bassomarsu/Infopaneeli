@@ -1,189 +1,20 @@
 /**
- * Kortin ylivuotosäännöt: milloin kortti kertoo leikkaavansa sisältöä, montako
- * riviä on piilossa, ja milloin se luopuu koristeistaan.
+ * Milloin kortti luopuu koristeistaan.
  *
- * Miksi tämä testataan erikseen eikä selaimessa: sääntö "kortti ei saa leikata
- * sisältöään hiljaa" on sovelluksen lupaus, ei ulkoasuseikka. Mittaus
+ * Miksi tämä testataan erikseen eikä selaimessa: kynnys ja korttien
+ * todelliset korkeudet eivät saa olla kahdessa eri maailmassa. Mittaus
  * (ResizeObserver, getBoundingClientRect) on CardShell.vuessa, mutta PÄÄTÖS on
- * täällä — sama jako kuin uutiskortin `fittingItemCount`illa.
+ * täällä — sama jako kuin `calendarMonth.ts`:llä ja `electricityChart.ts`:llä.
+ *
+ * Tiedostossa oli aiemmin myös leikkausilmoituksen säännöt ("+5 riviä ei
+ * mahdu"). Ne on poistettu ominaisuuden mukana: kortit vierittävät sisältönsä,
+ * ja vierityspalkki kertoo itse että listaa on enemmän.
  *
  * Aja (web-hakemistosta):  node test/card-overflow.ts
  */
 import assert from "node:assert/strict";
-import {
-  COMPACT_CARD_HEIGHT,
-  OVERFLOW_TOLERANCE_PX,
-  cardIsClipped,
-  clipNotice,
-  clipNoticeLabel,
-  clippedRowCount,
-  hiddenPixels,
-  isCompactCard,
-  noticeFitsInCard,
-} from "../src/cardOverflow.ts";
+import { COMPACT_CARD_HEIGHT, isCompactCard } from "../src/cardOverflow.ts";
 import { gridRowHeight, panelPixelHeight } from "../src/gridGeometry.ts";
-
-// --- Kuinka paljon on piilossa ---
-{
-  assert.equal(hiddenPixels(300, 300), 0, "täsmälleen mahtuva ei vuoda yli");
-  assert.equal(hiddenPixels(200, 300), 0, "mahtuva ei vuoda yli");
-  assert.equal(hiddenPixels(400, 300), 100, "sata pikseliä piilossa");
-  console.log("ok  piilossa olevan sisällön määrä");
-}
-
-{
-  // Osapikselit: `scrollHeight` pyöristyy ylöspäin, joten tarkalleen mahtuva
-  // sisältö raportoi säännöllisesti 1 px ylivuotoa. Siitä ilmoittaminen olisi
-  // väärää tietoa siinä missä vaikeneminenkin.
-  assert.equal(hiddenPixels(301, 300), 0, "yhden pikselin ylivuoto on mittausvirhe");
-  assert.equal(hiddenPixels(302, 300), 0, "toleranssin raja ei vielä ilmoiteta");
-  assert.equal(hiddenPixels(303, 300), 3, "toleranssin yli menevä ilmoitetaan");
-  assert.equal(OVERFLOW_TOLERANCE_PX, 2);
-  console.log("ok  osapikselin ylivuoto ei laukaise ilmoitusta");
-}
-
-{
-  // ILMOITUSRIVI EI SAA VIEDÄ SISÄLLÖLTÄ TILAA — tätä ei voi todeta muuten
-  // kuin rajapinnasta: funktiolla EI OLE parametria jolla ilmoituksen korkeus
-  // voisi vaikuttaa vastaukseen. Rivi on `position: absolute` (style.css),
-  // joten kortin rungon korkeus on sama näkyi ilmoitus tai ei.
-  //
-  // Aiempi versio otti korkeuden kolmantena parametrina ja lisäsi sen takaisin
-  // käytettävissä olevaan tilaan. Se esti heilurin (ilmoitus pois -> tilaa
-  // lisää -> ilmoitus takaisin), mutta maksoi rungosta rivin verran korkeutta
-  // joka kortissa: pörssisähkön pylväskaaviosta näkyi ennen 14,5 / 21,8 px ja
-  // sen jälkeen 0 / 21,8 px (mitattu 1920 x 1080, koko 2 x 2). Asemointi
-  // poistaa molemmat ongelmat, ja tämä testi lukitsee sen: kaksi lukua sisään.
-  assert.equal(hiddenPixels.length, 2, "ilmoituksen korkeus ei saa palata parametriksi");
-  console.log("ok  ilmoitusrivin korkeus ei voi vaikuttaa ylivuotomittaan");
-}
-
-// --- Mahtuuko ilmoitus ylipäätään ---
-{
-  // Asemoitu rivi ei voi enää valua kortin ULKOPUOLELLE, mutta matalassa
-  // kortissa se voisi peittää OTSIKON. Otsikko ja "vanhentunut"-merkki ovat
-  // juuri se mitä MIN_PANEL_SPAN lupaa säilyttää (types.ts), ja rikkinäisen
-  // lähteen huomaa vain niistä. Vajaa näkymä on pienempi vahinko kuin kortti
-  // jota ei tunnista.
-  assert.equal(noticeFitsInCard(200, 24), true, "tavallisessa kortissa mahtuu");
-  assert.equal(noticeFitsInCard(24, 24), true, "täsmälleen runkonsa kokoinen mahtuu");
-  assert.equal(noticeFitsInCard(23, 24), false, "runkoa korkeampi ei mahdu");
-  assert.equal(noticeFitsInCard(0, 24), false, "runko kutistunut nollaan: otsikko voittaa");
-  console.log("ok  ilmoitus väistää kun runkoa ei ole tarpeeksi");
-}
-
-{
-  // Mittaamaton rivi (korkeus 0) ei ole "mahtuu hyvin". Ilmoitus renderöidään
-  // aina DOMiin juuri siksi että sen korkeus on mitattavissa; nolla tarkoittaa
-  // ettei mittausta ole vielä tehty, eikä siitä saa päätellä mitään.
-  assert.equal(noticeFitsInCard(500, 0), false, "mittaamattomasta rivistä ei päätellä mitään");
-  console.log("ok  mittaamaton ilmoitusrivi ei ole 'mahtuu'");
-}
-
-// --- Montako riviä jää lukematta ---
-{
-  const rows = [
-    { top: 0, bottom: 50 },
-    { top: 50, bottom: 100 },
-    { top: 100, bottom: 150 },
-    { top: 150, bottom: 200 },
-  ];
-  assert.equal(clippedRowCount(rows, 0, 200), 0, "kaikki mahtuvat");
-  assert.equal(clippedRowCount(rows, 0, 100), 2, "kaksi alinta jää piiloon");
-  assert.equal(clippedRowCount(rows, 0, 0), 4, "mitään ei näy");
-  console.log("ok  piiloon jäävien rivien määrä");
-}
-
-{
-  // Puoliksi näkyvä rivi on PIILOSSA. Juuri se on tämän moduulin syy:
-  // puolikas päivämäärä tai puolikas ateria näyttää luetulta mutta ei ole
-  // sitä, ja katsoja luulee nähneensä koko listan.
-  const rows = [{ top: 0, bottom: 50 }, { top: 50, bottom: 100 }];
-  assert.equal(clippedRowCount(rows, 0, 75), 1, "puoliksi leikkautunut rivi lasketaan piilossa olevaksi");
-  console.log("ok  puoliksi näkyvä rivi lasketaan piilossa olevaksi");
-}
-
-{
-  // Vieritettävällä laitteella sisältöä voi olla myös taitteen YLÄpuolella.
-  const rows = [{ top: -60, bottom: -10 }, { top: 0, bottom: 50 }];
-  assert.equal(clippedRowCount(rows, 0, 100), 1, "ylös vieritetty rivi on yhtä lailla piilossa");
-  console.log("ok  näkyvän kaistaleen yläpuolelle jäänyt rivi lasketaan mukaan");
-}
-
-{
-  // Uutiskortti piilottaa ylimääräiset otsikot `visibility: hidden` -tilaan
-  // (ks. news.ts:n fittingItemCount), jolloin ne ovat asettelussa mutta eivät
-  // luettavissa. Sellainen rivi on piilossa vaikka se olisi taitteen
-  // yläpuolella — muuten kortti joka jo itse siivosi ylivuotonsa näyttäisi
-  // täydeltä, mikä on tarkalleen se hiljainen valhe jota vastaan tämä on.
-  const rows = [
-    { top: 0, bottom: 50 },
-    { top: 50, bottom: 100, concealed: true },
-  ];
-  assert.equal(clippedRowCount(rows, 0, 200), 1, "kortin itse piilottama rivi lasketaan piilossa olevaksi");
-  console.log("ok  kortin itsensä piilottama rivi lasketaan piilossa olevaksi");
-}
-
-{
-  // Osapikselivara samaan suuntaan kuin `hiddenPixels`: viimeinen rivi
-  // päättyy usein murto-osan verran laatikon reunan alle vaikka se näkyy.
-  const rows = [{ top: 0, bottom: 100.5 }];
-  assert.equal(clippedRowCount(rows, 0, 100), 0, "murto-osan ylitys ei tee rivistä piilossa olevaa");
-  assert.equal(clippedRowCount([{ top: 0, bottom: 103 }], 0, 100), 1, "toleranssin yli menevä on piilossa");
-  console.log("ok  rivilaskuri sietää osapikselit");
-}
-
-// --- Näytetäänkö ilmoitus ---
-{
-  assert.equal(cardIsClipped(0, 0), false, "mahtuva kortti on hiljaa");
-  assert.equal(cardIsClipped(45, 0), true, "pelkkä pikseliylivuoto riittää");
-  // Sää- ja pörssisähkökortissa ei ole toistuvia rivejä lainkaan, mutta kaavio
-  // leikkautuu silti. Vaikeneminen on se yksi vaihtoehto joka ei kelpaa.
-  console.log("ok  pikseliylivuoto yksin riittää ilmoitukseen");
-}
-
-{
-  // Toinen suunta, ja se on yhtä tärkeä: uutiskortti siivoaa ylivuotonsa itse
-  // (news.ts:n `fittingItemCount` jättää mahtumattomat otsikot
-  // `visibility: hidden` -tilaan), jolloin kortti ei vuoda yli YHTÄÄN
-  // pikseliä — mutta otsikoita jää silti lukematta. Jos pelkkä pikselimäärä
-  // ratkaisisi, juuri se kortti joka on jo kertaalleen karsinut sisältöään
-  // näyttäisi täydeltä.
-  assert.equal(cardIsClipped(0, 3), true, "itse siivonnut kortti ilmoittaa silti");
-  console.log("ok  piilotetut rivit yksin riittävät ilmoitukseen");
-}
-
-// --- Mitä kortti sanoo ---
-{
-  assert.equal(clipNotice(3), "+3 riviä ei mahdu", "rivimäärä kerrotaan kun se tiedetään");
-  // Yksikkö erikseen: "+1 riviä ei mahdu" on väärää suomea, ja seinänäytöllä
-  // yhden rivin tapaus on tavallisin — juuri se viimeinen rivi joka jäi alle.
-  assert.equal(clipNotice(1), "+1 rivi ei mahdu");
-  assert.equal(clipNotice(0), "Sisältö ei mahdu", "rivitön kortti saa silti ilmoituksen");
-  console.log("ok  ilmoituksen teksti kertoo rivimäärän");
-}
-
-{
-  // ILMOITUS EI SAA ALIARVIOIDA. Asemoitu rivi peittää alimman kaistaleen
-  // sisällöstä, joten LUKU mitataan ilmoituksen yläreunasta — siitä mihin
-  // katsojan luettavissa oleva sisältö oikeasti loppuu. Peruste sen sijaan ei
-  // saa katsoa ilmoituksen peittämiä rivejä lainkaan, muuten ilmoitus pitäisi
-  // itsensä pystyssä senkin jälkeen kun sisältö on kutistunut mahtuvaksi.
-  const rows = [
-    { top: 0, bottom: 50 },
-    { top: 50, bottom: 100 },
-    { top: 100, bottom: 150 },
-  ];
-  const NOTICE = 24;
-  const kortinAlareuna = 150;
-  const ilmoituksenYlareuna = kortinAlareuna - NOTICE;
-  assert.equal(clippedRowCount(rows, 0, kortinAlareuna), 0, "kortin reunaan asti kaikki mahtuisi");
-  assert.equal(clippedRowCount(rows, 0, ilmoituksenYlareuna), 1, "ilmoitus peittää alimman rivin");
-  // Peruste tulee muualta kuin rivilaskurista: pikseliylivuodosta tai kortin
-  // itsensä piilottamista riveistä. Pelkkä ilmoituksen peittämä rivi ei riitä.
-  assert.equal(cardIsClipped(0, 0), false, "peitetty rivi ei yksin perustele ilmoitusta");
-  console.log("ok  ilmoituksen peittämä rivi lasketaan lukuun muttei perusteeseen");
-}
 
 // --- Tiivis kortti ---
 {
@@ -277,4 +108,4 @@ import { gridRowHeight, panelPixelHeight } from "../src/gridGeometry.ts";
   }
 }
 
-console.log("\nkaikki kortin ylivuototestit läpi");
+console.log("\nkaikki tiiviin kortin testit läpi");

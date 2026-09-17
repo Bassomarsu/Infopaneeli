@@ -1,6 +1,5 @@
 /**
- * Uutiskortin logiikka: ikämerkintä, montako otsikkoa mahtuu, ja se ettei
- * otsikkoa koskaan muokata.
+ * Uutiskortin logiikka: ikämerkintä ja se ettei otsikkoa koskaan muokata.
  *
  * Otsikon koskemattomuus ei ole makuasia vaan Ylen käyttöehto
  * (https://yle.fi/aihe/a/20-10008076): sisältöä ei saa muokata. Näyttötilan
@@ -11,7 +10,7 @@
  * Aja (web-hakemistosta):  node test/news-card.ts
  */
 import assert from "node:assert/strict";
-import { fittingItemCount, newsRows, relativeAge } from "../src/components/news.ts";
+import { newsRows, relativeAge } from "../src/components/news.ts";
 import type { NewsItem } from "../src/types.ts";
 
 const NOW = new Date("2026-09-12T12:00:00+03:00");
@@ -54,56 +53,6 @@ function item(id: string, minutesAgo: number, title = `Otsikko ${id}`): NewsItem
   assert.equal(relativeAge("eilen joskus", NOW), null);
   assert.equal(relativeAge(123 as unknown as string, NOW), null);
   console.log("ok  kelvoton aikaleima jättää ikämerkinnän pois eikä arvaa mitään");
-}
-
-// --- Montako mahtuu ---
-//
-// Rivin korkeus vaihtelee (otsikko vie yhden tai kaksi tekstiriviä), joten
-// mahtuvien määrä mitataan rivien todellisista alareunoista eikä lasketa
-// kertolaskuna. Koordinaatisto: listan yläreuna on 0.
-{
-  // Kolme yksirivistä (40 px) ja väli 8 px: alareunat 40, 88, 136.
-  assert.equal(fittingItemCount(200, [40, 88, 136]), 3, "kaikki mahtuvat");
-  assert.equal(fittingItemCount(100, [40, 88, 136]), 2, "kolmas ei mahdu kokonaan");
-  assert.equal(fittingItemCount(88, [40, 88, 136]), 2, "tasan alareunaan päättyvä mahtuu");
-  console.log("ok  mahtuvien rivien määrä mitataan rivien todellisista alareunoista");
-}
-
-{
-  // Juuri tämä on se tapaus jota kertolasku ei osaa: ensimmäinen otsikko on
-  // yksirivinen ja loput kaksirivisiä. "korkeus / ensimmäisen rivin korkeus"
-  // antaisi neljä, jolloin neljäs rivi jäisi puoliksi näkyviin.
-  const bottoms = [40, 120, 200, 280];
-  assert.equal(fittingItemCount(210, bottoms), 3, "vaihteleva rivikorkeus ei saa yliarvioida");
-  assert.notEqual(Math.floor(210 / 40), fittingItemCount(210, bottoms), "kertolasku antaisi eri, väärän vastauksen");
-  console.log("ok  vaihteleva rivikorkeus ei yliarvioi mahtuvien määrää");
-}
-
-{
-  // Alapikselin liukuma (tolerancePx) on olemassa siksi, ettei selaimen
-  // murtolukumitta saa pudottaa riviä pois hiuksenhienosti. Raja on
-  // inklusiivinen: tasan liukuman verran yli menevä rivi mahtuu vielä.
-  assert.equal(fittingItemCount(100, [50, 100.4]), 2, "liukuman sisällä oleva rivi mahtuu");
-  assert.equal(fittingItemCount(100, [50, 100.5]), 2, "tasan liukuman rajalla oleva rivi mahtuu vielä");
-  assert.equal(fittingItemCount(100, [50, 100.6]), 1, "liukuman yli menevä rivi ei mahdu");
-  console.log("ok  alapikselin liukuma on inklusiivinen eikä pudota riviä hiuksenhienosti");
-}
-
-{
-  // Mahtuminen katkeaa ENSIMMÄISEEN joka ei mahdu — myöhempi lyhyt rivi ei
-  // saa hypätä mahtumattoman ohi, koska rivit renderöidään järjestyksessä.
-  assert.equal(fittingItemCount(100, [40, 150, 60]), 1);
-  console.log("ok  mahtuminen katkeaa ensimmäiseen joka ei mahdu");
-}
-
-{
-  // Alaraja on 1 eikä 0: kortissa on dataa, ja tyhjä kortti näyttäisi
-  // rikkinäiseltä. Aidosti tyhjä lista on eri asia ja antaa 0.
-  assert.equal(fittingItemCount(10, [40, 88]), 1, "liian matala paneeli näyttää silti yhden");
-  assert.equal(fittingItemCount(200, []), 0, "tyhjä lista ei tuota riviä tyhjästä");
-  assert.equal(fittingItemCount(Number.NaN, [40]), 1, "mittaamaton korkeus ei saa nollata korttia");
-  assert.equal(fittingItemCount(200, [Number.NaN, 88]), 1, "kelvoton rivimitta ei saa kaataa");
-  console.log("ok  kelvoton tai liian pieni mitta päätyy yhteen riviin, ei nollaan");
 }
 
 // --- Rivit kortille ---

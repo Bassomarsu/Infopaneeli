@@ -2,11 +2,11 @@
 /** Ylen otsikot. Juttusivut estävät upotuksen (X-Frame-Options: DENY).
  * Otsikko avaa suljettavan dialogin; alkuperäiseen juttuun linkitetään suoraan.
  * RSS-käyttöehdot: https://yle.fi/a/20-10008076 */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import ModalDialog from './ModalDialog.vue';
 import type { NewsRow } from './news';
 import CardShell from "./CardShell.vue";
-import { fittingItemCount, newsRows } from "./news";
+import { newsRows } from "./news";
 import { useClock } from "../composables/useClock";
 import type { NewsData, ProviderSnapshot } from "../types";
 
@@ -27,58 +27,21 @@ const { now } = useClock();
 
 const rows = computed(() => newsRows(props.snapshot?.data?.items, now.value));
 
-// ── Montako otsikkoa mahtuu ─────────────────────────────────────────────────
+// ── Lista vierittyy, eikä sitä rajata ───────────────────────────────────────
 //
-// Paneelin korkeus on käyttäjän säädettävissä (2–8 riviä ruudukkoa) ja
-// otsikon korkeus vaihtelee yhden ja kahden tekstirivin välillä, joten sen
-// paremmin kiinteä määrä kuin kertolaskukaan ei voi olla oikein. Mitataan
-// sama kuvio kuin kalenterin kuukausinäkymässä (ResizeObserver), mutta
-// rivien todellisista reunoista.
+// KAIKKI jutut renderöidään ja lista on vieritettävä, kuten yhdeksällä muulla
+// kortilla. Tässä oli aiemmin mittaus (`fittingItemCount` + ResizeObserver),
+// joka piilotti mahtumattomat otsikot `visibility: hidden` -tilaan: ne olivat
+// asettelussa mutta eivät luettavissa eivätkä vieritettävissä, joten loput
+// jutut katosivat jäljettömiin. Käyttäjä löysi sen seinänäytöltä.
 //
-// KAIKKI rivit renderöidään aina; ylimääräiset vain piilotetaan
-// `visibility`illä paikoilleen. Näin mittaus ei muuta asettelua eikä voi
-// jäädä heilumaan kahden arvon välille — ks. news.ts:n fittingItemCount.
-
-const listEl = ref<HTMLElement | null>(null);
-const itemEls = ref<HTMLElement[]>([]);
-const visibleCount = ref(0);
-
-function captureItem(el: unknown, index: number): void {
-  if (el instanceof HTMLElement) itemEls.value[index] = el;
-}
-
-function measure(): void {
-  const area = listEl.value;
-  if (!area) return;
-  const areaRect = area.getBoundingClientRect();
-  // Piilotettu tai vielä mittaamaton kortti antaa nollia; niistä ei saa
-  // päätellä mitään, vaan edellinen tunnettu arvo jää voimaan.
-  if (areaRect.height <= 0) return;
-  const bottoms = itemEls.value
-    .slice(0, rows.value.length)
-    .map((el) => el.getBoundingClientRect().bottom - areaRect.top);
-  visibleCount.value = fittingItemCount(areaRect.height, bottoms);
-}
-
-let observer: ResizeObserver | null = null;
-
-onMounted(() => {
-  observer = new ResizeObserver(() => measure());
-  if (listEl.value) observer.observe(listEl.value);
-  void nextTick(measure);
-});
-
-onBeforeUnmount(() => {
-  observer?.disconnect();
-  observer = null;
-});
-
-// Uusi syöte voi vaihtaa rivien korkeutta (yksirivinen otsikko kaksiriviseksi)
-// ilman että listan oma korkeus muuttuu — ResizeObserver ei herää siitä.
-watch(rows, () => {
-  itemEls.value.length = rows.value.length;
-  void nextTick(measure);
-});
+// Sovellusta käytetään kosketuksella kaikkialla (otsikko avaa jutun,
+// kalenterin otsikko kuukausinäkymän, kioskista poistutaan pitkällä
+// painalluksella), joten vieritys on täällä yhtä oikea vastaus kuin
+// viesti-, kalenteri- ja lukujärjestyskortissa.
+//
+// Providerin `MAX_ITEMS` (30 juttua) on eri asia eikä liity tähän: se rajaa
+// mitä haetaan, ei mitä haetusta näytetään.
 
 // Tyhjä lista onnistuneella haulla on oma tilansa: "ei uutisia" on eri asia
 // kuin "ei saatu uutisia", ja jälkimmäisen hoitaa CardShell providerin
@@ -99,18 +62,14 @@ const isEmpty = computed(() => rows.value.length === 0);
       <span>Ylen syötteessä ei ole juttuja juuri nyt.</span>
     </div>
 
-    <div v-else ref="listEl" class="news">
+    <div v-else class="news">
       <button
         type="button"
         v-for="(row, index) in rows"
         :key="row.id"
-        :ref="(el: unknown) => captureItem(el, index)"
         class="news__item"
         aria-haspopup="dialog"
         @click="openNews(row)"
-        :style="index < visibleCount ? undefined : { visibility: 'hidden' }"
-        :aria-hidden="index < visibleCount ? undefined : 'true'"
-        :data-card-row="index < visibleCount ? '' : 'hidden'"
       >
         <span class="news__title">{{ row.title }}</span>
         <span v-if="row.age" class="news__age tnum">{{ row.age }}</span>
@@ -146,10 +105,13 @@ const isEmpty = computed(() => rows.value.length === 0);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  /* Kaikki rivit ovat aina DOMissa (ks. `measure`), joten alareunan yli
-     menevät on leikattava. Mahtumattomat ovat jo `visibility: hidden`, joten
-     tämä koskee vain mittausten välistä yhtä ruudunpäivitystä. */
-  overflow: hidden;
+  /* Lista vierittyy, ja vierityspalkki on se mikä kertoo että juttuja on
+     lisää. Vaaka-akseli on erikseen `hidden`, koska `.news__item`in
+     negatiivinen sivumarginaali (painalluspohjan levennys) työntäisi muuten
+     kortin sisään vaakavierityspalkin — sama mitattu ansa kuin
+     PaikkyCareDays.vuessa. */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .news__item {
@@ -189,7 +151,6 @@ const isEmpty = computed(() => rows.value.length === 0);
 
 /* Sama avattava otsikko sekä puhelimessa että kioskissa. */
 .news__item {
-  /* Mahtuvien otsikoiden määrä mitataan renderöinnistä. */
   padding: 0.25rem 0.3rem;
   margin: 0 -0.3rem;
   border-radius: 10px;

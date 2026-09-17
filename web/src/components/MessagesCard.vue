@@ -138,15 +138,28 @@ const nothingAtAll = computed(() => {
   return allMessages.value.length === 0 && paikkyMessages.value.length === 0;
 });
 
-// Capped like the old single-list view, so the card never grows past what the
-// wall display has room for. Katto koskee vain piirtämistä: "merkitse kaikki
-// luetuiksi" merkitsee koko lukemattomien listan, ei kuutta ensimmäistä.
-const MAX_VISIBLE = 6;
+/*
+ * EI PIIRTOKATTOA. Kortti näyttää kaikki viestit, ja `.messages` vierittää.
+ *
+ * Tässä oli `MAX_VISIBLE = 6`. Se oli peruja yhden listan vanhasta näkymästä
+ * ja perusteltu sillä ettei kortti kasvaisi seinänäytön tilaa suuremmaksi —
+ * mutta lista on vierittävä, joten se ei voi kasvaa liikaa; se vain rajasi
+ * mihin pääsee käsiksi.
+ *
+ * Ja kortti LUPASI ne viestit itse: välilehdessä lukee "Lukematta 8", koska
+ * luku tulee koko listasta. Mitattu 2736 x 1824: välilehti sanoi 8,
+ * renderöityjä kuusi, eikä kahteen viimeiseen päässyt vierittämälläkään.
+ * Numero jota kortti näyttää ja sisältö jonka se antaa ovat nyt sama asia.
+ *
+ * Määrä ei voi karata: molemmat lähteet on katkaistu palvelimella kahteenkym-
+ * meneen (wilma.ts `raw.slice(0, 20)`, paikky.ts `MESSAGE_LIMIT = 20`), eli
+ * pahin tapaus on 20 viestiä per lista eikä satoja.
+ */
 const visibleMessages = computed(() =>
-  (mode.value === "unread" ? wilmaUnread.value : wilmaRead.value).slice(0, MAX_VISIBLE),
+  mode.value === "unread" ? wilmaUnread.value : wilmaRead.value,
 );
 const visiblePaikkyMessages = computed(() =>
-  (mode.value === "unread" ? paikkyUnread.value : paikkyRead.value).slice(0, MAX_VISIBLE),
+  mode.value === "unread" ? paikkyUnread.value : paikkyRead.value,
 );
 
 const cardTitle = computed(() => (paikkyConfigured.value ? "Viestit" : "Wilma-viestit"));
@@ -447,7 +460,7 @@ function closeDialog(): void {
       </div>
 
       <ul v-else class="messages">
-        <li v-for="message in visibleMessages" :key="message.id" class="message" data-card-row>
+        <li v-for="message in visibleMessages" :key="message.id" class="message">
           <button type="button" class="message__open" @click="openDialog(message)">
             <div class="message__row">
               <!-- The sender only becomes known once the detail has been fetched;

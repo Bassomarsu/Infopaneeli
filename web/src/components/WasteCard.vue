@@ -30,7 +30,7 @@ function dateLabel(date: string) {
           <p v-else-if="snapshot?.status === 'idle' && automatic?.enabled">Haetaan noutopäiviä…</p>
           <p v-else-if="!automatic?.enabled">Automaattinen haku ei ole käytössä. Yhteyden voi määrittää asetuksista.</p>
           <ul v-if="automatic?.enabled && upcoming.length">
-            <li v-for="event in upcoming.slice(0, 30)" :key="event.id" data-card-row><span>{{ event.label }}</span><time :datetime="event.date">{{ dateLabel(event.date) }}</time></li>
+            <li v-for="event in upcoming.slice(0, 30)" :key="event.id"><span>{{ event.label }}</span><time :datetime="event.date">{{ dateLabel(event.date) }}</time></li>
           </ul>
           <p v-else-if="automatic?.enabled && snapshot?.status === 'ok'">Palvelu ei ilmoita tulevia noutopäiviä.</p>
           <p v-if="snapshot?.fetchedAt && automatic?.enabled">Haettu {{ new Date(snapshot.fetchedAt).toLocaleString('fi-FI') }}. Tarkista myös yhtiön poikkeustiedotteet.</p>

@@ -1,19 +1,10 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref } from "vue";
 import type { ProviderStatus } from "../types";
 
 import { widgetPanelKey, widgetSettingsKey, WIDGET_SETTING_KEYS } from '../composables/widgetSettings';
 import { cardCompactKey } from '../composables/cardShell';
-import {
-  cardIsClipped,
-  clipNotice,
-  clipNoticeLabel,
-  clippedRowCount,
-  hiddenPixels,
-  isCompactCard,
-  noticeFitsInCard,
-  type RowBand,
-} from '../cardOverflow';
+import { isCompactCard } from '../cardOverflow';
 import { PANEL_TITLES } from '../types';
 const panelId = inject(widgetPanelKey, undefined);
 const openSettings = inject(widgetSettingsKey, undefined);
@@ -59,162 +50,44 @@ const staleLabel = computed(() => {
   return `päivitetty ${Math.round(hours / 24)} vrk sitten`;
 });
 
-/* ── Leikkautuuko sisältö, ja kuinka paljon ────────────────────────────────
+/* ── Tiivis kortti ─────────────────────────────────────────────────────────
  *
  * Yksi paikka kaikille kahdelletoista kortille, samasta syystä kuin
- * "vanhentunut"-merkki on täällä: rikkinäinen lähde ja vajaa näkymä ovat
- * molemmat asioita joista kortin on kerrottava itse, eikä kumpaakaan voi
- * jättää sen varaan että jokainen kortti muistaa tehdä sen erikseen.
+ * "vanhentunut"-merkki on täällä: kortin korkeus ei ole yhdenkään kortin oma
+ * asia vaan ruudukon, eikä sitä voi jättää sen varaan että jokainen kortti
+ * muistaa mitata sen erikseen.
  *
- * Säännöt ovat cardOverflow.ts:ssä ilman DOMia; täällä on vain mittaus.
+ * Mitataan vain kortin KORKEUS. Rivien skannausta ei ole, koska ilmoitusta
+ * piiloon jääneistä riveistä ei ole: kortit vierittävät sisältönsä, ja
+ * vierityspalkki kertoo itse että listaa on enemmän.
+ *
+ * Sääntö (kynnys) on cardOverflow.ts:ssä ilman DOMia; täällä on vain mittaus.
  */
 const cardEl = ref<HTMLElement | null>(null);
-const bodyEl = ref<HTMLElement | null>(null);
-const noticeEl = ref<HTMLElement | null>(null);
-
-const hiddenPx = ref(0);
-/** Kortin ITSENSÄ piilottamat rivit (uutiskortti) — ilmoituksen PERUSTE pikselien ohella. */
-const concealedRows = ref(0);
-/** Rivit joita katsoja ei saa luettua: taitteen alla TAI ilmoitusrivin peitossa. */
-const hiddenRows = ref(0);
 const cardHeight = ref(0);
-/** Mahtuuko ilmoitusrivi runkoon peittämättä otsikkoa. */
-const noticeHasRoom = ref(false);
 
 const compact = computed(() => isCompactCard(cardHeight.value));
 provide(cardCompactKey, compact);
 
-/*
- * Ilmoituksen TEKSTI on aina olemassa; `noticeVisible` päättää näkyykö se.
- *
- * Rivi renderöidään DOMiin myös piilotettuna, koska sen korkeus tarvitaan
- * päätökseen "mahtuuko tämä runkoon peittämättä otsikkoa" — ja korkeutta ei
- * voi mitata elementistä jota ei ole. Ks. style.css:n `.card__clipped--hidden`.
- */
-const notice = computed(() => clipNotice(hiddenRows.value));
-const noticeVisible = computed(
-  () => noticeHasRoom.value && cardIsClipped(hiddenPx.value, concealedRows.value),
-);
-const noticeLabel = computed(() => clipNoticeLabel(hiddenRows.value));
-
-/**
- * Ilmoitusrivin korkeus pikseleinä — myös silloin kun rivi on piilotettu.
- *
- * Rivi on asemoitu (`position: absolute`), joten tämä EI ole sen viemä tila
- * kortin korkeudesta: se ei vie yhtään. Tätä käytetään kahteen asiaan:
- * mahtuuko rivi runkoon peittämättä otsikkoa, ja mikä osa sisällöstä jää sen
- * PEITTOON kortin alalaidassa.
- *
- * `offsetHeight` riittää nyt marginaalien sijaan, koska asemoidulla rivillä
- * ei ole marginaaleja lainkaan — kortin täyte tulee `--card-pad-x`:stä.
- */
-function noticeSpace(): number {
-  return noticeEl.value?.offsetHeight ?? 0;
-}
-
-/**
- * Se laatikko joka oikeasti leikkaa. Se ei ole aina sama elementti: listakortit
- * leikkaavat omassa vierityssäiliössään (`.menu`, `.household`, …) ja
- * kaaviokortit (sää, pörssisähkö) suoraan kortin omassa `overflow: hidden`
- * -rajassa. Valitaan se jossa piilossa on eniten — se on se jonka katsoja
- * menettää.
- */
-function clippingBox(): { el: HTMLElement; hidden: number } | null {
-  const card = cardEl.value;
-  const body = bodyEl.value;
-  if (!card || !body) return null;
-  let best: { el: HTMLElement; hidden: number } | null = null;
-  const consider = (el: HTMLElement): void => {
-    const hidden = hiddenPixels(el.scrollHeight, el.clientHeight);
-    if (hidden > 0 && (best === null || hidden > best.hidden)) best = { el, hidden };
-  };
-  // Kortin oma kehys ja runko aina: ne ovat se raja jonka yli sisältö ei näy.
-  consider(card);
-  consider(body);
-  /*
-   * Rungon sisältä VAIN oikeat vierityssäiliöt.
-   *
-   * `overflow: hidden` rungon sisällä on tarkoituksellista typistystä, ei
-   * ylivuotoa: esim. pörssisähkön `.power__readout` on yhden rivin laatikko
-   * jossa on `text-overflow: ellipsis`, ja rivinkorkeuden pyöristys tekee
-   * siitä pysyvästi 3 px "ylivuotavan" 20 px:n laatikon. Ilman tätä rajausta
-   * pörssisähkökortti väitti sisältönsä leikkautuvan silloinkin kun koko
-   * kaavio näkyi (mitattu 1366 x 768, koko 2 x 4) — eli tämä ilmoitus olisi
-   * itse ollut väärää tietoa seinällä.
-   *
-   * Uutiskortti on `overflow: hidden` eikä siis osu tähän, ja se on oikein:
-   * se siivoaa ylivuotonsa itse merkitsemällä mahtumattomat otsikot
-   * (`data-card-row="hidden"`), jolloin ne lasketaan rivilaskurissa.
-   */
-  const walk = (el: Element): void => {
-    if (el instanceof HTMLElement) {
-      const overflowY = getComputedStyle(el).overflowY;
-      if (overflowY === "auto" || overflowY === "scroll") consider(el);
-    }
-    for (const child of el.children) walk(child);
-  };
-  walk(body);
-  return best;
-}
-
 function measure(): void {
-  const card = cardEl.value;
-  const body = bodyEl.value;
-  if (!card || !body) return;
-  const cardRect = card.getBoundingClientRect();
-  // Mittaamaton kortti (ei vielä asettunut, tai piilotettu) antaa nollia, eikä
-  // niistä saa päätellä mitään — sama varaus kuin uutiskortin `measure`issa.
-  if (cardRect.height <= 0) return;
-  cardHeight.value = cardRect.height;
-
-  const noticeHeight = noticeSpace();
-  noticeHasRoom.value = noticeFitsInCard(body.clientHeight, noticeHeight);
-
-  const box = clippingBox();
-  hiddenPx.value = box?.hidden ?? 0;
-
-  const rows: RowBand[] = [];
-  for (const el of body.querySelectorAll<HTMLElement>("[data-card-row]")) {
-    const rect = el.getBoundingClientRect();
-    if (rect.height <= 0) continue;
-    rows.push({ top: rect.top, bottom: rect.bottom, concealed: el.dataset.cardRow === "hidden" });
-  }
-
-  /*
-   * PERUSTE ja LUKU mitataan eri taitteesta, ja se on tarkoituksellista.
-   *
-   * Peruste (`concealedRows`) on vain kortin itsensä piilottamat rivit:
-   * uutiskortti siivoaa ylivuotonsa `visibility: hidden` -tilaan, jolloin
-   * kortti ei vuoda yli yhtään pikseliä mutta otsikoita jää lukematta.
-   * Nollasta pikselistä ei siis saa päätellä että kaikki näkyy.
-   *
-   * Peruste EI saa sisältää rivejä jotka ilmoitusrivi itse peittää — muuten
-   * ilmoitus pitäisi itsensä pystyssä senkin jälkeen kun sisältö on kutistunut
-   * mahtuvaksi, eikä katoaisi enää koskaan.
-   *
-   * Luku (`hiddenRows`) on rivit jotka eivät mahdu leikkaavaan laatikkoon.
-   * Merkki itse ei kuulu tähän: se on nurkkapilleri eikä koko leveydeltä
-   * kulkeva rivi, joten se ei vie yhdeltäkään riviltä sen luettavuutta.
-   */
-  concealedRows.value = rows.filter((row) => row.concealed === true).length;
-
-  const reference = box?.el ?? body;
-  const referenceRect = reference.getBoundingClientRect();
-  const visibleTop = referenceRect.top + reference.clientTop;
-  hiddenRows.value = clippedRowCount(rows, visibleTop, visibleTop + reference.clientHeight);
+  const height = cardEl.value?.getBoundingClientRect().height ?? 0;
+  // Mittaamaton kortti (ei vielä asettunut, tai piilotettu) antaa nollan, eikä
+  // siitä saa päätellä mitään: edellinen tunnettu korkeus jää voimaan.
+  if (height <= 0) return;
+  cardHeight.value = height;
 }
 
 /**
- * Mittaukset niputetaan yhteen ruudunpäivitykseen.
+ * Mittaus niputetaan yhteen ruudunpäivitykseen.
  *
- * Yksi mittaus käy koko kortin läpi ja kysyy `getComputedStyle`n jokaiselta
- * elementiltä, ja herätteitä tulee useita peräkkäin samasta muutoksesta
- * (Vuen DOM-päivitys, sen aiheuttama koon muutos, ilmoitusrivin ilmestyminen).
- * Ilman niputusta sama vastaus laskettaisiin kolmesti. `requestAnimationFrame`
- * on myös oikea hetki: se ajetaan asettelun jälkeen, joten mitat ovat valmiit.
+ * `requestAnimationFrame` on oikea hetki: se ajetaan asettelun jälkeen, joten
+ * mitat ovat valmiit. Niputus myös estää silmukan siinä tapauksessa että
+ * tiiviin kortin pienempi täyte sattuisi vaikuttamaan kortin omaan kokoon.
  *
  * Tämä näyttö on auki kuukausia yhteen menoon, joten turha työ ei ole
- * makuasia.
+ * makuasia — ja juuri siksi täällä ei ole enää `MutationObserver`ia. Se oli
+ * olemassa vain leikkausilmoituksen mittausta varten ja ajoi työtä jokaisesta
+ * DOM-muutoksesta jokaisella kortilla.
  */
 let pendingFrame: number | null = null;
 function scheduleMeasure(): void {
@@ -226,51 +99,26 @@ function scheduleMeasure(): void {
 }
 
 /**
- * Mittaus herätetään kolmesta suunnasta, koska yksikään niistä ei yksin riitä:
- * kortin koon muutos (asettelu, ikkunan koko), sisällön muutos (uusi viesti,
- * poistettu ostos) ja ensimmäinen asettuminen. `MutationObserver` kuuntelee
- * VAIN kortin runkoa — ilmoitusrivi on sen ulkopuolella, joten sen
- * ilmestyminen ei voi herättää mittausta uudestaan.
- *
- * Attribuuteista seurataan vain ne jotka voivat muuttaa sisällön korkeutta tai
- * rivien laskettavuutta: `style` (uutiskortin `visibility: hidden`), `class`
- * (tiiviin kortin tyylit) ja `data-card-row` (rivimerkintä). Kaikkien
- * attribuuttien seuraaminen herättäisi mittauksen jokaisesta aria-lipun
- * käännöstä.
+ * Kortin korkeuden muuttaa VAIN ruudukko: asettelun muokkaus, ikkunan koko tai
+ * näytön kääntyminen. Sisällön määrä ei muuta sitä, koska kortti on
+ * ruudukkosolu jonka korkeus tulee kiinteästä rivikorkeudesta
+ * (`--layout-row-height`, ks. App.vuen measureGridRows). Siksi
+ * `ResizeObserver` yksin riittää — sisällön muutoksia ei tarvitse kuunnella.
  */
 let resizeObserver: ResizeObserver | null = null;
-let mutationObserver: MutationObserver | null = null;
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(scheduleMeasure);
   if (cardEl.value) resizeObserver.observe(cardEl.value);
-  if (bodyEl.value) resizeObserver.observe(bodyEl.value);
-  mutationObserver = new MutationObserver(scheduleMeasure);
-  if (bodyEl.value) {
-    mutationObserver.observe(bodyEl.value, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ["style", "class", "data-card-row"],
-    });
-  }
   scheduleMeasure();
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
-  mutationObserver?.disconnect();
-  mutationObserver = null;
   if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
   pendingFrame = null;
 });
-
-// Tilan vaihtuminen ("Haetaan…" -> sisältö) vaihtaa koko rungon, ja
-// `card__reason` ilmestyy rungon ULKOPUOLELLE — kumpikaan ei näy
-// MutationObserverille joka katsoo vain runkoa.
-watch(() => [props.status, props.error?.message], () => void nextTick(scheduleMeasure));
 </script>
 
 <template>
@@ -322,7 +170,7 @@ watch(() => [props.status, props.error?.message], () => void nextTick(scheduleMe
     -->
     <p v-if="isStale && error?.message" class="card__reason">{{ error.message }}</p>
 
-    <div ref="bodyEl" class="card__body">
+    <div class="card__body">
       <div v-if="isFailed" class="state">
         <span class="state__title">Tietoja ei saatu</span>
         <span>{{ error?.message ?? "Lähde ei vastaa" }}</span>
@@ -336,26 +184,6 @@ watch(() => [props.status, props.error?.message], () => void nextTick(scheduleMe
       </div>
       <slot v-else />
     </div>
-
-    <!--
-      Vajaasta näkymästä kerrotaan kortissa, ei lokissa eikä hiiren päällä.
-      Seinänäytössä ei ole osoitinta eikä sitä vieritetä, joten tämä rivi on
-      ainoa mahdollisuus kertoa että lista jatkuu — ks. cardOverflow.ts.
-
-      `flex-shrink: 0` ja sijainti rungon ULKOPUOLELLA ovat ehto eivätkä
-      tyyli: rungon sisällä ilmoitus leikkautuisi itse piiloon täsmälleen
-      silloin kun sitä tarvitaan.
-    -->
-    <p
-      ref="noticeEl"
-      class="card__clipped"
-      :class="{ 'card__clipped--hidden': !noticeVisible }"
-      :aria-label="noticeLabel"
-      :aria-hidden="noticeVisible ? undefined : 'true'"
-      role="status"
-    >
-      <span class="card__clipped-glyph" aria-hidden="true">⌄</span>{{ notice }}
-    </p>
   </section>
 </template>
 

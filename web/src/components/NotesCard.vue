@@ -145,7 +145,7 @@ async function removeNote(note: Note): Promise<void> {
       </div>
 
       <ul v-else class="notes__list">
-        <li v-for="note in sortedNotes" :key="note.id" class="note" :class="{ 'note--done': note.done }" data-card-row>
+        <li v-for="note in sortedNotes" :key="note.id" class="note" :class="{ 'note--done': note.done }">
           <label v-if="canEdit" class="note__check">
             <input type="checkbox" :checked="note.done" @change="toggleDone(note)" />
             <span class="note__text">{{ note.text }}</span>

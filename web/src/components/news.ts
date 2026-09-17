@@ -1,6 +1,6 @@
 /**
- * Uutiskortin puhdas logiikka: ikämerkintä, näytettävät rivit, ja se montako
- * riviä paneeliin oikeasti mahtuu. Omassa moduulissaan eikä NewsCard.vuessa
+ * Uutiskortin puhdas logiikka: ikämerkintä ja näytettävät rivit. Omassa
+ * moduulissaan eikä NewsCard.vuessa
  * samasta syystä kuin `calendarMonth.ts` ja `electricityChart.ts` —
  * .vue-tiedostoa ei voi tuoda node-testiin, ja juuri nämä ovat se osa jonka
  * on oltava oikein riippumatta siitä miltä kortti näyttää.
@@ -70,40 +70,4 @@ export function newsRows(items: readonly NewsItem[] | null | undefined, now: Dat
     link: item.link,
     age: relativeAge(item.publishedAt, now),
   }));
-}
-
-/**
- * Montako riviä paneeliin mahtuu KOKONAAN, mitattuna renderöidyistä
- * riveistä: `areaBottom` on listan alareunan y-koordinaatti ja `itemBottoms`
- * kunkin rivin alareuna samassa koordinaatistossa, järjestyksessä.
- *
- * MIKSI MITATAAN EIKÄ LASKETA: rivin korkeus vaihtelee, koska otsikko vie
- * yhden tai kaksi riviä sen mukaan kuinka pitkä se on ja kuinka leveä paneeli
- * on. Kertolasku "korkeus / rivin korkeus" olisi siis oikein vain silloin kun
- * kaikki otsikot sattuvat olemaan yhtä pitkiä — ja ylös päin erehtyessään se
- * jättäisi viimeisen rivin puoliksi näkyviin paneelin alareunaan.
- *
- * Tämä ei voi jäädä heilumaan kahden arvon välille: KAIKKI rivit
- * renderöidään aina, ja ylimääräiset vain piilotetaan `visibility`illä
- * paikoilleen. Asettelu ei siis muutu mittauksen tuloksesta, joten mittaus
- * antaa joka kerta saman vastauksen.
- *
- * Alaraja on 1 eikä 0: jos paneeli on niin matala ettei yksikään rivi mahdu
- * kokonaan, on parempi näyttää yksi katkaistu otsikko kuin tyhjä kortti,
- * jossa on dataa mutta ei mitään näkyvissä.
- */
-export function fittingItemCount(
-  areaBottom: number,
-  itemBottoms: readonly number[],
-  /** Alapikselin verran liukumaa — selaimen mitat eivät ole tasalukuja. */
-  tolerancePx = 0.5,
-): number {
-  if (itemBottoms.length === 0) return 0;
-  if (!Number.isFinite(areaBottom)) return 1;
-  let count = 0;
-  for (const bottom of itemBottoms) {
-    if (!Number.isFinite(bottom) || bottom > areaBottom + tolerancePx) break;
-    count += 1;
-  }
-  return Math.max(1, count);
 }

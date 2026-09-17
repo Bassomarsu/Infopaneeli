@@ -145,17 +145,14 @@ body:has(.app--scroll) #app {
 /*
  * Kortin taytteet ovat MUUTTUJINA, eivat suoraan `padding`issa.
  *
- * Syy ei ole tyylikkyys. Ilmoitusrivi (`.card__clipped`) asemoituu kortin
- * laitoihin ja sisentaa tekstinsa saman verran kuin kortti — sama luku siis
- * tarvitaan kahdessa paikassa. Kirjoitettuna kahdesti ne ovat kaksi lukua
- * jotka on pidettava synkassa ilman etta mikaan kertoo siita, ja se on
+ * Syy ei ole tyylikkyys vaan se, etta tiivis kortti (`.card--compact`)
+ * tarvitsee saman luvun pienempana. Kirjoitettuna kahdesti ne olisivat kaksi
+ * lukua jotka on pidettava synkassa ilman etta mikaan kertoo siita, ja se on
  * TASMALLEEN se vikamuoto joka rikkoi kioskin poistumisalueen (ks.
  * KioskExitHotspot.vue: `inset: -0.9rem` ja `.app { gap: 0.9rem }`).
- * Mitattuna: kun `.card`in taytteeksi vaihtoi 1.6rem / 2rem, ilmoitusriviin
- * jai 9 px rako molempiin laitoihin ja 7,4 px alas.
  *
- * Muuttujina luku on yhdessa paikassa ja tiivis kortti (`.card--compact`)
- * yliajaa vain sen — ei jokaista kayttopaikkaa erikseen.
+ * Muuttujina luku on yhdessa paikassa ja tiivis kortti yliajaa vain sen — ei
+ * jokaista kayttopaikkaa erikseen.
  */
 .card {
   --card-pad-x: 1.35rem;
@@ -223,98 +220,12 @@ body:has(.app--scroll) #app {
 }
 
 /*
- * "Tästä ei näy kaikkea." Ks. cardOverflow.ts — kortti ei saa leikata
- * sisältöään hiljaa, koska seinänäyttöä ei vieritetä.
- *
- * MERKKI ON NURKASSA EIKÄ KOKO LEVEYDELTÄ, JA SE ON ASEMOITU. Kumpikin
- * ratkaisee oman mitatun vikansa:
- *
- * 1. VIRRASSA OLEVA RIVI VEI RUNGOLTA KORKEUTTA. Pörssisähkökortissa se vei
- *    kaiken: pylväskaaviosta näkyi 14,5 / 21,8 px ilman tätä ominaisuutta ja
- *    0 / 21,8 px sen kanssa (mitattu 1920 × 1080, koko 2 × 2). Kortti menetti
- *    ainoan sisältönsä ja sai tilalle rivin joka kertoi siitä — huonompi
- *    kauppa kuin alkuperäinen vika. Asemoituna rivi ei vie korkeutta.
- *
- * 2. VIRRASSA OLEVA RIVI TYÖNTYI ULOS KORTISTA. `flex-shrink: 0` takaa rivin
- *    korkeuden, ei sitä että rivi pysyy kortin sisällä: kapeassa kortissa
- *    otsikko kääriytyy 2–3 riville ja viimeinen flex-lapsi valuu kortin
- *    alareunan ali, missä `.card { overflow: hidden }` leikkaa sen. Mitattu
- *    66 tapauksessa 741:stä, pahimmillaan 91 px kortin alapuolella eli
- *    kokonaan näkymättömissä. Ilmoitus joka itse katoaa on pahin mahdollinen
- *    versio tästä ominaisuudesta. Asemoituna se ei voi valua ulos.
- *
- * 3. KOKO LEVEYDELTÄ ASEMOITUNA se peitti saman kaistaleen jonka virrassa
- *    oleva rivi olisi vienyt — pörssisähkön kaavio oli edelleen 0 / 21,8 px.
- *    Nurkkamerkki peittää vain oman levyisensä alan kortin oikeasta
- *    alalaidasta, joten leikkautuneesta sisällöstä jää näkyviin kaikki muu.
- *
- * Merkki on sisällön PÄÄLLÄ, joten tausta on läpinäkymätön: sen läpi kuultava
- * puolikas rivi olisi juuri sitä hiljaista väärää tietoa jota vastaan tämä on.
- * `--bg` pohjalla ja kortin oma sävy päällä antaa saman värin kuin kortti.
- *
- * `right/bottom: 0` osuu kortin SISÄLTÖLAATIKON nurkkaan, eli täytteen verran
- * reunasta sisäänpäin. Kortin täytettä ei siis toisteta tässä lainkaan — ks.
- * `--card-pad-x` yllä siitä miksi sen toistaminen olisi vika.
- *
- * VÄRI EI OLE VAROITUSVÄRI, eikä se ole huolimattomuutta. Vajaa näkymä on
- * normaali tila pienessä kortissa, ei vika: jos tämä olisi sama keltainen
- * kuin `card--stale`, puolet ruudusta hehkuisi varoitusta koko päivän ja
- * OIKEA varoitus — vanhentunut lähde — hukkuisi joukkoon. Merkki erottuu
- * muodolla: rajattu pilleri ja alaspäin osoittava nuoli.
- */
-.card__clipped {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin: 0;
-  padding: 0.12rem 0.45rem 0.16rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-  line-height: 1.25;
-  white-space: nowrap;
-  color: var(--text-dim);
-  background-color: var(--bg);
-  background-image: linear-gradient(var(--surface-strong), var(--surface-strong));
-}
-
-/*
- * Piilossa mutta mitattavissa.
- *
- * Merkin korkeus tarvitaan MYÖS silloin kun sitä ei näytetä: kortti päättää
- * siitä mahtuuko merkki ylipäätään runkoon peittämättä otsikkoa (ks.
- * cardOverflow.ts:n `noticeFitsInCard`). `display: none` -elementin korkeutta
- * ei voi mitata, ja kovakoodattu vakio olisi sama kahdennettu luku kuin
- * `--card-pad-x`:llä yllä korjattu täyte. `visibility` jättää merkin
- * mitattavaksi mutta poistaa sen sekä ruudulta että ruudunlukijalta, eikä
- * asemoituna vie tilaa kummassakaan tilassa.
- */
-.card__clipped--hidden {
-  visibility: hidden;
-}
-
-.card__clipped-glyph {
-  font-size: 0.95rem;
-  line-height: 0.75;
-  /* Nuoli kantaa viestin myös yötilan himmennyksen jälkeen, jolloin pelkkä
-     harmaa teksti on jo hyvin vaimea. */
-  color: var(--accent-power);
-}
-
-/*
  * Tiivis kortti (ks. cardOverflow.ts:n COMPACT_CARD_HEIGHT): täytteet ja välit
  * pienemmiksi. Tämä ei poista sisältöä vaan koristetilaa — mitattuna 17 px
- * takaisin rungolle. Ilmoitusrivi ei vie rungolta mitään (se on asemoitu),
- * joten tiivis kortti näyttää totuuden kertoessaan ENEMMÄN sisältöä kuin
- * ennen, ei vähemmän.
+ * takaisin rungolle, eli suunnilleen yhden listarivin verran lisää luettavaa.
  *
- * Vain muuttujat ja otsikon väli. Ilmoitusrivi seuraa `--card-pad-x`:ää
- * itsestään eikä sitä tarvitse mainita tässä.
+ * Vain muuttujat ja otsikon väli: kortin täyte tulee `--card-pad-x`:stä ja
+ * `--card-pad-y`:stä, joten sitä ei kirjoiteta tähän uudestaan.
  */
 .card--compact {
   --card-pad-x: 1rem;
@@ -324,8 +235,6 @@ body:has(.app--scroll) #app {
 .card--compact .card__head {
   margin-bottom: 0.5rem;
 }
-
-
 
 .state {
   display: flex;

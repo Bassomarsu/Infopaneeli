@@ -60,7 +60,7 @@ function label(date: string): string {
         <section v-for="day in school.days.filter(d => d.date >= today)" :key="day.date" class="day">
           <h4>{{ label(day.date) }}</h4>
           <p v-if="!day.meals.length" class="hint">Lähteessä ei ole ateriatietoja.</p>
-          <p v-for="(meal, i) in day.meals" :key="i" class="meal" data-card-row><span>{{ meal.type }}</span>{{ meal.name }}</p>
+          <p v-for="(meal, i) in day.meals" :key="i" class="meal"><span>{{ meal.type }}</span>{{ meal.name }}</p>
         </section>
         <!--
           Lähdemaininta jää pois tiiviistä kortista, ja se on ainoa asia joka
@@ -71,9 +71,8 @@ function label(date: string): string {
           puhelimessa se on oikea tapa avata koko lista.
 
           SISÄLTÖÄ EI KOSKAAN PUDOTETA NÄIN. Ateria tai päivä joka ei mahdu
-          jää leikkautuneeksi ja kortti kertoo siitä (ks. cardOverflow.ts);
-          hiljaa pois jätetty ateria olisi täsmälleen se vika jota tässä
-          korjataan.
+          jää listan alapäähän, josta sen saa esiin vierittämällä; hiljaa pois
+          jätetty ateria olisi täsmälleen se vika jota tässä korjataan.
         -->
         <template v-if="!compact">
           <a v-if="linkable && school.sourceUrl" :href="school.sourceUrl" target="_blank" rel="noopener noreferrer">Lähde: kouluruoka.fi</a>

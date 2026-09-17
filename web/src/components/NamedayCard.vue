@@ -11,8 +11,8 @@ function dayLabel(date: string): string { return new Intl.DateTimeFormat('fi-FI'
  <CardShell title="Nimipäivät ja merkkipäivät" accent="var(--accent-calendar)" status="ok">
   <div class="namedays">
    <template v-if="data">
-    <p class="names" data-card-row><strong>Tänään {{dayLabel(data.today.date)}}</strong><span>{{data.today.names.join(', ') || 'Ei nimipäiviä'}}</span></p>
-    <p class="names" data-card-row><strong>Huomenna {{dayLabel(data.tomorrow.date)}}</strong><span>{{data.tomorrow.names.join(', ') || 'Ei nimipäiviä'}}</span></p>
+    <p class="names"><strong>Tänään {{dayLabel(data.today.date)}}</strong><span>{{data.today.names.join(', ') || 'Ei nimipäiviä'}}</span></p>
+    <p class="names"><strong>Huomenna {{dayLabel(data.tomorrow.date)}}</strong><span>{{data.tomorrow.names.join(', ') || 'Ei nimipäiviä'}}</span></p>
     <p class="hint">Nimipäivät · kalenteri {{data.calendarYear}}. Myöhemmin lisätyt nimet puuttuvat.
      <a v-if="linkable" href="https://github.com/fergusq/nimipaivat/tree/53b17371022631140abdd560f85e0800fda415d6/2000" target="_blank" rel="noopener noreferrer">Aineiston lähde</a>
     </p>

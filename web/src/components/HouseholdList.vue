@@ -55,7 +55,7 @@ function save() { const body:Record<string,unknown>=props.kind==='shopping' ? {t
    Varmistus ja "peru kuittaus" jäävät omalle rivilleen: ne ovat pitkiä
    lauseita, näkyvissä vain hetken, eivätkä ne toistu joka merkinnällä.
   -->
-  <ul><li v-for="row in rows" :key="row.id" data-card-row>
+  <ul><li v-for="row in rows" :key="row.id">
    <div class="entry" :class="{done:row.done}"><button v-if="canEdit && (kind==='shopping'||kind==='seasonal')" class="toggle" :disabled="busy" :aria-label="row.done ? 'Merkitse tekemättömäksi: '+row.label : 'Merkitse tehdyksi: '+row.label" :aria-pressed="row.done" @click="run('PATCH',{done:!row.done,...(kind==='seasonal'?{occurrenceDate:row.date}:{})},row.id)">{{row.done?'✓':'○'}}</button><div class="entry__text"><strong>{{row.label}}</strong><time v-if="row.date" :datetime="row.date">{{dateLabel(row.date)}}</time></div><div v-if="canEdit && deleting!==row.id" class="actions actions--inline"><button class="icon" :disabled="busy" :aria-label="'Muokkaa: '+row.label" title="Muokkaa" @click="edit(row.id)">✎</button><button class="icon" :disabled="busy" :aria-label="'Poista: '+row.label" title="Poista" @click="deleting=row.id">✕</button></div></div>
    <div v-if="canEdit && (deleting===row.id || (kind==='seasonal' && row.completedDate && !row.done))" class="actions"><button v-if="kind==='seasonal' && row.completedDate && !row.done" :disabled="busy" @click="run('PATCH',{done:false,occurrenceDate:row.completedDate},row.id)">Peru kuittaus {{dateLabel(row.completedDate)}}</button><template v-if="deleting===row.id"><span>Poistetaanko?</span><button :disabled="busy" @click="run('DELETE',undefined,row.id)">Kyllä, poista</button><button :disabled="busy" @click="deleting=null">Peruuta</button></template></div>
   </li></ul>

@@ -175,12 +175,33 @@ function closeDialog(): void {
 </template>
 
 <style scoped>
+/*
+ * Sisältö vierittyy, kuten yhdeksällä muulla kortilla (`.messages`,
+ * `.calendar__days`, `.schedule__cols` …): `flex: 1; min-height: 0;
+ * overflow-y: auto`.
+ *
+ * Vieritys on TÄSSÄ eikä kortissa. Kortin oma `overflow: hidden` on se raja
+ * joka piti otsikon ja "vanhentunut"-merkin paikallaan, ja sen muuttaminen
+ * vierittäväksi vierittäisi nekin pois — ne ovat juuri se minkä
+ * MIN_PANEL_SPAN lupaa säilyttää (ks. types.ts). Vain sisältö saa liikkua.
+ *
+ * Vieritys on vain TÄSSÄ eikä myös `.weather__days`issa: kaksi sisäkkäistä
+ * vierityssäiliötä antaisi kaksi palkkia ja kaksi eri tapaa päästä samaan
+ * sisältöön.
+ *
+ * `overflow-x` on erikseen `hidden`, koska pelkkä `overflow-y: auto` tekee
+ * toisesta akselista automaattisesti `auto`n — ja päivänapit ovat
+ * `justify-content: space-between` -rivissä, joka pyöristyy helposti
+ * murto-osan yli leveäksi. Sama mitattu ansa kuin uutiskortissa.
+ */
 .weather {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .weather__now {
@@ -233,12 +254,36 @@ function closeDialog(): void {
   color: var(--text-faint);
 }
 
+/*
+ * EI `min-height: 0`, JA SE ON EHTO EIKÄ TYYLI.
+ *
+ * `min-height: 0` antoi tämän rivin kutistua sisältönsä alle, jolloin
+ * ennustepäivät leikkautuivat rivin sisällä eikä `.weather` vuotanut yli
+ * lainkaan — vierityspalkkia ei siis olisi tullut vaikka sisältöä oli
+ * piilossa. Mitattu 1366 × 768 (kortti 2 × 2): 39 px päivistä pois näkyvistä,
+ * `.weather`in ylivuoto 0 px.
+ *
+ * Ilman sitä flex-laatikon automaattinen vähimmäiskorkeus on sen sisällön
+ * korkeus: rivi ei kutistu, `.weather` vuotaa yli, ja palkki ilmestyy.
+ * `flex: 1` jää, joten isolla kortilla rivi täyttää tilan kuten ennenkin —
+ * siellä ei ole kutistettavaa eikä ulkonäkö muutu.
+ */
 .weather__days {
   display: flex;
+  /*
+   * KÄÄRIYTYY, koska kuusi 44 px:n kosketuskohdetta ei mahdu kapean kortin
+   * riville: 901 px:n näytöllä 2 x 2 -kortissa päivärivi on 75 px laatikkoaan
+   * leveämpi, ja ilman kääriytymistä viimeinen päivä leikkautuu vaakasuunnassa
+   * pois — eikä pystyvieritys tavoita sitä, koska ongelma on eri akselilla.
+   *
+   * Kääriytyminen siirtää ylivuodon sille akselille jolla kortissa ON
+   * vieritys, eikä tuo toista vierityspalkkia. Kun päivät mahtuvat riville
+   * (mitattu: 2736 x 1824 ja 1920 x 1080), sillä ei ole mitään vaikutusta.
+   */
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.4rem;
   flex: 1;
-  min-height: 0;
 }
 
 .weather__day {
