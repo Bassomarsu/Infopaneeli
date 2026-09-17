@@ -18,6 +18,13 @@ dist/
 Thumbs.db
 *.log
 
-# Julkaisupaketit ja niiden koontivälimuisti (skriptit/tee-julkaisu.mjs)
-julkaisu/
+# Koontivälimuisti (skriptit/tee-julkaisu.mjs): ladatut Node-binaarit ja
+# staging-puu. Kymmeniä megatavuja, ja syntyy uudelleen joka koonnissa.
 julkaisu-valimuisti/
+
+# HUOM: julkaisu/ EI ole tässä. Valmiit asennuspaketit pidetään tarkoituksella
+# gitissä, jotta kuka tahansa voi ladata paketin suoraan repostaa eikä joudu
+# kääntämään koko projektia. Hinta on tiedossa: kumpikin paketti on ~55 Mt,
+# eivätkä ne katoa historiasta poistamallakaan, joten jokainen julkaisu
+# kasvattaa kloonin kokoa pysyvästi noin 110 Mt. Poista vanhat paketit uuden
+# koonnin yhteydessä — se ei pienennä historiaa mutta pitää työpuun siistinä.

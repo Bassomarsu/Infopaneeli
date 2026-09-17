@@ -5,6 +5,35 @@ hoitoajat, sää, pörssisähkön hinta tänään ja huomenna, perhekalenteri ja
 yhteinen muistilista yhdellä ruudulla. Päätelaite on Microsoft Surface Pro 4,
 joka ajaa sekä palvelimen että selaimen kioskitilassa.
 
+## Asennus: lataa valmis paketti
+
+**Et tarvitse Node.js:ää etkä koko projektia.** Valmiit asennuspaketit ovat
+[`julkaisu/`](julkaisu/)-kansiossa, ja niissä on oma Node-ajonaikansa mukana:
+
+| Alusta | Tiedosto |
+|---|---|
+| Windows | `julkaisu/infonaytto-<versio>-win-x64.zip` |
+| Linux | `julkaisu/infonaytto-<versio>-linux-x64.tar.gz` |
+
+Lataa paketti, pura se ja aja asennus puretun paketin `asennus`-kansiosta:
+
+```powershell
+cd <purkukansio>sennus
+powershell -ExecutionPolicy Bypass -File .senna.ps1
+```
+
+Linuxissa vastaavasti `sudo ./asenna.sh`. Tarkemmat ohjeet:
+[`asennus/KAYTTOONOTTO.md`](asennus/KAYTTOONOTTO.md) (Windows) ja
+[`asennus/KAYTTOONOTTO-LINUX.md`](asennus/KAYTTOONOTTO-LINUX.md).
+
+Tiivisteet ovat `julkaisu/SHA256SUMS.txt`:ssä.
+
+> **Repon kloonausta ei voi asentaa asentimella.** `asenna.ps1` vaatii valmiin
+> paketin, jossa on `node/`, `web/dist/` ja `node_modules/` — ne syntyvät vasta
+> koonnissa eivätkä ole gitissä. Kloonista saat paketin komennolla
+> `npm install && npm run release`, tai voit ajaa projektin kehityskopiona
+> (ks. KAYTTOONOTTO.md, "Tapa 2").
+
 ## Moduulit
 
 | Kortti | Lähde | Päivitysväli |
