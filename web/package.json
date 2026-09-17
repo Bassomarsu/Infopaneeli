@@ -20,7 +20,8 @@
     "test:news-card": "node test/news-card.ts",
     "test:card-overflow": "node test/card-overflow.ts",
     "test:widget-settings": "node test/widget-settings.ts",
-    "test:waste-settings": "node test/waste-settings.ts"
+    "test:waste-settings": "node test/waste-settings.ts",
+    "test:modal-dialogs": "node test/modal-dialogs.ts"
   },
   "dependencies": {
     "vue": "^3.5.13"

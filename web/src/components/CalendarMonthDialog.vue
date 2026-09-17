@@ -2,11 +2,20 @@
 /**
  * Kalenterin kuukausi- ja päivänäkymä.
  *
- * EI teleportattu `<body>`:n alle vaan elää `.app`:n sisällä, toisin kuin
- * AlarmsPanel. Ero on tarkoituksellinen: hälytyksen ON näyttävä yölläkin,
+ * KEHYS ON `ModalDialog` (`<dialog showModal>`), EI OMA `position: fixed`
+ * -overlay — ÄLÄ PALAUTA OVERLAYTÄ. Perustelu ja mitatut poikkeamat ovat
+ * ModalDialog.vuen alussa: yötilan `filter` tekee `.app`ista sijoitussäiliön
+ * myös `fixed`ille (tämän dialogin kehys oli vieritystilassa yöllä
+ * −455…−1478 px näkymän yläpuolella), ja tarttuva yläpalkki peitti
+ * "Sulje"-painikkeen myös päivällä.
+ *
+ * `dim`: TÄMÄ DIALOGI HIMMENEE yötilan mukana, ja se on säilytettävä. Se oli
+ * aiemmin `.app`:n sisällä juuri siksi — hälytyksen ON näyttävä yölläkin,
  * mutta kalenteri on käyttäjän itse avaama näkymä ja sen kuuluu himmentyä
- * muun näytön mukana (ks. `.app.night` style.css:ssä). Sama ratkaisu kuin
- * WeatherHourlyDialog.
+ * muun näytön mukana. Top layer ei peri `.app.night`in suodatinta, joten
+ * himmennys annetaan nyt eksplisiittisesti `dim`-propilla; tarkoitus on sama
+ * kuin ennen, vain keino vaihtui. Sama ratkaisu kuin WeatherHourlyDialog ja
+ * MessageDialog.
  */
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import {
@@ -27,6 +36,7 @@ import {
   type DayKind,
   type GridDay,
 } from "./calendarMonth";
+import ModalDialog from "./ModalDialog.vue";
 import { useClock } from "../composables/useClock";
 import { useEditAccess } from "../composables/useEditAccess";
 import type { CalendarEvent, CalendarMonth } from "../types";
@@ -305,26 +315,34 @@ const status = computed<StatusLine | null>(() => {
   return null;
 });
 
-// ── Avaus ja näppäimistö ─────────────────────────────────────────────────────
+// ── Avaus ja sulkeminen ──────────────────────────────────────────────────────
 
 const closeButton = ref<HTMLElement | null>(null);
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key !== "Escape") return;
-  // Sisin näkymä sulkeutuu ensin: päivänäkymästä palataan kuukauteen, ei ulos.
-  if (selectedDay.value !== null) selectedDay.value = null;
-  else emit("close");
+/**
+ * Escapelle ei ole omaa window-kuuntelijaa: `<dialog showModal>` lähettää
+ * `cancel`-tapahtuman, jonka ModalDialog kääntää `close`-emitiksi. Oma
+ * kuuntelija sulkisi dialogin kahdesti.
+ *
+ * `reason` säilyttää eron jonka oma kuuntelija teki: Escape sulkee SISIMMÄN
+ * näkymän ensin (päivänäkymästä palataan kuukauteen, ei ulos), kun taas
+ * taustan painallus sulkee koko dialogin sieltä mistä tahansa.
+ */
+function onDismiss(reason: "cancel" | "backdrop"): void {
+  if (reason === "cancel" && selectedDay.value !== null) {
+    selectedDay.value = null;
+    return;
+  }
+  emit("close");
 }
 
 watch(
   () => props.open,
   (open) => {
     if (!open) {
-      window.removeEventListener("keydown", onKeydown);
       stopMeasuring();
       return;
     }
-    window.addEventListener("keydown", onKeydown);
     // Avattaessa aina tuore haku: kuukausinäkymä on juuri se paikka jossa
     // vanhentunut vastaus näyttäisi tosiasialta.
     selectedDay.value = null;
@@ -345,14 +363,13 @@ watch(selectedDay, (day) => {
 });
 
 onUnmounted(() => {
-  window.removeEventListener("keydown", onKeydown);
   stopMeasuring();
 });
 </script>
 
 <template>
-  <div v-if="open" class="overlay" @click.self="emit('close')">
-    <section class="panel" role="dialog" aria-modal="true" aria-label="Kalenteri">
+  <ModalDialog v-if="open" label="Kalenteri" dim @close="onDismiss">
+    <section class="panel">
       <header class="panel__head">
         <div class="nav">
           <button
@@ -507,7 +524,7 @@ onUnmounted(() => {
         </template>
       </div>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
@@ -528,18 +545,9 @@ onUnmounted(() => {
  * yöllä käytännössä kokonaan, joten sitä ei käytetä tässä dialogissa.
  */
 
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  padding: 1.5rem;
-}
-
+/* Taustan tummennus, sumennus, keskitys ja täyte tulevat ModalDialogin
+   `.modal`/`::backdrop`-säännöistä — tässä ei ole omaa overlaytä, ks.
+   komponentin alun perustelu. */
 .panel {
   --grid-line: rgba(255, 255, 255, 0.075);
   --cell-bg: #171b25;
@@ -992,10 +1000,8 @@ onUnmounted(() => {
  * itsestään, koska mallirivi noudattaa samoja sääntöjä.
  */
 @media (max-width: 44rem) {
-  .overlay {
-    padding: 0.6rem;
-  }
-
+  /* Kehyksen oma täyte kapenee ModalDialogin 600 px:n rajalla, ei tässä:
+     yhtä painava sisäkkäinen sääntö riippuisi tiedostojen järjestyksestä. */
   .panel {
     height: 100%;
   }

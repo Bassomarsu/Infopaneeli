@@ -1,5 +1,21 @@
 <script setup lang="ts">
+/**
+ * Yhden päivän tuntisää.
+ *
+ * KEHYS ON `ModalDialog` (`<dialog showModal>`), EI OMA `position: fixed`
+ * -overlay — ÄLÄ PALAUTA OVERLAYTÄ. Perustelu ja mitatut poikkeamat ovat
+ * ModalDialog.vuen alussa: yötilan `filter` tekee `.app`ista sijoitussäiliön
+ * myös `fixed`ille (tämän dialogin kehys oli vieritystilassa yöllä
+ * −511…−1254 px näkymän yläpuolella), ja tarttuva yläpalkki peitti
+ * "Sulje tuntisää" -painikkeen myös päivällä.
+ *
+ * `dim`: TÄMÄ DIALOGI HIMMENEE yötilan mukana. Se on passiivista tietoa, sama
+ * pinta kuin sääkortti sen takana, eikä ole syytä miksi sen pitäisi loistaa
+ * pimeään keittiöön kirkkaampana kuin kortin josta se avattiin. Sama ratkaisu
+ * kuin CalendarMonthDialog ja MessageDialog.
+ */
 import { nextTick, watch } from "vue";
+import ModalDialog from "./ModalDialog.vue";
 import { iconFor } from "./weatherIcons";
 import type { WeatherHour } from "../types";
 
@@ -28,32 +44,27 @@ function isNow(hour: number): boolean {
   return props.isToday && hour === props.currentHour;
 }
 
-// Closing on Escape only while open, so the listener doesn't fight other
-// keyboard handling elsewhere on the page when the dialog is not shown.
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") emit("close");
-}
+// Escapelle ei ole omaa kuuntelijaa: `<dialog showModal>` lähettää
+// `cancel`-tapahtuman, jonka ModalDialog kääntää `close`-emitiksi. Oma
+// window-kuuntelija sulkisi saman dialogin toiseen kertaan.
 
 watch(
   () => props.open,
   (open) => {
-    if (open) {
-      window.addEventListener("keydown", onKeydown);
-      // Wait for the row for the current hour to exist in the DOM before
-      // scrolling to it.
-      void nextTick(() => {
-        const target = document.querySelector('[data-hourly-now="true"]');
-        target?.scrollIntoView({ block: "center", behavior: "auto" });
-      });
-    } else {
-      window.removeEventListener("keydown", onKeydown);
-    }
+    if (!open) return;
+    // Wait for the row for the current hour to exist in the DOM before
+    // scrolling to it. ModalDialog on jo tässä vaiheessa kiinnittänyt
+    // dokumentin vierityksen, joten vieritys osuu vain tuntilistaan.
+    void nextTick(() => {
+      const target = document.querySelector('[data-hourly-now="true"]');
+      target?.scrollIntoView({ block: "center", behavior: "auto" });
+    });
   },
 );
 </script>
 
 <template>
-  <div v-if="open" class="overlay" @click.self="emit('close')">
+  <ModalDialog v-if="open" :label="`Tuntisää ${title}`" dim @close="emit('close')">
     <section class="panel">
       <header class="panel__head">
         <h2>{{ title }}</h2>
@@ -89,22 +100,13 @@ watch(
         </div>
       </div>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  padding: 1.5rem;
-}
-
+/* Taustan tummennus, sumennus, keskitys ja täyte tulevat ModalDialogin
+   `.modal`/`::backdrop`-säännöistä — tässä ei ole omaa overlaytä, ks.
+   komponentin alun perustelu. */
 .panel {
   background: #141821;
   border: 1px solid var(--border);

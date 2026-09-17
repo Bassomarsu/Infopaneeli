@@ -1,5 +1,26 @@
 <script setup lang="ts">
+/**
+ * Hälytysten hallinta ja hälytysilmoitus.
+ *
+ * MOLEMPIEN KEHYS ON `ModalDialog` (`<dialog showModal>`), EI OMA
+ * `position: fixed` -overlay — ÄLÄ PALAUTA OVERLAYTÄ. Perustelu ja mitatut
+ * poikkeamat ovat ModalDialog.vuen alussa: yötilan `filter` tekee `.app`ista
+ * sijoitussäiliön myös `fixed`ille (hallintapaneelin kehys oli vieritystilassa
+ * yöllä −511…−2237 px näkymän yläpuolella, eli 800 × 480:n Raspberry Pi
+ * -paneelilla kokonaan ruudun ulkopuolella), ja tarttuva yläpalkki peitti
+ * "Sulje"-painikkeen myös päivällä.
+ *
+ * `dim`: HALLINTAPANEELI EI HIMMENNY yötilan mukana, vaikka se aiemmin
+ * himmeni ollessaan `.app`:n sisällä. Se on sama pinta kuin SettingsPanel —
+ * lomake jossa syötetään kellonaikoja ja nimiä — ja `brightness(0.42)` vie
+ * kenttien rajat ja pienen tekstin lukukelvottomiksi juuri silloin kun
+ * tarkkuudella on väliä: väärin kirjattu aika tarkoittaa nukkumatta jäänyttä
+ * herätystä. Se on myös näkyvissä vain sen hetken kun joku seisoo näytön
+ * edessä. Passiiviset tietonäkymät (kalenteri, tuntisää, viesti) himmenevät
+ * yhä — ks. ModalDialog.vuen `dim`.
+ */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import ModalDialog from "./ModalDialog.vue";
 import {
   ALARM_SOUNDS,
   DEFAULT_SOUND_ID,
@@ -552,33 +573,43 @@ function closePanel(): void {
   emit("close");
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") closePanel();
-}
+// Escapelle ei ole omaa kuuntelijaa: `<dialog showModal>` lähettää
+// `cancel`-tapahtuman, jonka ModalDialog kääntää `close`-emitiksi. Oma
+// window-kuuntelija sulkisi paneelin myös hälytyksen soidessa, vaikka
+// ilmoitus on silloin päällimmäisenä eikä sitä saa ohittaa.
 
 watch(
   () => props.open,
   (open) => {
     if (open) {
-      window.addEventListener("keydown", onKeydown);
       void loadCustomSounds();
     } else {
-      window.removeEventListener("keydown", onKeydown);
       cancelEdit();
       cancelPendingDelete();
       listError.value = null;
     }
   },
 );
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 </script>
 
 <template>
-  <!-- Teleportattu <body>:n alle, jotta App.vuen yötila (filter .app.night)
-       ei koskaan himmennä hälytysilmoitusta — aamu on juuri se hetki jolloin
-       ilmoituksen pitää näkyä kirkkaana. -->
-  <Teleport to="body">
-    <div v-if="active" class="ring" role="alertdialog" aria-live="assertive">
+  <!--
+    Hälytysilmoitus. `dismissible` on epätosi: ääni soi kunnes hälytys
+    kuitataan, joten taustan painallus tai Escape ei saa sulkea tätä — vain
+    "Kuittaa".
+
+    `dim` on epätosi samasta syystä kuin tämä oli ennen teleportattu
+    <body>:n alle: hälytyksen EI pidä himmentyä yötilan mukana, aamu on juuri
+    se hetki jolloin ilmoituksen pitää näkyä kirkkaana. Teleport ei ole enää
+    tarpeen — top layer ei ole `.app.night`in suodattimen alainen muutenkaan.
+
+    Ilmoitus avataan aina hallintapaneelin JÄLKEEN (paneelin avaava painike on
+    yläpalkissa, eli ilmoituksen alla ja sen tavoittamattomissa), joten se
+    päätyy top layerin pinossa paneelin päälle. Aiemmin sama tuli `z-index:
+    1000`:sta, joka ei olisi riittänyt top layerin alta.
+  -->
+  <ModalDialog v-if="active" label="Hälytys" :dismissible="false">
+    <div class="ring" role="alertdialog" aria-live="assertive">
       <div class="ring__box">
         <span class="ring__eyebrow">Hälytys</span>
         <h2 class="ring__label">{{ active.alarm.label }}</h2>
@@ -590,9 +621,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <button type="button" class="ring__ack" @click="acknowledge">Kuittaa</button>
       </div>
     </div>
-  </Teleport>
+  </ModalDialog>
 
-  <div v-if="open" class="overlay" @click.self="closePanel">
+  <ModalDialog v-if="open" label="Hälytykset" @close="closePanel">
     <section class="panel">
       <header class="panel__head">
         <h2>Hälytykset</h2>
@@ -835,22 +866,13 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <button type="button" class="btn" @click="closePanel">Sulje</button>
       </footer>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 55;
-  padding: 1.5rem;
-}
-
+/* Taustan tummennus, sumennus, keskitys ja täyte tulevat ModalDialogin
+   `.modal`/`::backdrop`-säännöistä — tässä ei ole omaa overlaytä, ks.
+   komponentin alun perustelu. */
 .panel {
   background: #141821;
   border: 1px solid var(--border);
@@ -1275,14 +1297,17 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 /*
  * Hälytysilmoitus: koko ruudun peittävä, mahdollisimman huomiota herättävä,
- * eikä koskaan .app.night-luokan filter-himmennyksen alainen (ks. Teleport
- * yllä). z-index on korkea, koska tämä on <body>:n suora lapsi eikä muiden
- * modaalien tavoin App.vuen sisällä.
+ * eikä koskaan .app.night-luokan filter-himmennyksen alainen (ks. ModalDialog
+ * ja `dim`-propin perustelu templaatissa).
+ *
+ * `position: fixed` ohittaa kehyksen oman 1.5rem täytteen, jotta tausta
+ * ulottuu ruudun reunoihin asti — ilmoituksen pitää peittää kaikki, ei jättää
+ * kehyksiä näkyviin. Kehys on top layerissa, joten `fixed` osuu näkymään
+ * eikä mihinkään sijoitussäiliöön.
  */
 .ring {
   position: fixed;
   inset: 0;
-  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;

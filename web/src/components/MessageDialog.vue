@@ -1,5 +1,20 @@
 <script setup lang="ts">
+/**
+ * Yhden Wilma-viestin koko sisältö.
+ *
+ * KEHYS ON `ModalDialog` (`<dialog showModal>`), EI OMA `position: fixed`
+ * -overlay — ÄLÄ PALAUTA OVERLAYTÄ. Perustelu ja mitatut poikkeamat ovat
+ * ModalDialog.vuen alussa: yötilan `filter` tekee `.app`ista sijoitussäiliön
+ * myös `fixed`ille (tämän dialogin kehys oli vieritystilassa yöllä
+ * −511…−1735 px näkymän yläpuolella), ja tarttuva yläpalkki peitti
+ * "Sulje viesti" -painikkeen myös päivällä.
+ *
+ * `dim`: TÄMÄ DIALOGI HIMMENEE yötilan mukana. Se on passiivista tietoa, sama
+ * pinta kuin viestikortti sen takana — viesti luetaan, sitä ei täytetä.
+ * Sama ratkaisu kuin CalendarMonthDialog ja WeatherHourlyDialog.
+ */
 import { nextTick, watch } from "vue";
+import ModalDialog from "./ModalDialog.vue";
 import type { WilmaMessage } from "../types";
 
 const props = defineProps<{
@@ -19,30 +34,25 @@ function fullSentLabel(iso: string): string {
   return `${date} klo ${time}`;
 }
 
-// Same Escape-to-close pattern as WeatherHourlyDialog.vue.
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") emit("close");
-}
+// Escapelle ei ole omaa kuuntelijaa: `<dialog showModal>` lähettää
+// `cancel`-tapahtuman, jonka ModalDialog kääntää `close`-emitiksi. Sama
+// ratkaisu kuin WeatherHourlyDialog.vuessa.
 
 watch(
   () => props.open,
   (open) => {
-    if (open) {
-      window.addEventListener("keydown", onKeydown);
-      // Long messages start scrolled to the top, not wherever the previous
-      // dialog left off.
-      void nextTick(() => {
-        document.querySelector(".message-dialog__body")?.scrollTo({ top: 0 });
-      });
-    } else {
-      window.removeEventListener("keydown", onKeydown);
-    }
+    if (!open) return;
+    // Long messages start scrolled to the top, not wherever the previous
+    // dialog left off.
+    void nextTick(() => {
+      document.querySelector(".message-dialog__body")?.scrollTo({ top: 0 });
+    });
   },
 );
 </script>
 
 <template>
-  <div v-if="open && message" class="overlay" @click.self="emit('close')">
+  <ModalDialog v-if="open && message" label="Viesti" dim @close="emit('close')">
     <section class="panel">
       <header class="panel__head">
         <div class="panel__head-text">
@@ -67,22 +77,13 @@ watch(
         <p class="message-dialog__hint">Merkitään luetuksi vain tällä näytöllä — Wilman oma lukutila ei ole tiedossa.</p>
       </div>
     </section>
-  </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 6, 10, 0.72);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  padding: 1.5rem;
-}
-
+/* Taustan tummennus, sumennus, keskitys ja täyte tulevat ModalDialogin
+   `.modal`/`::backdrop`-säännöistä — tässä ei ole omaa overlaytä, ks.
+   komponentin alun perustelu. */
 .panel {
   background: #141821;
   border: 1px solid var(--border);
