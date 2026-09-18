@@ -7,26 +7,28 @@ joka ajaa sekä palvelimen että selaimen kioskitilassa.
 
 ## Asennus: lataa valmis paketti
 
-**Et tarvitse Node.js:ää etkä koko projektia.** Valmiit asennuspaketit ovat
-[`julkaisu/`](julkaisu/)-kansiossa, ja niissä on oma Node-ajonaikansa mukana:
+**Et tarvitse Node.js:ää etkä koko projektia.** Valmis asennuspaketti sisältää
+oman Node-ajonaikansa.
+
+**[Lataa uusin julkaisu → Releases](https://github.com/Bassomarsu/Infopaneeli/releases/latest)**
 
 | Alusta | Tiedosto |
 |---|---|
-| Windows | `julkaisu/infonaytto-<versio>-win-x64.zip` |
-| Linux | `julkaisu/infonaytto-<versio>-linux-x64.tar.gz` |
+| Windows | `infonaytto-<versio>-win-x64.zip` |
+| Linux | `infonaytto-<versio>-linux-x64.tar.gz` |
 
-Lataa paketti, pura se ja aja asennus puretun paketin `asennus`-kansiosta:
+Pura paketti ja aja asennus puretun paketin `asennus`-kansiosta:
 
 ```powershell
-cd <purkukansio>sennus
-powershell -ExecutionPolicy Bypass -File .senna.ps1
+cd <purkukansio>\asennus
+powershell -ExecutionPolicy Bypass -File .\asenna.ps1
 ```
 
 Linuxissa vastaavasti `sudo ./asenna.sh`. Tarkemmat ohjeet:
 [`asennus/KAYTTOONOTTO.md`](asennus/KAYTTOONOTTO.md) (Windows) ja
 [`asennus/KAYTTOONOTTO-LINUX.md`](asennus/KAYTTOONOTTO-LINUX.md).
 
-Tiivisteet ovat `julkaisu/SHA256SUMS.txt`:ssä.
+Tiivisteet ovat julkaisun `SHA256SUMS.txt`-liitteessä.
 
 > **Repon kloonausta ei voi asentaa asentimella.** `asenna.ps1` vaatii valmiin
 > paketin, jossa on `node/`, `web/dist/` ja `node_modules/` — ne syntyvät vasta

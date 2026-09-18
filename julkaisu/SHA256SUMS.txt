@@ -1,2 +1,0 @@
-549fac6f0f587fd84e765ec9824d8ebd4b5981343490883fababa7637b969a8f  infonaytto-0.5.7-linux-x64.tar.gz
-be24a8e028ebeba503493e96d602b6ad65acec6c616409faadb1bc1d565dbc56  infonaytto-0.5.7-win-x64.zip
