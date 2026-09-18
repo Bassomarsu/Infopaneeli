@@ -508,10 +508,32 @@ export function createNewsProvider(): Provider<NewsData> {
 
 function categoryKey(ids: string[]): string { return [...ids].sort().join(","); }
 
-/** Vanhan valinnan otsikoita ei esitetä uuden valinnan tuloksena. */
+/**
+ * Vanhan valinnan otsikoita ei esitetä uuden valinnan tuloksena.
+ *
+ * `stale` EI YKSIN TARKOITA VIKAA. `Provider` asettaa sen myös silloin kun se
+ * lämmittelee levyvälimuistista eikä mitään ole vielä yritettykään, ja tämä
+ * lauseke kuvasi sen aiemmin suoraan `failed`iksi: jos tallennettu valinta ei
+ * täsmännyt välimuistin valintaan, kortti näytti käynnistyksen jälkeen
+ * punaista "EI YHTEYTTÄ · Lähde ei vastaa" siihen asti että ensimmäinen haku
+ * valmistui — vaikka verkossa ei ollut mitään vikaa.
+ *
+ * Erottelu on `error`: `this.error` asetetaan vain oikeassa epäonnistumisessa
+ * (ks. provider.ts:n onFailure), joten
+ *
+ *   stale + error === null   lämmin käynnistys, ensimmäinen haku tulossa
+ *   stale + error !== null   haku on oikeasti rikki, vanha data oli sen tukena
+ *
+ * Sama erottelu on sääproviderissa (`projectWeatherSnapshot`), jossa se
+ * mitattiin. Jätehuollon `projectWasteSnapshot` menee tätä pidemmälle ja
+ * kysyy kuuluuko epäonnistuminen nykyiselle konfiguraatiolle — se olisi
+ * täälläkin oikeampi, koska nyt EDELLISEN valinnan virheteksti näkyy uuden
+ * valinnan alla, mutta se on eri muutos kuin tämä.
+ */
 export function projectNewsSnapshot(snapshot: ProviderSnapshot<unknown>): ProviderSnapshot<unknown> {
   const data = snapshot.data as NewsData | null;
   const selected = getSettings().newsCategories;
   if (!data || categoryKey(data.categories ?? ["paauutiset"]) === categoryKey(selected)) return snapshot;
-  return { ...snapshot, data: null, fetchedAt: null, status: snapshot.status === "failed" || snapshot.status === "stale" ? "failed" : "idle" };
+  const broken = snapshot.status === "failed" || (snapshot.status === "stale" && snapshot.error !== null);
+  return { ...snapshot, data: null, fetchedAt: null, status: broken ? "failed" : "idle" };
 }
