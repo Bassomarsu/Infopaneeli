@@ -1,0 +1,399 @@
+{
+  "aineisto": "postinumerot.json",
+  "koottu": "2026-09-18",
+  "menetelma": "Nimetty korjauslista, ei heuristiikkaa. Perustelu sille miksi lista eikä sääntö on skriptit/rakenna-postinumerot.mjs:n KORJATTAVAT-lohkon yllä.",
+  "virheenMitta": "siirtymaKm = SIIRTYMÄ eli kuinka kaukana rivi oli siitä missä sen pitäisi olla. Tämä on virheen mitta, koska juuri sen verran sää näytettäisiin väärästä paikasta. Polygonietäisyys (kuinka kaukana piste on viitealueen ulkopuolella) on eri suure ja vain TUNNISTIN — se on 0,0 km esimerkiksi 60110:lle, joka on silti 30,2 km pielessä.",
+  "korvaavaKoordinaatti": "samannimisten GeoNames-koodien mediaani (vain ne joilla on oma Paavo-alue)",
+  "lahteet": {
+    "koordinaatitJaNimet": "GeoNames FI (CC BY 4.0) + Tilastokeskuksen Paavo (CC BY 4.0)",
+    "vianosoitus": "Postin PCF-tiedosto ja OSM-käännösgeokoodaus: käytetty vain osoittamaan mitkä rivit ovat rikki ja mitkä koodit ovat olemassa. Mitään PCF:stä johdettua koordinaattia tai nimeä ei ole tässä aineistossa — ks. lisenssiperustelu skriptissä."
+  },
+  "paavonAlueita": 3018,
+  "korjatut": [
+    {
+      "postinumero": "00101",
+      "paikka": "Helsinki",
+      "ennen": [
+        62.1569,
+        27.1979
+      ],
+      "jalkeen": [
+        60.2079,
+        24.9581
+      ],
+      "siirtymaKm": 247.7,
+      "tunnistin": "PL-koodi 229,05 km oman kuntansa (Helsinki) ulkopuolella",
+      "todiste": "käännösgeokoodaus: Pieksämäki. Piste on 0,13 km rivistä 76101 Pieksämäki — NNN01-kuvio"
+    },
+    {
+      "postinumero": "00002",
+      "paikka": "Helsinki",
+      "ennen": [
+        61.0806,
+        24.2737
+      ],
+      "jalkeen": [
+        60.2079,
+        24.9581
+      ],
+      "siirtymaKm": 104,
+      "tunnistin": "yritystunnus (PCF-tyyppi 3) 95,6 km oman kuntansa (Helsinki) ulkopuolella",
+      "todiste": "piste on alueella 14530 Leteensuo, Hämeenlinnan Parolan tienoilla"
+    },
+    {
+      "postinumero": "86301",
+      "paikka": "Oulainen",
+      "ennen": [
+        63.7587,
+        25.3452
+      ],
+      "jalkeen": [
+        64.269,
+        24.8232
+      ],
+      "siirtymaKm": 62.2,
+      "tunnistin": "PL-koodi 46,25 km oman kuntansa (Oulainen) ulkopuolella",
+      "todiste": "käännösgeokoodaus: Haapajärvi. Piste on 1,49 km rivistä 85801 Haapajärvi — sama NNN01-kuvio kuin 00101"
+    },
+    {
+      "postinumero": "87101",
+      "paikka": "Kajaani",
+      "ennen": [
+        64.3592,
+        28.1485
+      ],
+      "jalkeen": [
+        64.215,
+        27.7163
+      ],
+      "siirtymaKm": 26.3,
+      "tunnistin": "PL-koodi 5,97 km oman kuntansa (Kajaani) ulkopuolella",
+      "todiste": "käännösgeokoodaus: Kontiomäki (Paltamo). Piste on alueella 88470 Kontiomäki"
+    },
+    {
+      "postinumero": "65301",
+      "paikka": "Vaasa",
+      "ennen": [
+        63.23,
+        21.5249
+      ],
+      "jalkeen": [
+        63.0936,
+        21.6366
+      ],
+      "siirtymaKm": 16.2,
+      "tunnistin": "PL-koodi 5,85 km oman kuntansa (Vaasa) ulkopuolella",
+      "todiste": "käännösgeokoodaus: Alskat, Mustasaari — eri kunta kuin rivin nimi sanoo"
+    },
+    {
+      "postinumero": "33101",
+      "paikka": "Tampere",
+      "ennen": [
+        61.4795,
+        23.9886
+      ],
+      "jalkeen": [
+        61.498,
+        23.7804
+      ],
+      "siirtymaKm": 11.2,
+      "tunnistin": "PL-koodi 2,60 km oman kuntansa (Tampere) ulkopuolella",
+      "todiste": "käännösgeokoodaus: Lentola, Kangasala. Piste on alueella 36220 Suorama"
+    },
+    {
+      "postinumero": "60110",
+      "paikka": "Seinäjoki",
+      "ennen": [
+        62.5424,
+        23.1452
+      ],
+      "jalkeen": [
+        62.7794,
+        22.8562
+      ],
+      "siirtymaKm": 30.2,
+      "tunnistin": "EI KUMPIKAAN TUNNISTIN — tämä rivi on listalla käsin todennettuna. Sen polygonietäisyys on 0,0 km, koska Seinäjoki nieli Peräseinäjoen kuntaliitoksessa 2009, eikä se ole PL-koodi vaan PCF-tyyppi 1 eli tavallinen asuinpostinumero. Yksikään kuntarajoihin nojaava mittari ei löydä sitä.",
+      "todiste": "piste on alueen 61100 Peräseinäjoki Keskus sisällä, 3,5 km Peräseinäjoen omasta rivistä. Naapurit 60100, 60120 ja 60150 ovat kaikki omien alueidensa sisällä 28-32 km päässä tästä pisteestä."
+    }
+  ],
+  "poistetut": [
+    {
+      "postinumero": "97999",
+      "paikka": "Rovaniemi",
+      "ennen": [
+        66.6529,
+        25.9803
+      ],
+      "syy": "Posti ei tunne koodia, JA koordinaatti on väärin: 155,6 km omasta Paavo-alueestaan (aineiston toiseksi suurin poikkeama samalla mittarilla on 13,9 km). Tilastokeskus on sanonut yksitoista vuotta alueen olevan Köngäs Kittilässä, GeoNames sanoo Rovaniemi, ja ne ovat 165 km erillään. Koko 979xx-lohko on Posion kyliä. Oikeaa vastausta ei ole, koska koodia ei ole — korjaaminen tarkoittaisi koordinaatin keksimistä."
+    }
+  ],
+  "poistojenYlaraja": 50,
+  "vanhentuneetKoodit": {
+    "selite": "Koodeja joita Posti ei enää myönnä mutta jotka SÄILYTETÄÄN. Näiden koordinaatti on todennetusti oikea, joten haku palauttaa oikean paikkakunnan sään — poisto veisi toimivan haun ilman että mikään virhe korjaantuisi. Mitattu: 24 lakkautetusta koodista vain yhden (97999) koordinaatti oli väärin.",
+    "koodit": [
+      {
+        "postinumero": "02290",
+        "paikka": "Espoo",
+        "koordinaatti": [
+          60.1766,
+          24.704
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "07601",
+        "paikka": "Myrskylä",
+        "koordinaatti": [
+          60.6696,
+          25.8475
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "14330",
+        "paikka": "Kaloinen",
+        "koordinaatti": [
+          60.8376,
+          24.3964
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "14370",
+        "paikka": "Lukana",
+        "koordinaatti": [
+          60.8438,
+          24.1927
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "15250",
+        "paikka": "Lahti",
+        "koordinaatti": [
+          60.9827,
+          25.6615
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "15251",
+        "paikka": "Lahti",
+        "koordinaatti": [
+          60.9827,
+          25.6615
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "15551",
+        "paikka": "Nastola",
+        "koordinaatti": [
+          60.95,
+          25.9333
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "15561",
+        "paikka": "Nastola",
+        "koordinaatti": [
+          60.95,
+          25.9333
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "17530",
+        "paikka": "Arrakoski",
+        "koordinaatti": [
+          61.3946,
+          25.1283
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2026)"
+      },
+      {
+        "postinumero": "21520",
+        "paikka": "Naskarla",
+        "koordinaatti": [
+          60.4299,
+          22.6851
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "33380",
+        "paikka": "Pitkäniemi",
+        "koordinaatti": [
+          61.4805,
+          23.5785
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "44770",
+        "paikka": "Valkeisjärvi",
+        "koordinaatti": [
+          63.1726,
+          25.3819
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "0,3 km alueestaan (Paavo 2026)"
+      },
+      {
+        "postinumero": "60280",
+        "paikka": "Seinäjoki",
+        "koordinaatti": [
+          62.7314,
+          22.8615
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2026)"
+      },
+      {
+        "postinumero": "66999",
+        "paikka": "Vaasa",
+        "koordinaatti": [
+          63.29,
+          21.6497
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2026)"
+      },
+      {
+        "postinumero": "68999",
+        "paikka": "Kokkola",
+        "koordinaatti": [
+          63.7788,
+          23.4309
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2026)"
+      },
+      {
+        "postinumero": "73860",
+        "paikka": "Pykälikkö",
+        "koordinaatti": [
+          63.2814,
+          28.6016
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,4 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "83915",
+        "paikka": "Vihtasuo",
+        "koordinaatti": [
+          63.3513,
+          29.1597
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "4,8 km alueestaan (Paavo 2026)"
+      },
+      {
+        "postinumero": "88820",
+        "paikka": "Katerma",
+        "koordinaatti": [
+          64.1137,
+          29.0052
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,6 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "90461",
+        "paikka": "Oulunsalo",
+        "koordinaatti": [
+          64.9346,
+          25.4112
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "97430",
+        "paikka": "Taapajärvi",
+        "koordinaatti": [
+          67.1096,
+          24.6842
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "3,1 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "97770",
+        "paikka": "Petäjäjärvi",
+        "koordinaatti": [
+          65.8414,
+          26.7823
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "0,1 km alueestaan (Paavo 2015)"
+      },
+      {
+        "postinumero": "98999",
+        "paikka": "Kemijärvi",
+        "koordinaatti": [
+          66.5437,
+          28.3656
+        ],
+        "tilastokeskusTunteeYha": false,
+        "koordinaatinTarkistus": "ei viitettä"
+      },
+      {
+        "postinumero": "99885",
+        "paikka": "Lemmenjoki",
+        "koordinaatti": [
+          68.735,
+          26.0484
+        ],
+        "tilastokeskusTunteeYha": true,
+        "koordinaatinTarkistus": "0,0 km alueestaan (Paavo 2026)"
+      }
+    ]
+  },
+  "tunnetutPuutteet": [
+    {
+      "postinumero": "60250",
+      "paikka": "SEINÄJOKI",
+      "syy": "PCF-tyyppi 1, voimassa 20.3.2023 alkaen, mutta koordinaattia ei ole missään sallitussa lähteessä: Paavossa ei ole aluetta (tarkistettu pno_2026) eikä GeoNamesissa riviä. 22110:n peruste ei toimi tähän: se sai 22100:n koordinaatin koska Maarianhaminan kunta on 8,1 km laaja ja siinä on YKSI postinumeroalue, joten virhe on korkeintaan kunnan kokoinen. Seinäjoen kunta on 96,8 km laaja ja siinä on 26 aluetta — juuri siellä jouduttiin siirtämään 60110:tä 30 km. \"Sama postitoimipaikka kuin 60100\" ei rajaa sijaintia lainkaan, joten lisääminen olisi arvaus. Puuttuva rivi antaa käyttäjälle \"tuntematon postinumero\", mikä on rehellisempi kuin arvattu koordinaatti."
+    }
+  ],
+  "lisatyt": [
+    {
+      "postinumero": "22110",
+      "paikka": "Maarianhamina",
+      "koordinaatti": [
+        60.0997,
+        19.9432
+      ],
+      "kopioituKoodilta": "22100",
+      "peruste": "Posti ilmoittaa 22110:n ja 22100:n postitoimipaikaksi saman (MARIEHAMN) ja kunnaksi Maarianhaminan. Maarianhaminan kunta on mitattuna 8,1 km laaja ja siina on tasmalleen YKSI postinumeroalue Paavossa, joten 22100:n koordinaatti on ainoa piste koko kunnassa ja virhe on korkeintaan kunnan kokoinen. Nimi ja koordinaatti tulevat Paavosta (CC BY 4.0) kuten muillakin 22xxx-riveilla."
+    }
+  ],
+  "hyvaksytytPoikkeamat": [
+    {
+      "postinumero": "99999",
+      "paikka": "Korvatunturi",
+      "etaisyysKm": 166.2,
+      "syy": "EI OLE VIRHE, vaan kahden viranomaislähteen erimielisyys: Posti ilmoittaa kunnaksi Rovaniemen, Paavo sijoittaa alueen Savukoskelle (742). GeoNamesin piste on Korvatunturilla eli maantieteellisesti oikein. Postin kuntamerkintä on hallinnollinen erikoisuus, samaa lajia kuin se että kaikki vastauslähetyskoodit kirjataan Helsinkiin. Kuntapohjainen tarkistus ilmoittaa tästä joka ajolla, joten se on kirjattava tähän."
+    },
+    {
+      "postinumero": "70006",
+      "paikka": "Vastauslähetys",
+      "etaisyysKm": 310.7,
+      "syy": "VÄÄRÄ HÄLYTYS, ei virhe. Koodi on voimassa (PCF-tyyppi 5) ja sen koordinaatti on Kuopiossa, mikä täsmää 70xxx-piirin kanssa. Se 310,7 km mitattiin Postin KUNTAKENTTÄÄ vastaan, joka kirjaa kaikki vastauslähetyskoodit (00006, 20006, 33006, 70006) hallinnollisesti Helsinkiin keskitetyn käsittelyn takia — kenttä ei kerro sijaintia. Rivi jätetään ennalleen. Nimi \"Vastauslähetys\" ei tosin ole paikannimi, joten rivi on sääkortilla kummallinen; se on eri kysymys eikä peruste siirtää koordinaattia."
+    }
+  ]
+}
