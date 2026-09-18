@@ -22,7 +22,7 @@ import {
 } from "../core/store.ts";
 import { config } from "../core/config.ts";
 import { isPostalCode, lookupPostalCode } from "../core/postal-codes.ts";
-import { currentWeatherLocation } from "../providers/weather.ts";
+import { currentWeatherLocation, projectWeatherSnapshot } from "../providers/weather.ts";
 import { listCustomSounds, resolveCustomSound } from "../core/alarm-sounds.ts";
 import { exitKiosk } from "../core/kiosk.ts";
 import { logger } from "../core/logging.ts";
@@ -187,6 +187,13 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     if (snapshots.news) snapshots.news = projectNewsSnapshot(snapshots.news);
     if (snapshots.waste) snapshots.waste = projectWasteSnapshot(snapshots.waste);
     if (snapshots.menu) snapshots.menu = { ...snapshots.menu, data: selectedMenuData(snapshots.menu.data, getSettings().menuSchoolIds, snapshots.menu.fetchedAt) };
+    // Ratkaistaan TÄSSÄ eikä alempana vastausta koottaessa, koska sääproviderin
+    // hyötykuorma suodatetaan tällä samalla paikannimellä. Yksi kutsu per
+    // pyyntö myös siksi, että ratkaisijalla on muisti (ks. weather-location.ts).
+    // Kentät `place` ja `placeSource` — ja miksi ne ovat vastauksessa — on
+    // selitetty vastauksen kokoamisen yhteydessä alempana.
+    const weatherLocation = currentWeatherLocation();
+    if (snapshots.weather) snapshots.weather = projectWeatherSnapshot(snapshots.weather, weatherLocation.location);
     const local = isTrustedRequest(request);
 
     // A phone on the home network gets the shopping list and the weather, but
@@ -244,7 +251,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     // reitin takana: sijainti kulkee tässä vastauksessa jo nyt, eikä paneelin
     // tarvitse tehdä avautuessaan ylimääräistä hakua. Kumpaakaan ei suodateta
     // puhelimelta — paikkakunnan nimi ei ole SENSITIVE_PROVIDERS-tietoa.
-    const weatherLocation = currentWeatherLocation();
+    //
+    // `weatherLocation` on ratkaistu jo yllä, ks. sikäläinen kommentti.
 
     // KAKSI SAMANNÄKÖISTÄ LIPPUA VIERETYSTEN — ne vastaavat eri kysymykseen,
     // eikä toista saa käyttää toisen sijasta:
@@ -345,9 +353,24 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
     try {
       const beforeNews = getSettings().newsCategories;
       const before = getSettings().menuSchoolIds;
+      const beforePostalCode = getSettings().weatherPostalCode;
       const settings = updateSettings(request.body);
       if (JSON.stringify(before) !== JSON.stringify(settings.menuSchoolIds)) void registry.get("menu")?.runOnce();
       if (JSON.stringify(beforeNews) !== JSON.stringify(settings.newsCategories)) void registry.get("news")?.runOnce();
+      // Sama kuin kahdella rivillä yllä, ja samasta syystä: providerin
+      // hallussa oleva data on haettu VANHALLE sijainnille, eikä 20 minuutin
+      // kierto ole hyväksyttävä odotus asetuksen tallentamisen jälkeen.
+      // Ilman tätä koontinäkymä suodattaisi vanhan paikkakunnan datan pois
+      // (projectWeatherSnapshot) ja kortti näyttäisi "Haetaan…" seuraavaan
+      // kiertoon asti — rehellistä mutta tyhjää.
+      //
+      // Tuntemattomalla postinumerolla haku lähtee myös, ja niin kuuluukin:
+      // sijainti pysyy silloin edellisessä (WeatherLocationResolver.lastGood),
+      // joten haku kohdistuu samoihin koordinaatteihin ja tuo niille tuoreen
+      // datan. Yksi ylimääräinen pyyntö kirjoitusvirhettä kohti; paneeli
+      // tallentaa napista eikä näppäimenpainalluksesta, joten hakuryöppyä ei
+      // synny. `runOnce()` ohittaa itsensä jos haku on jo käynnissä.
+      if (beforePostalCode !== settings.weatherPostalCode) void registry.get("weather")?.runOnce();
       return settings;
     } catch (err) {
       if (err instanceof SettingsValidationError) {

@@ -1,4 +1,4 @@
-import { Provider } from "../core/provider.ts";
+import { Provider, type ProviderSnapshot } from "../core/provider.ts";
 import { config } from "../core/config.ts";
 import { logger } from "../core/logging.ts";
 import { getSettings } from "../core/settings.ts";
@@ -47,6 +47,17 @@ export interface WeatherDay {
 
 export interface WeatherData {
   place: string;
+  /**
+   * Koordinaatit joille TÄMÄ hyötykuorma haettiin.
+   *
+   * Paikannimi ei kelpaa sijainnin tunnisteeksi: aineistossa on 353 nimeä
+   * jotka kattavat useamman postinumeron, ja koordinaatit voivat erota
+   * rajusti saman nimen sisällä (00100 "Helsinki" 60.171/24.932, 00101
+   * "Helsinki" 62.157/27.198 — 252 km erillään). Nimivertailu päästäisi siis
+   * läpi juuri sen tapauksen jonka tämän kentän on tarkoitus estää.
+   */
+  latitude: number;
+  longitude: number;
   current: {
     temperature: number;
     apparentTemperature: number;
@@ -257,8 +268,129 @@ export function currentWeatherLocation(): CurrentWeatherLocation {
   return { location, source };
 }
 
-async function fetchWeather(): Promise<WeatherData> {
-  const { location } = currentWeatherLocation();
+/**
+ * Onko tämä hyötykuorma haettu sille sijainnille joka nyt on voimassa?
+ *
+ * Yksi ainoa vertailu, jota käytetään KAHDESSA paikassa: koontinäkymän
+ * suodatuksessa (mitä kortti näyttää) ja hakukierroksen lopussa (tarvitaanko
+ * uusi haku). Ne eivät saa olla eri mieltä — muuten kortti voi sanoa
+ * "Haetaan…" ilman että kukaan hakee, tai päinvastoin.
+ *
+ * Vertailu tehdään KOORDINAATEILLA eikä paikannimellä. Nimi ei yksilöi
+ * sijaintia (ks. WeatherData.latitude), ja koska molemmat arvot tulevat
+ * samasta ratkaisijasta ja kulkevat JSONin läpi bittitarkasti, tarkka
+ * yhtäsuuruus on tässä oikea vertailu eikä epsilonia tarvita.
+ *
+ * Poikkeus on kertaluonteinen päivityspolku vanhoille välimuistiriveille, ks.
+ * funktion runko. Se ei löysää tätä sääntöä uudelle datalle.
+ */
+function isForLocation(data: WeatherData | null, location: WeatherLocation): boolean {
+  if (!data) return false;
+
+  // KERTALUONTEINEN PÄIVITYSPOLKU, EI PYSYVÄ VARATIE. Ennen `latitude`/
+  // `longitude` -kenttiä kirjoitettu välimuistirivi ei voi vastata
+  // koordinaateilla, joten se täsmätään paikannimellä.
+  //
+  // Tämä ei kelpuuta nimivertailua uudelle datalle eikä peruuta sitä päätöstä
+  // että avain on koordinaatit. Nimi EI yksilöi sijaintia: aineistossa on 353
+  // nimeä jotka kattavat useamman postinumeron, ja `00101` "Helsinki" osoittaa
+  // koordinaatteihin 62.157/27.198 eli Savoon. Älä siis siirrä tätä haaraa
+  // ensisijaiseksi.
+  //
+  // Haara vanhenee itsestään: ensimmäinen onnistunut haku ylikirjoittaa rivin
+  // koordinaatteineen, eikä se aktivoidu siinä asennuksessa enää koskaan.
+  //
+  // Miksi tämä on olemassa: ilman sitä jokainen olemassa oleva asennus
+  // menettäisi kerran `store.ts`:n lupauksen ("a schedule fetched yesterday
+  // evening is still worth showing at breakfast") — ja tasan silloin kun
+  // päivityksen jälkeinen ensimmäinen haku kaatuu, eli kun seinänäyttö
+  // käynnistyy ennen reititintä. Kortti sanoisi "Tietoja ei saatu" siinä
+  // missä se ennen näytti eilisen ennusteen vanhentunut-merkinnällä. Mitattu
+  // 18.9.2026; juuri siinä tapauksessa koko viimeisin-onnistunut on olemassa.
+  const koordinaatit = data as Partial<Pick<WeatherData, "latitude" | "longitude">>;
+  if (typeof koordinaatit.latitude !== "number" || typeof koordinaatit.longitude !== "number") {
+    return data.place === location.place;
+  }
+
+  return koordinaatit.latitude === location.latitude && koordinaatit.longitude === location.longitude;
+}
+
+function isSameLocation(a: WeatherLocation, b: WeatherLocation): boolean {
+  return a.latitude === b.latitude && a.longitude === b.longitude;
+}
+
+/**
+ * Sijainti jolle viimeisin epäonnistunut haku tehtiin, tai null jos viimeisin
+ * haku onnistui eikä epäonnistumista ole voimassa.
+ *
+ * Sama kirjanpito kuin jätehuollon `lastFailureRevision`illa, ja samasta
+ * syystä: VIRHEILMOITUS ON DATAA SEKIN, eikä toisen sijainnin virhettä saa
+ * esittää tämän sijainnin virheenä. Ilman tätä Karstulan haun "HTTP 503" jäi
+ * näkyviin Sodankylän nimen alle sillä hetkellä kun Sodankylän haku oli vasta
+ * matkalla eikä mikään Sodankylässä ollut vielä epäonnistunut.
+ */
+let lastFailureLocation: WeatherLocation | null = null;
+
+/**
+ * Edellisen sijainnin sää EI SAA näkyä uuden sijainnin tuloksena.
+ *
+ * Providerilla on yksi datapaikka ja 20 minuutin kierto, joten heti
+ * postinumeron vaihdon jälkeen se pitää yhä hallussaan EDELLISEN paikkakunnan
+ * hyötykuormaa. Koontinäkymän `place` sen sijaan ratkaistaan joka pyynnöllä,
+ * ja kortin otsikko lukee sen (`:note="place ?? data?.place"`). Ilman tätä
+ * suodatusta kortti siis väitti uutta paikkakuntaa ja näytti vanhan
+ * lämpötilat — tilana `ok` ja tuoreella aikaleimalla. Mitattu 18.9.2026:
+ * postinumeron vaihto Karstulasta Sodankylään vaihtoi otsikon välittömästi,
+ * mutta lämpötila pysyi Karstulan 8,9 °C:ssa 17 min 31 s ajan.
+ *
+ * Väärä data ilman merkintää on pahempi kuin puuttuva data, joten tässä
+ * tehdään sama kuin uutisilla (`projectNewsSnapshot`), ruokalistalla
+ * (`selectedMenuData`) ja jätehuollolla (`projectWasteData`:n revisiovertailu).
+ *
+ * "Viimeisin onnistunut data" ei riko tästä. Se koskee NYT VALITTUA sijaintia:
+ * kun koordinaatit täsmäävät, tilannekuva menee läpi koskemattomana
+ * aikaleimoineen ja `stale`-tiloineen. Pois jää vain se data, joka kuuluu
+ * sijaintiin jota kortti ei enää esitä — eikä se ole koskaan ollut tämän
+ * kortin viimeisin onnistunut data.
+ *
+ * TILAN VALINTA ON MITATTU, EI PÄÄTELTY. `Provider` asettaa `stale`n myös
+ * silloin kun se vain lämmittelee levyvälimuistista eikä mikään ole
+ * epäonnistunut, joten pelkkä `stale -> failed` -kuvaus näytti seinänäytöllä
+ * viisi sekuntia punaista "EI YHTEYTTÄ · Lähde ei vastaa" jokaisella
+ * käynnistyksellä jossa välimuistin sijainti ei täsmää. Erottelu on `error`:
+ * se asetetaan VAIN oikeassa epäonnistumisessa, joten
+ *
+ *   stale + error === null   lämmin käynnistys, ensimmäinen haku tulossa
+ *   stale + error !== null   haku on oikeasti rikki, vanha data oli sen tukena
+ *
+ * Lämmin käynnistys piirtyy siis "Haetaan…" eikä virheenä. Se on oikeampi
+ * kuin "vanhentunut"-merkintäkin: hallussa oleva data on VÄÄRÄN sijainnin
+ * dataa, joten vanhentuneeksi ei ole mitään merkittävää — ainoa tosi väite on
+ * että tämän sijainnin säätä ei vielä ole ja sitä haetaan.
+ */
+export function projectWeatherSnapshot(
+  snapshot: ProviderSnapshot<unknown>,
+  location: WeatherLocation,
+): ProviderSnapshot<unknown> {
+  const data = snapshot.data as WeatherData | null;
+  if (!data || isForLocation(data, location)) return snapshot;
+  // Virhe esitetään vain jos se kuuluu TÄLLE sijainnille. Kolme ehtoa, ja
+  // järjestys on tahallinen: epävarmassa tilanteessa pudotaan `idle`en eikä
+  // valheelliseen verkkohälytykseen.
+  const broken =
+    snapshot.error !== null &&
+    lastFailureLocation !== null &&
+    isSameLocation(lastFailureLocation, location);
+  return {
+    ...snapshot,
+    data: null,
+    fetchedAt: null,
+    status: broken ? "failed" : "idle",
+    error: broken ? snapshot.error : null,
+  };
+}
+
+async function fetchWeatherFor(location: WeatherLocation, fetcher: typeof fetch): Promise<WeatherData> {
   const params = new URLSearchParams({
     latitude: String(location.latitude),
     longitude: String(location.longitude),
@@ -274,7 +406,7 @@ async function fetchWeather(): Promise<WeatherData> {
     wind_speed_unit: "ms",
   });
 
-  const response = await fetch(`${API_URL}?${params.toString()}`, {
+  const response = await fetcher(`${API_URL}?${params.toString()}`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(15_000),
   });
@@ -290,6 +422,8 @@ async function fetchWeather(): Promise<WeatherData> {
 
   return {
     place: location.place,
+    latitude: location.latitude,
+    longitude: location.longitude,
     current: {
       temperature: body.current.temperature_2m,
       apparentTemperature: body.current.apparent_temperature,
@@ -302,13 +436,130 @@ async function fetchWeather(): Promise<WeatherData> {
   };
 }
 
-export function createWeatherProvider(): Provider<WeatherData> {
-  return new Provider<WeatherData>({
+/**
+ * Montako kertaa yksi hakukierros yrittää uudelleen kun sijainti vaihtuu
+ * kesken haun. Tämä on tavallisen tapauksen nopeutus, EI takuu — takuun antaa
+ * `RERUN_DELAY_MS` alla.
+ */
+const MAX_ATTEMPTS = 3;
+
+/**
+ * Kuinka pian kierros ajetaan uudelleen jos se päättyi vanhentuneeseen
+ * sijaintiin. Tämä on se rivi joka estää umpikujan, ja sen olemassaolo on
+ * mitattu: ilman sitä neljä peräkkäistä tallennusta yhden haun aikana jätti
+ * providerin pitämään VANHAN sijainnin dataa, projektio suodatti sen pois, ja
+ * kortissa luki "Haetaan…" vaikka mitään ei ollut ajastettuna ennen seuraavaa
+ * 20 minuutin kiertoa. Ulospääsy olisi ollut vaihtaa johonkin ERI
+ * postinumeroon tai käynnistää palvelin uudelleen, eikä kumpikaan johdu
+ * mistään mitä käyttäjä näkee. Se olisi ollut pysyvä valhe siinä missä
+ * alkuperäinen vika oli 20 minuutin viive.
+ *
+ * Uusinta EI kulje `onFailure`n kautta, koska mikään ei epäonnistunut: haku
+ * onnistui, se vain ehti vanhentua. Perääntyminen ei kasva, katkaisija ei
+ * liiku eikä lokiin jää riviä oletustasolla.
+ *
+ * Tämä on myös syy olla heittämättä virhettä katossa (ks. fetchWeather):
+ * heitto maksaisi kaksi lokiriviä nollan minuutin "katkoksesta" jota ei ole.
+ * Lisäksi `backoffMs()` on `min(intervalMs * 2^n, maxBackoffMs)` =
+ * `min(20 min * 2^n, 30 min)`, joten KAIKKI n >= 1 antavat saman 30 minuuttia
+ * — ero olisi näkymätön juuri tälle providerille. Se ei ole yleinen totuus
+ * vaan seuraus siitä että katto (30 min) on pienempi kuin `intervalMs * 2`
+ * (40 min): jos sään kierto joskus lasketaan alle 15 minuutin tai kattoa
+ * nostetaan, tuo ero herää henkiin.
+ */
+const RERUN_DELAY_MS = 2_000;
+
+/**
+ * Yksi hakukierros, joka uusitaan jos sijainti vaihtuu kesken haun.
+ *
+ * Silmukka kattaa tavallisen tapauksen, jossa tallennus osuu juuri käynnissä
+ * olevaan hakuun ja reitin `runOnce()` ohittaa itsensä providerin
+ * varattuna-vahdin takia (`provider.ts`: `if (this.stopped || this.running) return;`).
+ *
+ * KATOSSA PALAUTETAAN SE MITÄ SAATIIN, EI HEITETÄ. Naapuriproviderit
+ * (`fetchNews`, `fetchSelectedMenus`, `fetchWaste`) heittävät tässä kohdassa,
+ * ja tämäkin heitti hetken — mutta hinta mitattiin eikä se ollut sen
+ * arvoinen. Heitto tuottaa `provider_still_failing`- ja
+ * `provider_recovered`-rivit tapahtumasta jossa mikään ei rikkoutunut:
+ *
+ *     ERROR provider_still_failing  weather  consecutiveFailures=1
+ *     WARN  provider_recovered      weather  downForMinutes=0
+ *
+ * NOLLAN MINUUTIN SÄÄKATKOS LOKISSA ON POSTINUMERON VAIHTO, EI VERKKOVIKA —
+ * ja juuri sellaisia rivejä `logging.ts` ja `provider.ts` ovat olemassa
+ * estämään ("a log short enough to read", "one line per outage"). Kortin
+ * puolella heitto olisi lisäksi VÄÄRÄSSÄ: uusi haku on oikeasti ajastettu
+ * kahden sekunnin päähän, joten "Haetaan…" on tosi ja "Tietoja ei saatu" ei.
+ *
+ * Umpikujan estää `createWeatherProvider`in ajastettu uusinta, ei heitto.
+ *
+ * `fetcher` on injektoitavissa vain testiä varten (ks. menu.ts:n sama ratkaisu).
+ */
+export async function fetchWeather(fetcher: typeof fetch = fetch): Promise<WeatherData> {
+  let data: WeatherData | null = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const { location } = currentWeatherLocation();
+    try {
+      data = await fetchWeatherFor(location, fetcher);
+    } catch (err) {
+      // Kirjataan MILLE sijainnille tämä epäonnistuminen kuului, ks.
+      // lastFailureLocation. Ilman tätä virheilmoitus vaeltaisi seuraavan
+      // sijainnin nimen alle.
+      lastFailureLocation = location;
+      throw err;
+    }
+    // Haku onnistui, joten voimassa olevaa epäonnistumista ei enää ole.
+    lastFailureLocation = null;
+    if (isForLocation(data, currentWeatherLocation().location)) return data;
+  }
+  return data as WeatherData;
+}
+
+export interface WeatherProviderOptions {
+  /** Vain testiä varten. */
+  fetcher?: typeof fetch;
+  /** Vain testiä varten, ks. RERUN_DELAY_MS. */
+  rerunDelayMs?: number;
+}
+
+export function createWeatherProvider(options: WeatherProviderOptions = {}): Provider<WeatherData> {
+  const fetcher = options.fetcher ?? fetch;
+  const rerunDelayMs = options.rerunDelayMs ?? RERUN_DELAY_MS;
+
+  const provider: Provider<WeatherData> = new Provider<WeatherData>({
     id: "weather",
     // Hourly-resolution data does not need to be polled more often than this;
     // the initial delay staggers it away from the other providers' own startup.
     intervalMs: 20 * 60 * 1000,
     initialDelayMs: 5_000,
-    fetch: fetchWeather,
+    fetch: async () => {
+      const data = await fetchWeather(fetcher);
+
+      // YKSI TARKISTUS, KAKSI OVEA. Sijainti on voinut vaihtua joko niin monta
+      // kertaa että kierroksen katto tuli vastaan, tai vielä `fetchWeather`in
+      // paluun ja `onSuccess`in välissä. Molemmissa data päätyisi välimuistiin
+      // sijainnille jota kortti ei esitä, eikä mitään olisi ajastettuna ennen
+      // 20 minuutin kiertoa: kortissa lukisi "Haetaan…" vaikka kukaan ei hae.
+      if (!isForLocation(data, currentWeatherLocation().location)) {
+        // debug, ei warn: tässä ei ole vikaa. Oletusloki on `warn` (ks.
+        // core/config.ts), joten tavallisessa ajossa tästä ei jää riviä
+        // lainkaan — postinumeron vaihto ei saa näyttää lokissa katkokselta.
+        logger.debug(
+          { event: "weather_location_changed_during_fetch", place: currentWeatherLocation().location.place },
+          "sijainti vaihtui haun aikana — kierros ajetaan uudelleen",
+        );
+        // Ajastus TÄSTÄ eikä suoraan `runOnce()`-kutsuna: olemme yhä
+        // `runOnce()`in sisällä, joten sen oma `schedule(intervalMs)` ajetaan
+        // vasta tämän jälkeen ja se korvaisi minkä tahansa ajastuksen jonka
+        // tekisimme nyt. Viive myös päästää `running`-lipun laskeutumaan,
+        // jottei uusi kierros katoa samaan varattuna-vahtiin jota se on
+        // korjaamassa.
+        const timer = setTimeout(() => void provider.runOnce(), rerunDelayMs);
+        timer.unref?.();
+      }
+      return data;
+    },
   });
+
+  return provider;
 }
