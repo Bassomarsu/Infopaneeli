@@ -30,7 +30,10 @@ function dateLabel(date: string) {
           <p v-else-if="snapshot?.status === 'idle' && automatic?.enabled">Haetaan noutopäiviä…</p>
           <p v-else-if="!automatic?.enabled">Automaattinen haku ei ole käytössä. Yhteyden voi määrittää asetuksista.</p>
           <ul v-if="automatic?.enabled && upcoming.length">
-            <li v-for="event in upcoming.slice(0, 30)" :key="event.id"><span>{{ event.label }}</span><time :datetime="event.date">{{ dateLabel(event.date) }}</time></li>
+            <li v-for="event in upcoming.slice(0, 30)" :key="event.id">
+              <span class="astia">{{ event.label }}<small v-if="event.intervalText">{{ event.intervalText }}</small></span>
+              <time :datetime="event.date">{{ dateLabel(event.date) }}<abbr v-if="event.approximate" class="arvio" title="Jätehuoltoyhtiön arvio. Ajopäivä voi muuttua esimerkiksi arkipyhäviikoilla.">&#8202;±1–2&#8239;pv</abbr></time>
+            </li>
           </ul>
           <p v-else-if="automatic?.enabled && snapshot?.status === 'ok'">Palvelu ei ilmoita tulevia noutopäiviä.</p>
           <p v-if="snapshot?.fetchedAt && automatic?.enabled">Haettu {{ new Date(snapshot.fetchedAt).toLocaleString('fi-FI') }}. Tarkista myös yhtiön poikkeustiedotteet.</p>
@@ -56,5 +59,15 @@ p { font-size: .82rem; color: var(--text-faint); line-height: 1.45; margin: .4re
 ul { list-style: none; padding: 0; margin: .3rem 0; }
 li { display: flex; justify-content: space-between; gap: 1rem; padding: .4rem 0; font-size: .9rem; }
 li span { overflow-wrap: anywhere; } time { white-space: nowrap; }
+/* Arviomerkintä `ASTNextDate`-lähteiselle päivälle. Jätehuoltoyhtiö ilmoittaa
+   sen aina ±1-2 päivän tarkkuudella, joten päivä ei saa näyttää yhtä varmalta
+   kuin ajosuunnitelmasta tuleva. Himmeämpi ja pienempi kuin päivä itse: merkintä
+   on varaus, ei toinen tieto. `abbr`illa on selittävä title, mutta seinällä ei
+   ole hiirtä — siksi teksti kertoo asian myös yksinään. */
+.arvio { font-size: .72em; color: var(--text-faint); text-decoration: none; font-variant-numeric: tabular-nums; }
+/* Tyhjennysväli astian nimen alle omalle rivilleen: se on astian ominaisuus
+   eikä tämän kerran tieto, joten se ei saa kilpailla päivämäärän kanssa. */
+.astia { display: flex; flex-direction: column; gap: .1rem; }
+.astia small { font-size: .74em; color: var(--text-faint); }
 a { font-size: .8rem; color: var(--accent-calendar); }.warning { color: var(--warning, #d8a95b); }
 </style>

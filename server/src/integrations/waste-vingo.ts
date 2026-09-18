@@ -19,7 +19,41 @@ export class WasteServiceError extends Error {
   }
 }
 export interface WasteProperty { id: string; address: string }
-export interface WasteCollection { id: string; label: string; date: string }
+export interface WasteCollection {
+  id: string;
+  label: string;
+  date: string;
+  /**
+   * Päivä on arvio, ei ajosuunnitelma — kortin on merkittävä se.
+   *
+   * Portaalilla on kaksi eri tarkkuuden lähdettä samalle astialle, eivätkä ne
+   * ole sama tieto eri kattavuudella:
+   *
+   *   get_collection_schedule.do   ajosuunnitelma, portaali näyttää sen
+   *                                sellaisenaan viikkoruudukossa
+   *   ASTNextDate                  arvio, jonka portaali näyttää AINA
+   *                                merkinnällä "(± 1-2 päivää)"
+   *
+   * Merkintä ei ole reunatapaus vaan kentän ominaisuus: portaalin sapluunassa
+   * teksti on kiinteä, ja sen korvaava sääntömoottori (`_nextEmptyingRules`)
+   * on tyhjä eikä sen asettajaa kutsuta mistään. Jokainen `ASTNextDate`
+   * esitetään siis epävarmana.
+   */
+  approximate?: boolean;
+  /**
+   * Tyhjennysväli tekstinä, esim. "4 viikon välein", tai puuttuu jos astialla
+   * ei ole väliä.
+   *
+   * TEKSTINÄ eikä laskettuina päivinä. Välistä voisi ekstrapoloida tulevia
+   * tyhjennyksiä, mutta se olisi fiktiota: astialla voi olla kaksi eri väliä
+   * eri vuodenajoille (`ASTVali2`), `ASTKrtvk` voi olla yli yksi jolloin väli
+   * ei yksin määrää päivää, ja ±1-2 päivän virhe kumuloituu joka kerralla.
+   * Portaali itse ei ekstrapoloi vaikka sillä on molemmat kentät samassa
+   * oliossa — kun järjestelmän tekijä kieltäytyy laskemasta seuraavaa, me
+   * emme tiedä enempää.
+   */
+  intervalText?: string;
+}
 type Group = WasteProperty & { customers: string[] };
 const LIMIT = 2_000_000;
 function record(value: unknown): Record<string, unknown> {
@@ -49,13 +83,40 @@ function calendarDate(value: unknown): string {
   if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1900 || date.getUTCFullYear() > 9998) throw new Error('Jätehuollon päivämäärä ei kelpaa.');
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Helsinki', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
+/**
+ * `request`in paluuarvo kun kirjautumis-POST onnistui uudelleenohjauksella.
+ *
+ * Oma symboli eikä esim. `true`, jotta sitä ei voi sekoittaa palvelimelta
+ * tulleeseen JSON-arvoon: portaalin vastaus ei voi koskaan olla tämä.
+ */
+/**
+ * `ASTVali` tekstiksi samoin sanoin kuin portaali (`ASTValiToText`,
+ * tabs/service-list.js:374). Astialla voi olla kaksi väliä eri vuodenajoille;
+ * jos ensimmäinen on "Tilauksesta" mutta toinen ei, portaali näyttää toisen —
+ * sama valinta tehdään tässä.
+ */
+function intervalText(vali: unknown, vali2: unknown): string | undefined {
+  const luku = (value: unknown): number | null => {
+    const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d{1,3}$/.test(value.trim()) ? Number(value) : null;
+    return n !== null && Number.isInteger(n) && n >= 0 && n <= 520 ? n : null;
+  };
+  const a = luku(vali), b = luku(vali2);
+  const valittu = a !== null && a > 0 ? a : b !== null && b > 0 ? b : null;
+  if (valittu === null) return undefined;   // 0 = "Tilauksesta", ei väliä
+  if (valittu === 1) return 'Kerran viikossa';
+  if (valittu === 2) return 'Joka toinen viikko';
+  return valittu + ' viikon välein';
+}
+
+const LOGIN_OK = Symbol('vingo-login-ok');
+
 export function createVingoClient(baseUrl: string, username: string, password: string, fetcher: typeof fetch = fetch) {
   const base = new URL(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
   if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) throw new Error('Jätehuollon palveluosoite ei kelpaa.');
   const cookies = new Map<string, {name:string; value:string; path:string}>();
   let login: Promise<void> | undefined;
   let groups: Promise<Group[]> | undefined;
-  async function request(path: string, body?: URLSearchParams, deadline = Date.now() + 20_000): Promise<unknown> {
+  async function request(path: string, body?: URLSearchParams, deadline = Date.now() + 20_000, salliKirjautumisohjaus = false): Promise<unknown> {
     let url = new URL(path, base);
     let method = body ? 'POST' : 'GET';
     const remaining = Math.min(20_000, deadline - Date.now());
@@ -85,9 +146,40 @@ export function createVingoClient(baseUrl: string, username: string, password: s
         else if (cookies.size < 100 || cookies.has(key)) cookies.set(key,{name,value,path:cookiePath});
       }
       if (response.status >= 300 && response.status < 400) {
-        // A login redirect may request terms/password changes. Never follow/replay credentials.
-        if (method === 'POST') throw new WasteAuthError();
         const target = response.headers.get('location');
+        // POSTin uudelleenohjausta EI seurata: tunnuksia ei toisteta toiseen
+        // osoitteeseen, eikä ehtoja tai salasananvaihtoa hyvaksyta puolesta.
+        // Kohde kuitenkin LUETAAN, koska se on ainoa asia joka kertoo menikö
+        // kirjautuminen läpi.
+        //
+        // Mitattu Sammakkokankaan portaalia vasten 18.9.2026: onnistunut
+        // kirjautuminen vastaa `303 See Other` + `Location: secure/welcome.do`
+        // ja tyhjällä rungolla. Aiemmin tämä haara heitti POSTilla aina
+        // `WasteAuthError`in, joten ONNISTUNUT kirjautuminen luettiin vääriksi
+        // tunnuksiksi eikä yhteys voinut toimia lainkaan. Epäonnistunut
+        // kirjautuminen ohjaa `login.do`hon, joten kohde erottaa nämä.
+        if (method === 'POST') {
+          // Vain kirjautuminen saa tulkita uudelleenohjauksen onnistumiseksi.
+          // Ilman tätä lippua mikä tahansa myöhemmin lisätty POST palauttaisi
+          // `LOGIN_OK`in, ja kutsuja saisi siitä harhaanjohtavan
+          // rakennevirheen.
+          if (!salliKirjautumisohjaus || !target) throw new WasteAuthError();
+          const to = new URL(target, url);
+          const secure = new URL('secure/', base);
+          if (to.origin !== base.origin || !to.pathname.startsWith(secure.pathname)) throw new WasteAuthError();
+          // Ehtojen hyväksyntä ja pakotettu salasanan vaihto asuvat `secure/`-
+          // puussa, joten ne läpäisisivät tarkistuksen ja näyttäisivät
+          // onnistuneelta kirjautumiselta. Seuraava pyyntö kaatuisi, ja
+          // käyttäjä saisi tekstin "huolto tai häiriö" pysyvästä tilasta joka
+          // ei korjaudu odottamalla. Mitattu 18.9.2026: molemmat polut ovat
+          // olemassa (`secure/terms.do`, `secure/pw.do`).
+          if (['terms.do', 'pw.do'].includes(to.pathname.slice(to.pathname.lastIndexOf('/') + 1))) {
+            await response.body?.cancel();
+            throw new WasteAuthError('Jätehuollon asiointipalvelu vaatii ehtojen hyväksynnän tai salasanan vaihdon. Avaa asiointipalvelu selaimessa ja tee se siellä.');
+          }
+          await response.body?.cancel();
+          return LOGIN_OK;
+        }
         if (!target || redirects === 3) throw new WasteAuthError();
         await response.body?.cancel(); url = new URL(target,url); continue;
       }
@@ -110,8 +202,21 @@ export function createVingoClient(baseUrl: string, username: string, password: s
   function authenticate() {
     // Keep a rejected promise: invalid credentials are never retried by this client.
     return login ??= (async()=>{
-      const result = record(await request('j_acegi_security_check?target=2',new URLSearchParams({j_username:username,j_password:password,'remember-me':'false'})));
-      if (result.response !== 'OK') throw new WasteAuthError();
+      const result = await request('j_acegi_security_check?target=2',new URLSearchParams({j_username:username,j_password:password,'remember-me':'false'}),undefined,true);
+      // Kaksi hyväksyttyä vastausta, koska Vingo-asennukset eroavat toisistaan
+      // ja vain yhtä niistä on päästy mittaamaan:
+      //
+      //   LOGIN_OK          3xx suojatulle polulle (mitattu Sammakkokangas)
+      //   {response:'OK'}   JSON-vastaus. EI TODENNETTU MISSÄÄN asennuksessa:
+      //                     Etapin ja Puhaksen oma `login.js` on rivi riviltä
+      //                     sama kuin Sammakkokankaan, joten nekin ohjaavat.
+      //                     Säilytetään halpana varana tuntemattomalle
+      //                     asennukselle, ei koska sitä tiedettäisiin
+      //                     tarvittavan.
+      //
+      // Kaikki muu on tunnusvirhe.
+      if (result === LOGIN_OK) return;
+      if (record(result).response !== 'OK') throw new WasteAuthError();
     })();
   }
   function loadGroups() {
@@ -150,6 +255,28 @@ export function createVingoClient(baseUrl: string, username: string, password: s
         if(typeof tariff.name!=='string'||!tariff.name.trim()||tariff.name.length>500)throw new Error('Jäteastian nimi puuttuu.');
         const dates=boundedArray(await request('get_collection_schedule.do?'+new URLSearchParams({customerNumber:customer,pos}), undefined, deadline),1000);
         for(const value of dates){const date=calendarDate(value), key=[customer,pos,date].map(encodeURIComponent).join(':');collections.set(key,{id:key,label:tariff.name.trim(),date});}
+        // Valinta tehdään ASTIAKOHTAISESTI eikä päivämääräkohtaisesti.
+        //
+        // Lähteet ovat eri tarkkuutta: ajosuunnitelma voittaa aina kun siinä on
+        // dataa, koska `ASTNextDate` on ±1-2 päivän arvio. Jos molemmat
+        // kirjoitettaisiin, ne olisivat päivän eri mieltä juuri niin usein kuin
+        // arvion epävarmuus edellyttää, ja kortille tulisi SAMA ASTIA KAHDESTI
+        // peräkkäisinä päivinä — huonompi kuin kumpikaan lähde yksin.
+        //
+        // Mitattu 18.9.2026: tällä kiinteistöllä ajosuunnitelma on tyhjä
+        // kaikille neljälle palvelulle, ja ainoa tyhjennettävä astia
+        // (`ASTVali` = 4 viikkoa) kertoo päivänsä vain `ASTNextDate`ssa.
+        // Muiden `ASTVali` on 0 = "Tilauksesta", eikä niitä tyhjennetä
+        // lainkaan — niiden tyhjä `ASTNextDate` on oikea tieto, ei puuttuva.
+        //
+        // Tulevia kertoja EI johdeta välistä: portaali itse näyttää yhden
+        // päivän, ja neljän viikon päähän ekstrapoloitu arvio kasaisi
+        // epävarmuutta jota mikään ei enää erottaisi tiedosta.
+        if(!dates.length && service.ASTNextDate!=null){
+          const date=calendarDate(service.ASTNextDate), key=[customer,pos,date].map(encodeURIComponent).join(':');
+          const vali=intervalText(service.ASTVali,service.ASTVali2);
+          collections.set(key,{id:key,label:tariff.name.trim(),date,approximate:true,...(vali?{intervalText:vali}:{})});
+        }
       }
       return [...collections.values()].sort((a,b)=>a.date.localeCompare(b.date)||a.label.localeCompare(b.label)||a.id.localeCompare(b.id));
     }

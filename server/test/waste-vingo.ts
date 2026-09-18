@@ -39,12 +39,97 @@ assert.equal(denied.calls.length,1);
 // Vain hylätty kirjautuminen on tunnusvirhe. Yhtiön huoltosivu (HTTP 200 + text/html)
 // ja suojamuurin 403 eivät kerro tunnuksista mitään, joten ne eivät saa näyttää
 // väärältä salasanalta: juuri se ero ratkaisee lukkiutuuko perheen jätehuoltotili.
-// POSTin uudelleenohjaus on yhä tunnusvirhe — se on ehtojen hyväksyntä tai pakotettu
-// salasanan vaihto, eikä tunnuksia saa toistaa toiseen osoitteeseen.
+// POSTin uudelleenohjauksen KOHDE ratkaisee. Uudelleenohjausta ei seurata eikä
+// tunnuksia toisteta, mutta `Location` luetaan: se on ainoa asia joka kertoo
+// menikö kirjautuminen läpi. Mitattu oikeaa portaalia vasten 18.9.2026:
+// onnistunut kirjautuminen on `303` + `secure/welcome.do` tyhjällä rungolla.
+// Aiemmin kaikki POSTin uudelleenohjaukset olivat tunnusvirhe, joten yhteys ei
+// voinut toimia lainkaan sellaista portaalia vastaan.
+// Onnistunut kirjautuminen uudelleenohjauksella: koko ketjun on toimittava, ei
+// vain kirjautumisen. Tämä väite kaatuu jos POSTin uudelleenohjaus palautetaan
+// ehdottomaksi tunnusvirheeksi.
+const redirectLogin=fixture({'j_acegi_security_check':()=>new Response(null,{status:303,headers:{location:'/portal/secure/welcome.do','set-cookie':'JSESSIONID=fixture; Path=/portal'}})});
+const redirectProps=await redirectLogin.client.listProperties();
+assert.deepEqual(redirectProps,[{id:'vingo:41,42',address:'Testikatu 1, 00100 Testi'}],'303 suojatulle polulle on onnistunut kirjautuminen');
+assert.deepEqual((await redirectLogin.client.schedule(redirectProps[0]!.id)).map(r=>r.date),['2026-09-14','2026-10-26'],'uudelleenohjauksella kirjautunut istunto hakee aikataulun');
+assert.equal(redirectLogin.calls.filter(c=>c.options.method==='POST').length,1,'kirjautuminen tehdään tasan kerran');
+
+// Ehtojen hyväksyntä ja pakotettu salasanan vaihto ovat `secure/`-puussa, joten
+// ne läpäisevät polkutarkistuksen. Ne EIVÄT ole onnistunut kirjautuminen, mutta
+// eivät myöskään väärä salasana: käyttäjän on tehtävä jotain selaimessa, ja
+// tekstin on sanottava se. Ilman tätä haaraa seuraava pyyntö kaatuisi ja
+// käyttäjä saisi "huolto tai häiriö" pysyvästä tilasta joka ei korjaudu
+// odottamalla.
+for(const pakko of ['terms.do','pw.do']){
+ const test=fixture({'j_acegi_security_check':()=>new Response(null,{status:303,headers:{location:'/portal/secure/'+pakko}})});
+ const error=await test.client.listProperties().then(()=>null,(e:Error)=>e);
+ assert.ok(error instanceof WasteAuthError,pakko+' ei ole onnistunut kirjautuminen');
+ assert.match(error.message,/selaimessa/,pakko+': viestin on ohjattava selaimeen');
+ assert.doesNotMatch(error.message,/huolto|häiriö/,pakko+': tämä ei ole huoltokatko');
+ assert.equal(test.calls.length,1,pakko+': kirjautumisen jälkeen ei saa jatkaa');
+}
+
+// ASTNextDate tayttää tyhjän ajosuunnitelman, mutta EI syrjäytä sitä.
+//
+// Mitattu oikeaa portaalia vasten: ajosuunnitelma on tyhjä kaikille neljalle
+// palvelulle, ja ainoa tyhjennettava astia kertoo paivansa vain ASTNextDatessa.
+// Ilman tata haaraa kortti oli tyhja vaikka portaalissa lukee paiva.
+{
+ const services2=[{id:{ASTAsnro:41,ASTPos:1},tariff:{name:'Sekajäte'},ASTNextDate:'2026-09-29'}];
+ const tyhja=fixture({
+  'get_services_by_customer_numbers.do':()=>Response.json(services2),
+  'get_collection_schedule.do':()=>Response.json([]),
+ });
+ const props=await tyhja.client.listProperties();
+ const rows=await tyhja.client.schedule(props[0]!.id);
+ assert.equal(rows.length,1,'ASTNextDate tuottaa yhden tapahtuman');
+ assert.equal(rows[0]!.date,'2026-09-29','päivä ei siirry vuorokaudella');
+ assert.equal(rows[0]!.approximate,true,'ASTNextDate on arvio ja se on merkittävä');
+
+ // Tyhjennysväli TEKSTINÄ, samoin sanoin kuin portaali. Ei laskettuja päiviä:
+ // astialla voi olla toinen väli eri vuodenajalle, ja virhe kumuloituisi.
+ const valit:[unknown,unknown,string|undefined][]=[
+  [4,0,'4 viikon välein'],['4','0','4 viikon välein'],
+  [1,0,'Kerran viikossa'],[2,0,'Joka toinen viikko'],
+  [0,0,undefined],[0,null,undefined],[null,null,undefined],
+  [0,2,'Joka toinen viikko'],
+  ['roska',0,undefined],[-1,0,undefined],[99999,0,undefined],
+ ];
+ for(const [vali,vali2,odotus] of valit){
+  const t=fixture({
+   'get_services_by_customer_numbers.do':()=>Response.json([{id:{ASTAsnro:41,ASTPos:1},tariff:{name:'Sekajäte'},ASTNextDate:'2026-09-29',ASTVali:vali,ASTVali2:vali2}]),
+   'get_collection_schedule.do':()=>Response.json([]),
+  });
+  const pr=await t.client.listProperties();
+  const r=await t.client.schedule(pr[0]!.id);
+  assert.equal(r[0]!.intervalText,odotus,'ASTVali '+JSON.stringify(vali)+'/'+JSON.stringify(vali2));
+ }
+
+ // Ajosuunnitelma voittaa: sama astia ei saa esiintya kahdesti perakkaisina
+ // paivina siksi etta arvio ja suunnitelma ovat eri mielta.
+ const molemmat=fixture({'get_services_by_customer_numbers.do':()=>Response.json(services2)});
+ const props2=await molemmat.client.listProperties();
+ const rows2=await molemmat.client.schedule(props2[0]!.id);
+ assert.deepEqual(rows2.map(r=>r.date),['2026-09-14','2026-10-26'],'ajosuunnitelma voittaa kun siinä on dataa');
+ assert.ok(rows2.every(r=>!r.approximate),'ajosuunnitelman päivät eivät ole arvioita');
+ assert.ok(!rows2.some(r=>r.date==='2026-09-29'),'ASTNextDate ei saa tulla ajosuunnitelman rinnalle');
+
+ // Tilauksesta tyhjennettava astia: ei paivaa, eika sita saa keksia.
+ const tilauksesta=fixture({
+  'get_services_by_customer_numbers.do':()=>Response.json([{id:{ASTAsnro:41,ASTPos:1},tariff:{name:'Kompostori'},ASTNextDate:null}]),
+  'get_collection_schedule.do':()=>Response.json([]),
+ });
+ const props3=await tilauksesta.client.listProperties();
+ assert.deepEqual(await tilauksesta.client.schedule(props3[0]!.id),[],'tyhjä ASTNextDate on oikea tieto, ei puuttuva');
+}
+
 const authCases:Record<string,()=>Response>={
  'kirjautuminen hylättiin':()=>Response.json({response:'FAILED'}),
  'HTTP 401':()=>new Response(null,{status:401}),
  'POST ohjattiin muualle':()=>new Response(null,{status:302,headers:{location:'https://other.test/'}}),
+ 'POST ohjattiin kirjautumissivulle':()=>new Response(null,{status:303,headers:{location:'/portal/login.do?login_error=1'}}),
+ 'POST ohjattiin portaalin ulkopuolelle':()=>new Response(null,{status:303,headers:{location:'/toinen/secure/welcome.do'}}),
+ 'POST ohjattiin ilman kohdetta':()=>new Response(null,{status:303}),
 };
 for(const [name,response] of Object.entries(authCases)){
  const test=fixture({'j_acegi_security_check':response});
@@ -96,4 +181,4 @@ const redirectClient=createVingoClient(base,'u','p',(async(url,init)=>{
 }) as typeof fetch);
 assert.equal((await redirectClient.listProperties()).length,1);assert.equal(redirectCalls.length,3);
 assert.throws(()=>createVingoClient('http://example.test','u','p'),/palveluosoite/);
-console.log('Vingo: lazy single login, scoped cookies, verified property, grouped IDs, Helsinki dates, empty/invalid/partial schedules, auth vs. service-outage split (401/redirect vs. html/403/500/offline) and response bounds passed');
+console.log('Vingo: lazy single login, scoped cookies, verified property, grouped IDs, Helsinki dates, empty/invalid/partial schedules, auth vs. service-outage split (401/redirect vs. html/403/500/offline), login redirect target and response bounds passed');

@@ -7,7 +7,7 @@ import { FatalProviderError, Provider, registry, type ProviderSnapshot } from '.
 import { getWasteCompanies } from './waste-companies.ts';
 import { createVingoClient, WasteAuthError } from '../integrations/waste-vingo.ts';
 interface Connection {revision:string;companyId:string;municipality:string;address:string;propertyId:string;enabled:boolean;blocked:boolean;blockedAt:number;secret:string|null}
-export interface WasteData {revision:string;companyName:string;events:{id:string;label:string;date:string}[];sourceUrl:string;configured:boolean;enabled:boolean}
+export interface WasteData {revision:string;companyName:string;events:{id:string;label:string;date:string;approximate?:boolean;intervalText?:string}[];sourceUrl:string;configured:boolean;enabled:boolean}
 const KEY='waste.connection';
 const initial:Connection={revision:'unset',companyId:'',municipality:'',address:'',propertyId:'',enabled:false,blocked:false,blockedAt:0,secret:null};
 const connection=():Connection=>({...initial,...getSetting<Connection>(KEY)});
