@@ -173,7 +173,14 @@ export function createVingoClient(baseUrl: string, username: string, password: s
           // käyttäjä saisi tekstin "huolto tai häiriö" pysyvästä tilasta joka
           // ei korjaudu odottamalla. Mitattu 18.9.2026: molemmat polut ovat
           // olemassa (`secure/terms.do`, `secure/pw.do`).
-          if (['terms.do', 'pw.do'].includes(to.pathname.slice(to.pathname.lastIndexOf('/') + 1))) {
+          // Segmentti katkaistaan ensimmaiseen `;`:hen ja verrataan pienella:
+          // Payara (sama palvelin kaikissa kolmessa portaalissa) kirjoittaa
+          // istuntotunnuksen POLKUUN kun se ei viela tieda hyvaksyyko asiakas
+          // evasteita — ja kirjautumis-POST on juuri se pyynto jolla istuntoa
+          // ei ole. Mitattu: ilman tata `secure/terms.do;jsessionid=...` ja
+          // `secure/Terms.do` menivat lapi onnistuneena kirjautumisena.
+          const segmentti = to.pathname.slice(to.pathname.lastIndexOf('/') + 1).split(';')[0]!.toLowerCase();
+          if (['terms.do', 'pw.do'].includes(segmentti)) {
             await response.body?.cancel();
             throw new WasteAuthError('Jätehuollon asiointipalvelu vaatii ehtojen hyväksynnän tai salasanan vaihdon. Avaa asiointipalvelu selaimessa ja tee se siellä.');
           }
@@ -272,10 +279,28 @@ export function createVingoClient(baseUrl: string, username: string, password: s
         // Tulevia kertoja EI johdeta välistä: portaali itse näyttää yhden
         // päivän, ja neljän viikon päähän ekstrapoloitu arvio kasaisi
         // epävarmuutta jota mikään ei enää erottaisi tiedosta.
+        // Arvion jasennys omassa try-lohkossaan: se on LISAOMINAISUUS eika saa
+        // voida viedä perustoimintoa.
+        //
+        // `ASTNextDate != null` ei riita. Tama jarjestelma kayttaa
+        // "ei paivamaaraa" -arvona sentinellia `"1899-11-30"`, ei nullia —
+        // se nakyy saman olion sisarkentissa `ASTLopPvm` ja `ASTEdPvm`.
+        // `calendarDate` hylkaa alle vuoden 1900 paivat tavallisella
+        // `Error`illa, joka ilman tata lohkoa nousisi ulos koko `schedule()`sta
+        // ja veisi mukanaan KAIKKI kiinteiston tyhjennykset — myos ne tarkat
+        // jotka tulivat ajosuunnitelmasta. Kortti menisi tilaan
+        // "Automaattista aikataulua ei saatu" yhden sentinellin takia.
+        //
+        // Portaali itse ei kaadu nain: se jasentaa paivan rivi kerrallaan,
+        // joten kelvoton arvo pilaa vain oman solunsa. Sama tassa.
         if(!dates.length && service.ASTNextDate!=null){
-          const date=calendarDate(service.ASTNextDate), key=[customer,pos,date].map(encodeURIComponent).join(':');
-          const vali=intervalText(service.ASTVali,service.ASTVali2);
-          collections.set(key,{id:key,label:tariff.name.trim(),date,approximate:true,...(vali?{intervalText:vali}:{})});
+          try{
+            const date=calendarDate(service.ASTNextDate), key=[customer,pos,date].map(encodeURIComponent).join(':');
+            const vali=intervalText(service.ASTVali,service.ASTVali2);
+            collections.set(key,{id:key,label:tariff.name.trim(),date,approximate:true,...(vali?{intervalText:vali}:{})});
+          }catch{
+            // Ei paivaa talle astialle. Muut astiat jatkavat normaalisti.
+          }
         }
       }
       return [...collections.values()].sort((a,b)=>a.date.localeCompare(b.date)||a.label.localeCompare(b.label)||a.id.localeCompare(b.id));

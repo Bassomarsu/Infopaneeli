@@ -60,7 +60,7 @@ assert.equal(redirectLogin.calls.filter(c=>c.options.method==='POST').length,1,'
 // tekstin on sanottava se. Ilman tätä haaraa seuraava pyyntö kaatuisi ja
 // käyttäjä saisi "huolto tai häiriö" pysyvästä tilasta joka ei korjaudu
 // odottamalla.
-for(const pakko of ['terms.do','pw.do']){
+for(const pakko of ['terms.do','pw.do','terms.do;jsessionid=33CEBC0E','pw.do;jsessionid=ABC','Terms.do','TERMS.DO','terms.do?lang=fi']){
  const test=fixture({'j_acegi_security_check':()=>new Response(null,{status:303,headers:{location:'/portal/secure/'+pakko}})});
  const error=await test.client.listProperties().then(()=>null,(e:Error)=>e);
  assert.ok(error instanceof WasteAuthError,pakko+' ei ole onnistunut kirjautuminen');
@@ -85,6 +85,40 @@ for(const pakko of ['terms.do','pw.do']){
  assert.equal(rows.length,1,'ASTNextDate tuottaa yhden tapahtuman');
  assert.equal(rows[0]!.date,'2026-09-29','päivä ei siirry vuorokaudella');
  assert.equal(rows[0]!.approximate,true,'ASTNextDate on arvio ja se on merkittävä');
+
+ // Kelvoton ASTNextDate ei saa viedä MUIDEN astioiden tyhjennyksiä.
+ //
+ // Tämä järjestelmä käyttää "ei päivämäärää" -arvona sentinelliä "1899-11-30"
+ // eikä nullia — se näkyy sisarkentissä ASTLopPvm ja ASTEdPvm. Ilman
+ // try-lohkoa yksi sellainen vei koko kiinteistön aikataulun, myös
+ // ajosuunnitelmasta tulleet tarkat päivät.
+ for(const kelvoton of ['1899-11-30','','29.09.2026','ei-päivä',{},[]] as unknown[]){
+  const t=fixture({
+   'get_services_by_customer_numbers.do':()=>Response.json([
+    {id:{ASTAsnro:41,ASTPos:1},tariff:{name:'Sekajäte'},ASTNextDate:kelvoton},
+    {id:{ASTAsnro:41,ASTPos:2},tariff:{name:'Biojäte'},ASTNextDate:'2026-10-01'},
+   ]),
+   'get_collection_schedule.do':()=>Response.json([]),
+  });
+  const pr=await t.client.listProperties();
+  const r=await t.client.schedule(pr[0]!.id);
+  assert.deepEqual(r.map(x=>x.date),['2026-10-01'],'kelvoton '+JSON.stringify(kelvoton)+' ohittaa vain oman astiansa');
+ }
+ // Sama, mutta toisella astialla on TARKKA päivä ajosuunnitelmasta: sen on
+ // säilyttävä vaikka arvio kaatuisi.
+ {
+  const t=fixture({
+   'get_services_by_customer_numbers.do':()=>Response.json([
+    {id:{ASTAsnro:41,ASTPos:1},tariff:{name:'Sekajäte'},ASTNextDate:'1899-11-30'},
+    {id:{ASTAsnro:41,ASTPos:2},tariff:{name:'Biojäte'}},
+   ]),
+   'get_collection_schedule.do':(call)=>Response.json(call.url.searchParams.get('pos')==='2'?['2026-10-26']:[]),
+  });
+  const pr=await t.client.listProperties();
+  const r=await t.client.schedule(pr[0]!.id);
+  assert.deepEqual(r.map(x=>x.date),['2026-10-26'],'sentinelli ei vie ajosuunnitelman päivää');
+  assert.ok(!r[0]!.approximate,'ajosuunnitelman päivä ei ole arvio');
+ }
 
  // Tyhjennysväli TEKSTINÄ, samoin sanoin kuin portaali. Ei laskettuja päiviä:
  // astialla voi olla toinen väli eri vuodenajalle, ja virhe kumuloituisi.
