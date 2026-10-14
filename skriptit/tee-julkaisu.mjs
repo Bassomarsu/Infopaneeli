@@ -73,7 +73,12 @@ function poistaPuu(kohde) {
   fs.unlinkSync(kohde);
 }
 
-const TAR_CMD = isWindows ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+//
+// Muualla käytetään nimenomaan bsdtaria eikä "tar"ia: Linuxin tar on yleensä
+// GNU tar, joka ei osaa purkaa Windows-paketin node-zipiä eikä luoda zipiä
+// `-a`:lla. Skripti nojaa molempiin. Arch/CachyOS: pacman -S libarchive,
+// Debian/Ubuntu: apt install libarchive-tools.
+const TAR_CMD = isWindows ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "bsdtar";
 
 // --- Node-versio -----------------------------------------------------------
 //
