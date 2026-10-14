@@ -264,6 +264,7 @@ function saaLokirivit(): Array<Record<string, unknown>> {
     fetcher: (async () => {
       throw new Error("verkko ei vastaa");
     }) as typeof fetch,
+    retry: { sleep: async () => undefined },
   });
   const sijainti = currentWeatherLocation().location;
 
@@ -306,7 +307,7 @@ const fetcher = (async (url: string | URL | Request) => {
   return Response.json(openMeteoBody());
 }) as typeof fetch;
 
-const provider = createWeatherProvider({ fetcher, rerunDelayMs: 50 });
+const provider = createWeatherProvider({ fetcher, rerunDelayMs: 50, retry: { sleep: async () => undefined } });
 registry.register(provider);
 
 const app = Fastify();

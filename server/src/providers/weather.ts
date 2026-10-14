@@ -8,6 +8,7 @@ import {
   type WeatherLocationSource,
 } from "../core/weather-location.ts";
 import { localDateKey, localParts } from "../core/time.ts";
+import { fetchWithRetry } from "../core/http-retry.ts";
 
 const API_URL = "https://api.open-meteo.com/v1/forecast";
 
@@ -79,7 +80,7 @@ interface OpenMeteoCurrent {
   precipitation: number;
 }
 
-interface OpenMeteoHourly {
+export interface OpenMeteoHourly {
   time: string[];
   temperature_2m: number[];
   apparent_temperature: number[];
@@ -89,7 +90,7 @@ interface OpenMeteoHourly {
   wind_speed_10m: number[];
 }
 
-interface OpenMeteoDaily {
+export interface OpenMeteoDaily {
   time: string[];
   weather_code: number[];
   temperature_2m_max: number[];
@@ -202,7 +203,165 @@ function hoursForDate(hourly: OpenMeteoHourly, dateKey: string): WeatherHour[] {
   return hours;
 }
 
-function dailyForecast(daily: OpenMeteoDaily, hourly: OpenMeteoHourly): WeatherDay[] {
+/*
+ * PÄIVÄN EDUSTAVA KUNTO
+ *
+ * Open-Meteon `daily.weather_code` on dokumentoidusti "the most severe weather
+ * condition on a given day" (open-meteo.com/en/docs): yksi tihkutunti yöllä
+ * tekee koko päivästä sateisen, vaikka päivä olisi muuten selkeä. Kortin
+ * päiväsymbolin pitää kertoa miltä päivä keskimäärin tuntuu, joten kunto
+ * johdetaan tuntiennusteesta.
+ *
+ * Ikkuna: paikallinen klo 6–23 (tunnit 6…22). Päivä koetaan valveilla, ja
+ * kiinteä ikkuna on vakaa ympäri vuoden — aurinko ylös/alas -ikkuna olisi
+ * joulukuussa 6 tuntia ja kesäyönä Lapissa koko vuorokausi. Ikkuna on silti
+ * leveä, koska kortti näyttää symbolin vieressä KOKO vuorokauden sademäärän:
+ * kapea ikkuna (esim. 7–21) jättäisi iltasateen kokonaan symbolin ulkopuolelle,
+ * vaikka sen millimetrit näkyvät samalla rivillä. Yö (23–6) ei voi
+ * ylikirjoittaa päivää.
+ *
+ * Koko päivä, ei jäljellä oleva osa: symbolin vieressä olevat min/max ja
+ * sademäärä ovat koko päivän lukuja, ja kortin ylärivi (`current`) kertoo jo
+ * nykyhetken. Lisäksi jäljellä olevan osan käyttö muuttaisi tämän päivän
+ * symbolia kellonajan mukaan (ja tyhjentäisi sen illalla), eli hyötykuorman
+ * merkitys riippuisi siitä milloin se haettiin.
+ */
+const DAY_WINDOW_START_HOUR = 6;
+const DAY_WINDOW_END_HOUR = 23; // ei mukana: viimeinen tunti on 22:00–23:00
+
+/** Alle tämän tuntimäärän (noin puolet 17 tunnista) päätelmä on liian ohut -> `daily.weather_code`. */
+const MIN_WINDOW_SAMPLES = 9;
+
+/**
+ * Sade/lumi näytetään kun
+ *   (sadetunteja >= 4 JA sateisten tuntien sademäärä >= 1 mm) TAI
+ *   sateisten tuntien sademäärä >= 2 mm.
+ *
+ * Tuntimäärä yksin ei riitä: neljä tihkutuntia à 0,1 mm (0,4 mm) on pilvinen
+ * päivä, ei sadepäivä. Millimetrit yksin riittävät vasta 2 mm:stä, jotta
+ * lyhyt mutta rankka kuuro (esim. 6 mm tunnissa) pysyy näkyvissä.
+ */
+const PRECIP_MIN_HOURS = 4;
+const PRECIP_MIN_MM_WITH_HOURS = 1;
+const PRECIP_MIN_MM_ALONE = 2;
+
+/**
+ * Ukkonen saa matalamman kynnyksen, koska se on harvinaisempaa ja
+ * huomionarvoisempaa: kaksi ukkostuntia riittää, tai yksi jos sen tunnin
+ * sademäärä on vähintään 1 mm (oikea ukkoskuuro, ei pelkkä koodi).
+ */
+const THUNDER_MIN_HOURS = 2;
+const THUNDER_SINGLE_HOUR_MM = 1;
+
+/** Sumu näytetään, kun se kattaa vähintään puolet ikkunasta; aamusumu joka hälvenee ei kuulu päiväsymboliin. */
+const FOG_MIN_SHARE = 0.5;
+
+export interface HourSample {
+  /** Paikallinen kellonaika 0–23. */
+  hour: number;
+  code: number;
+  precipitation: number;
+}
+
+/** Pilvisyyspisteet tuntikoodeille 0–3; sateinen mutta ei-merkittävä tunti on pilvinen. */
+function skyScore(code: number): number {
+  return code >= 0 && code <= 3 ? code : 3;
+}
+
+/** Yleisin koodi; tasatilanteessa vakavampi (suurempi) koodi. Sumulle, jolla ei ole sademäärää. */
+function modeCode(codes: number[]): number {
+  const counts = new Map<number, number>();
+  for (const code of codes) counts.set(code, (counts.get(code) ?? 0) + 1);
+  let best = codes[0] ?? 3;
+  let bestCount = 0;
+  for (const [code, count] of counts) {
+    if (count > bestCount || (count === bestCount && code > best)) {
+      best = code;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Sateisen päivän koodi on sen tunnin koodi jolla on eniten sadetta;
+ * tasatilanteessa vakavampi (suurempi) koodi. Lukumääräenemmistö antaisi
+ * 11,7 mm:n päivälle "Tihkusadetta", jos tihkutunteja on eniten mutta
+ * sade tulee muutamasta rankasta tunnista.
+ */
+function heaviestCode(hours: HourSample[]): number {
+  let best = hours[0];
+  for (const h of hours) {
+    if (best === undefined || h.precipitation > best.precipitation || (h.precipitation === best.precipitation && h.code > best.code)) {
+      best = h;
+    }
+  }
+  return best?.code ?? 3;
+}
+
+/**
+ * Päivän yksi edustava kunto tuntinäytteistä. Järjestys on tahallinen:
+ * ukkonen > merkittävä sade/lumi > sumu > pilvisyyden keskiarvo.
+ *
+ * `description` ja `icon` tulevat samasta koodista (`conditionFor`), joten ne
+ * eivät voi olla eri mieltä. Näytteitä liian vähän -> `fallbackCode`
+ * (`daily.weather_code`, päivän vakavin).
+ *
+ * Sateen todennäköisyyttä (`precipitation_probability`) ei käytetä: tuntikoodi
+ * ja -sademäärä tulevat samasta mallista, ja todennäköisyys laskisi saman
+ * asian kahteen kertaan sekä sotkisi kynnykset.
+ */
+export function representativeCondition(samples: HourSample[], fallbackCode: number): WeatherCondition {
+  const window = samples.filter((s) => s.hour >= DAY_WINDOW_START_HOUR && s.hour < DAY_WINDOW_END_HOUR);
+  if (window.length < MIN_WINDOW_SAMPLES) return conditionFor(fallbackCode);
+
+  const thunder = window.filter((s) => conditionFor(s.code).icon === "thunder");
+  const snow = window.filter((s) => conditionFor(s.code).icon === "snow");
+  const rain = window.filter((s) => conditionFor(s.code).icon === "rain");
+  const fog = window.filter((s) => conditionFor(s.code).icon === "fog");
+
+  const thunderSignificant =
+    thunder.length >= THUNDER_MIN_HOURS || thunder.some((s) => s.precipitation >= THUNDER_SINGLE_HOUR_MM);
+  if (thunderSignificant) return conditionFor(heaviestCode(thunder));
+
+  // Ukkostunnit ovat sateisia tunteja, vaikka ukkonen itse ei ylittäisi kynnystä.
+  const wet = [...snow, ...rain, ...thunder];
+  const wetMm = wet.reduce((sum, s) => sum + s.precipitation, 0);
+  const wetEnough =
+    (wet.length >= PRECIP_MIN_HOURS && wetMm >= PRECIP_MIN_MM_WITH_HOURS) || wetMm >= PRECIP_MIN_MM_ALONE;
+  if (wetEnough) {
+    // Lumi voittaa tasatilanteessa: se on arjessa huomattavampi. Merkityksetön
+    // ukkoskoodi ei valitse kuvausta, ellei muuta sadetta ole.
+    const rainish = rain.length > 0 ? rain : thunder;
+    const kind = snow.length >= rain.length + thunder.length ? snow : rainish;
+    return conditionFor(heaviestCode(kind));
+  }
+
+  if (fog.length / window.length >= FOG_MIN_SHARE) return conditionFor(modeCode(fog.map((s) => s.code)));
+
+  // Pilvisyys: keskiarvoa lähin koodi (0–3). Sumutunnit eivät äänestä (taivas
+  // niiden yllä on tuntematon), merkityksettömät sadetunnit lasketaan pilvisiksi.
+  const sky = window.filter((s) => conditionFor(s.code).icon !== "fog");
+  const mean = sky.reduce((sum, s) => sum + skyScore(s.code), 0) / sky.length;
+  return conditionFor(Math.min(3, Math.max(0, Math.round(mean))));
+}
+
+/** Tuntinäytteet yhdelle päivälle. Puuttuva (null) koodi jätetään pois eikä muutu "selkeäksi". */
+function samplesForDate(hourly: OpenMeteoHourly, dateKey: string): HourSample[] {
+  const samples: HourSample[] = [];
+
+  for (let i = 0; i < hourly.time.length; i++) {
+    const time = hourly.time[i];
+    if (!time || dateKeyOf(time) !== dateKey) continue;
+    const code = hourly.weather_code[i];
+    if (typeof code !== "number") continue;
+    samples.push({ hour: hourOf(time), code, precipitation: hourly.precipitation[i] ?? 0 });
+  }
+
+  return samples;
+}
+
+export function dailyForecast(daily: OpenMeteoDaily, hourly: OpenMeteoHourly): WeatherDay[] {
   const days: WeatherDay[] = [];
 
   for (let i = 0; i < daily.time.length; i++) {
@@ -210,7 +369,7 @@ function dailyForecast(daily: OpenMeteoDaily, hourly: OpenMeteoHourly): WeatherD
     if (!date) continue;
     days.push({
       date,
-      condition: conditionFor(daily.weather_code[i] ?? 0),
+      condition: representativeCondition(samplesForDate(hourly, date), daily.weather_code[i] ?? 0),
       min: daily.temperature_2m_min[i] ?? 0,
       max: daily.temperature_2m_max[i] ?? 0,
       precipitation: daily.precipitation_sum[i] ?? 0,
@@ -390,7 +549,30 @@ export function projectWeatherSnapshot(
   };
 }
 
-async function fetchWeatherFor(location: WeatherLocation, fetcher: typeof fetch): Promise<WeatherData> {
+/** Vain testiä varten: viiveen ja satunnaisuuden injektointi, ks. core/http-retry.ts. */
+export interface WeatherRetryHooks {
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+  now?: () => number;
+}
+
+/** Yhden yrityksen yläraja (yhteys + runko). */
+const ATTEMPT_TIMEOUT_MS = 15_000;
+
+/**
+ * Koko haun (kaikki uusinnat JA sijaintisilmukan kierrokset) yhteinen raja.
+ * Providerin `timeoutMs` on 90 s, eikä Provider peruuta kesken jäänyttä
+ * hakua vaan lakkaa odottamasta sitä: ilman yhteistä rajaa uusintasilmukka
+ * jatkaisi orpona ja voisi kirjoittaa tuloksen vasta uuden kierroksen jälkeen.
+ */
+const FETCH_DEADLINE_MS = 75_000;
+
+async function fetchWeatherFor(
+  location: WeatherLocation,
+  fetcher: typeof fetch,
+  deadlineAt: number,
+  hooks: WeatherRetryHooks = {},
+): Promise<WeatherData> {
   const params = new URLSearchParams({
     latitude: String(location.latitude),
     longitude: String(location.longitude),
@@ -406,19 +588,37 @@ async function fetchWeatherFor(location: WeatherLocation, fetcher: typeof fetch)
     wind_speed_unit: "ms",
   });
 
-  const response = await fetcher(`${API_URL}?${params.toString()}`, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Open-Meteo returned HTTP ${response.status}`);
-  }
-
-  const body = (await response.json()) as OpenMeteoResponse;
-  if (!body.current || !body.daily || !body.hourly) {
-    throw new Error("Open-Meteo response is missing expected fields");
-  }
+  // Open-Meteon 503 on ohimenevä ylikuormitus (lokissa 1–2 kertaa päivässä),
+  // ja ilman uusintaa se maksoi koko hakukierroksen: Provider odottaa
+  // epäonnistumisen jälkeen perääntymisen verran, joten kortti oli
+  // "vanhentunut" ~30 min. Kolme yritystä, viiveet ~2 s ja ~4 s (Retry-After
+  // enintään 10 s); yhteinen `deadlineAt` pitää kaiken providerin 90 s
+  // aikarajan sisällä.
+  //
+  // Runko luetaan ja tarkistetaan uusinnan SISÄLLÄ: katkennut runko tai
+  // välityspalvelimen 200 + HTML on yhtä ohimenevä vika kuin 503.
+  const body = await fetchWithRetry(
+    fetcher,
+    `${API_URL}?${params.toString()}`,
+    { headers: { accept: "application/json" } },
+    { label: "Open-Meteo", attemptTimeoutMs: ATTEMPT_TIMEOUT_MS, deadlineAt, ...hooks },
+    async (response) => {
+      let parsed: OpenMeteoResponse;
+      try {
+        parsed = (await response.json()) as OpenMeteoResponse;
+      } catch (err) {
+        throw new Error(
+          `Open-Meteo response could not be read: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
+      const { current, daily, hourly } = parsed;
+      if (!current || !daily || !hourly) {
+        throw new Error("Open-Meteo response is missing expected fields");
+      }
+      return { current, daily, hourly };
+    },
+  );
 
   return {
     place: location.place,
@@ -495,12 +695,22 @@ const RERUN_DELAY_MS = 2_000;
  *
  * `fetcher` on injektoitavissa vain testiä varten (ks. menu.ts:n sama ratkaisu).
  */
-export async function fetchWeather(fetcher: typeof fetch = fetch): Promise<WeatherData> {
+export async function fetchWeather(
+  fetcher: typeof fetch = fetch,
+  hooks: WeatherRetryHooks = {},
+): Promise<WeatherData> {
+  const now = hooks.now ?? Date.now;
+  const deadlineAt = now() + FETCH_DEADLINE_MS;
   let data: WeatherData | null = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Uusi kierros vain jos yhteisestä rajasta on jäljellä kokonainen yritys.
+    // Muuten palautetaan se mitä saatiin: sijainnin vaihtuminen hoidetaan
+    // `createWeatherProvider`in ajastetulla uusinnalla, ei tämän silmukan
+    // venyttämisellä provider-aikarajan yli.
+    if (data !== null && deadlineAt - now() < ATTEMPT_TIMEOUT_MS) break;
     const { location } = currentWeatherLocation();
     try {
-      data = await fetchWeatherFor(location, fetcher);
+      data = await fetchWeatherFor(location, fetcher, deadlineAt, hooks);
     } catch (err) {
       // Kirjataan MILLE sijainnille tämä epäonnistuminen kuului, ks.
       // lastFailureLocation. Ilman tätä virheilmoitus vaeltaisi seuraavan
@@ -520,11 +730,14 @@ export interface WeatherProviderOptions {
   fetcher?: typeof fetch;
   /** Vain testiä varten, ks. RERUN_DELAY_MS. */
   rerunDelayMs?: number;
+  /** Vain testiä varten: uusintojen viive pois. */
+  retry?: WeatherRetryHooks;
 }
 
 export function createWeatherProvider(options: WeatherProviderOptions = {}): Provider<WeatherData> {
   const fetcher = options.fetcher ?? fetch;
   const rerunDelayMs = options.rerunDelayMs ?? RERUN_DELAY_MS;
+  const retry = options.retry ?? {};
 
   const provider: Provider<WeatherData> = new Provider<WeatherData>({
     id: "weather",
@@ -532,8 +745,13 @@ export function createWeatherProvider(options: WeatherProviderOptions = {}): Pro
     // the initial delay staggers it away from the other providers' own startup.
     intervalMs: 20 * 60 * 1000,
     initialDelayMs: 5_000,
+    // Jos kaikki haun sisäiset yritykset epäonnistuvat, yritetään kerran vielä
+    // muutaman minuutin päästä eikä vasta 30 minuutin perääntymisen jälkeen.
+    // Vain ensimmäinen peräkkäinen epäonnistuminen; sen jälkeen tavallinen
+    // perääntyminen, joten kuormitettua palvelua ei takota.
+    quickRetryMs: 3 * 60 * 1000,
     fetch: async () => {
-      const data = await fetchWeather(fetcher);
+      const data = await fetchWeather(fetcher, retry);
 
       // YKSI TARKISTUS, KAKSI OVEA. Sijainti on voinut vaihtua joko niin monta
       // kertaa että kierroksen katto tuli vastaan, tai vielä `fetchWeather`in

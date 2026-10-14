@@ -45,6 +45,16 @@ export interface ProviderOptions<T> {
   fatalLimit?: number;
   /** Hard ceiling for one fetch attempt. */
   timeoutMs?: number;
+  /**
+   * Nopeampi uusintayritys PELKÄLLE ENSIMMÄISELLE peräkkäiselle (ei-fataalille)
+   * epäonnistumiselle, tavallisen `intervalMs`-pohjaisen perääntymisen sijaan.
+   * Perääntymisen ensimmäinen askel on yleensä katto (30 min), joten yksi
+   * hetkellinen palvelinvika jättäisi kortin vanhentuneeksi koko sen ajaksi.
+   * Toinen peräkkäinen epäonnistuminen palaa tavalliseen perääntymiseen, joten
+   * pysyvästi rikkinäistä lähdettä ei takota tätä tiheämmin. Oletuksena pois
+   * päältä: kirjautuvat lähteet (Wilma, jätehuolto) eivät saa yrittää nopeammin.
+   */
+  quickRetryMs?: number;
   /** Cooldown before the circuit breaker's first probe attempt. */
   probeCooldownMs?: number;
   /** Ceiling the cooldown grows to after repeated failed probes. */
@@ -269,7 +279,7 @@ export class Provider<T = unknown> {
       this.schedule(this.options.intervalMs);
     } catch (err) {
       this.onFailure(err);
-      this.schedule(this.breakerOpen ? this.options.intervalMs : this.backoffMs());
+      this.schedule(this.breakerOpen ? this.options.intervalMs : this.delayAfterFailure());
     } finally {
       this.running = false;
     }
@@ -353,6 +363,15 @@ export class Provider<T = unknown> {
     } finally {
       this.running = false;
     }
+  }
+
+  /** Ks. `quickRetryMs`. Fataali virhe (tunnukset) ei koskaan saa nopeutettua uusintaa. */
+  private delayAfterFailure(): number {
+    const quick = this.options.quickRetryMs;
+    if (quick !== undefined && this.consecutiveFailures === 1 && this.consecutiveFatal === 0) {
+      return Math.min(quick, this.backoffMs());
+    }
+    return this.backoffMs();
   }
 
   private backoffMs(): number {
