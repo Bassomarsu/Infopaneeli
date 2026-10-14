@@ -4,8 +4,10 @@ import { randomBytes, randomUUID, createCipheriv, createDecipheriv } from 'node:
 import { config } from './config.ts';
 import { getSetting, setSetting } from './store.ts';
 import { FatalProviderError, Provider, registry, type ProviderSnapshot } from './provider.ts';
-import { getWasteCompanies } from './waste-companies.ts';
-import { createVingoClient, WasteAuthError } from '../integrations/waste-vingo.ts';
+import { getWasteCompanies, hasWasteAdapter, type WasteCompany } from './waste-companies.ts';
+import { createVingoClient, WasteAuthError, type WasteClient } from '../integrations/waste-vingo.ts';
+import { createVingo2Client } from '../integrations/waste-vingo2.ts';
+import { logger } from './logging.ts';
 interface Connection {revision:string;companyId:string;municipality:string;address:string;propertyId:string;enabled:boolean;blocked:boolean;blockedAt:number;secret:string|null}
 export interface WasteData {revision:string;companyName:string;events:{id:string;label:string;date:string;approximate?:boolean;intervalText?:string}[];sourceUrl:string;configured:boolean;enabled:boolean}
 const KEY='waste.connection';
@@ -65,11 +67,11 @@ export function saveWasteConfig(body:unknown){
   // `string()`:n 200 — pitkä satunnaissalasana on tavallinen.
   const username=string(p.username),password=typeof p.password==='string'&&p.password.length<=1000?p.password:'';
   if(!username||!password)throw Error('Anna käyttäjätunnus ja salasana.');
-  if(company?.adapter!=='vingo')throw Error('Tälle yhtiölle ei ole vielä automaattista kirjautumisliitäntää.');
+  if(!hasWasteAdapter(company))throw Error('Tälle yhtiölle ei ole vielä automaattista kirjautumisliitäntää.');
   next.secret=seal({username,password});
  }
  if('enabled' in p){if(typeof p.enabled!=='boolean')throw Error('Virheellinen automaattisen haun valinta.');next.enabled=p.enabled;}
- if(next.enabled&&(!next.secret||!next.propertyId||company?.adapter!=='vingo'))throw Error('Yhdistä jätehuollon tunnus ja valitse kiinteistö ensin.');
+ if(next.enabled&&(!next.secret||!next.propertyId||!hasWasteAdapter(company)))throw Error('Yhdistä jätehuollon tunnus ja valitse kiinteistö ensin.');
  setSetting(KEY,next);
  // Tunnusten vaihto on ainoa asia joka voi korjata katkaisijan kiinni panneen
  // tunnusvirheen, joten se myös avaa katkaisijan. Muuten juuri korjatut tunnukset
@@ -90,10 +92,16 @@ const LOGIN_INTERVAL_MS=60_000;
 const lastLoginAttempt=()=>getSetting<{at:number}>(ATTEMPT_KEY)?.at??0;
 let lastScheduleAttempt=0;
 function limited(){return Object.assign(Error("Odota minuutti ennen uutta yhteysyritystä."),{statusCode:429});}
-let clientCache:{accountKey:string;createdAt:number;client:ReturnType<typeof createVingoClient>}|null=null;
+let clientCache:{accountKey:string;createdAt:number;client:WasteClient}|null=null;
+/** Yhtiön adapterilla on kaikki liitäntään tarvittavat osoitteet. */
+function adapterReady(company:WasteCompany|undefined):company is WasteCompany {return !!company&&(company.adapter==='vingo'?!!company.baseUrl:company.adapter==='vingo2'?!!company.apiUrl&&!!company.tenantId:false);}
+/** Sovitin yhtiön adapterin mukaan. Vanha ja Vingo 2.0 jakavat saman julkisen muodon (WasteClient). */
+function createClient(company:WasteCompany,username:string,password:string):WasteClient {
+ return company.adapter==='vingo2'?createVingo2Client(company.apiUrl!,company.tenantId!,username,password,fetch,()=>Date.now(),(info,message)=>logger.warn(info,message)):createVingoClient(company.baseUrl!,username,password);
+}
 function client(c:Connection){
  const company=getWasteCompanies().find(x=>x.id===c.companyId);
- if(!c.secret||company?.adapter!=='vingo'||!company.baseUrl)throw Error('Automaattista jätehuoltoyhteyttä ei ole määritetty.');
+ if(!c.secret||!adapterReady(company))throw Error('Automaattista jätehuoltoyhteyttä ei ole määritetty.');
  // Salateksti itse on välimuistin avain. Tämä nojaa siihen että `seal()` arpoo uuden
  // IV:n joka tallennuksella: samojen tunnusten tallentaminen uudelleen tuottaa eri
  // salatekstin ja pakottaa siksi uuden kirjautumisen. Se on tarkoitus — "tallenna
@@ -103,7 +111,7 @@ function client(c:Connection){
   if(Date.now()-lastLoginAttempt()<LOGIN_INTERVAL_MS)throw limited();
   // `credentials()` ennen kirjausta: puuttuva avain ei saa kuluttaa yritysväliä,
   // koska siinä ei lähtenyt yhtään pyyntöä jätehuoltoyhtiöön.
-  const auth=credentials(c.secret);setSetting(ATTEMPT_KEY,{at:Date.now()});clientCache={accountKey,createdAt:Date.now(),client:createVingoClient(company.baseUrl,auth.username,auth.password)};
+  const auth=credentials(c.secret);setSetting(ATTEMPT_KEY,{at:Date.now()});clientCache={accountKey,createdAt:Date.now(),client:createClient(company,auth.username,auth.password)};
  }
  return clientCache!.client;
 }

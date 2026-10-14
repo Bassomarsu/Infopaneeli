@@ -1,0 +1,47 @@
+[
+ {
+  "id": "06-0001234-00",
+  "name": "MEIKÄLÄINEN MATTI",
+  "address": {
+   "street": "TESTITIE 1",
+   "postOffice": "KARSTULA",
+   "postalCode": "43500",
+   "countryCode": "FI"
+  },
+  "contractDate": "2019-12-01T00:00:00",
+  "contractEndDate": null,
+  "locationInterruptDate": null,
+  "locationInterruptEndDate": null,
+  "coordinates": {
+   "x": 24.79,
+   "y": 62.88
+  },
+  "buildingClassification": {
+   "code": "011",
+   "name": "YHDEN ASUNNON TALOT"
+  },
+  "buildingUsage": {
+   "code": "  "
+  },
+  "apartmentCount": 0,
+  "residentCount": 3,
+  "composts": false,
+  "isCompany": false,
+  "customerPriceList": "6",
+  "municipalityCode": "226",
+  "invoicingId": "06-0001234-00",
+  "concernId": "",
+  "managerId": "",
+  "customerGroup": "010",
+  "area": "",
+  "contactPerson": {
+   "name": "",
+   "phoneNumber": "0400000000",
+   "email": "testi@example.invalid",
+   "binLocationContactPerson": "TESTI"
+  },
+  "sharedContainer": null,
+  "contractTypes": [],
+  "notifications": []
+ }
+]

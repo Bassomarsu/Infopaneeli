@@ -22,7 +22,10 @@ import { FatalProviderError, registry } from '../src/core/provider.ts';
 import { createWasteProvider, fetchWaste, saveWasteConfig, wasteConfig, wasteProperties } from '../src/core/waste-service.ts';
 import { registerApiRoutes } from '../src/routes/api.ts';
 
-const COMPANY = { companyId: 'sammakkokangas', municipality: 'Karstula', address: 'Testitie 1' };
+// Kirjautumissuojat asuvat waste-service.ts:ssä ja ovat samat kummalle sovittimelle.
+// Puhas on vanhalla Vingo-alustalla, Sammakkokangas Vingo 2.0:ssa (kohta 8).
+const COMPANY = { companyId: 'puhas', municipality: 'Joensuu', address: 'Testitie 1' };
+const COMPANY_V2 = { companyId: 'sammakkokangas', municipality: 'Karstula', address: 'Testitie 1' };
 const HOUR_MINUTES = 60;
 
 /** Virtuaalikello: tunti kuluu testissä millisekunneissa, mutta rajat ovat oikeat. */
@@ -44,7 +47,17 @@ function outage(): Response {
   return new Response(null, { status: 500 });
 }
 globalThis.fetch = (async (url: RequestInfo | URL) => {
-  const endpoint = new URL(String(url)).pathname.split('/').at(-1);
+  const target = new URL(String(url));
+  if (target.hostname === 'asiointi.sammakkokangas.fi') {
+    if (target.pathname === '/api/customers/Users/login') logins++;
+    if (mode === 'offline') throw new TypeError('fetch failed');
+    if (mode !== 'ok' && mode !== 'wrong-credentials') return outage();
+    if (target.pathname === '/api/customers/Users/login') return mode === 'wrong-credentials' ? Response.json({ status: 401, title: 'Unauthorized' }, { status: 401 }) : Response.json({ token: 'fixture.token.value-0123456789', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    if (target.pathname === '/api/customers/Customers/emptying-infos') return Response.json([{ id: '06-0001234-00', address: { street: 'Testitie 1', postalCode: '43500', postOffice: 'Karstula' } }]);
+    if (target.pathname === '/api/customers/Customers/emptying-infos/06-0001234-00/contracts') return Response.json([]);
+    throw new Error('Odottamaton osoite ' + String(url));
+  }
+  const endpoint = target.pathname.split('/').at(-1);
   if (endpoint === 'j_acegi_security_check') logins++;
   if (mode === 'offline') throw new TypeError('fetch failed');
   if (mode !== 'ok' && mode !== 'wrong-credentials') return outage();
@@ -56,9 +69,9 @@ globalThis.fetch = (async (url: RequestInfo | URL) => {
 }) as typeof fetch;
 
 /** Käyttäjän täysi palautusrutiini: tunnukset, kiinteistö ja automaattinen haku. */
-async function reconnect(): Promise<void> {
+async function reconnect(company = COMPANY): Promise<void> {
   mode = 'ok'; minute();
-  saveWasteConfig({ ...COMPANY, username: 'fixture-user', password: 'fixture-secret' });
+  saveWasteConfig({ ...company, username: 'fixture-user', password: 'fixture-secret' });
   minute();
   const properties = await wasteProperties();
   saveWasteConfig({ propertyId: properties[0]!.id, enabled: true });
@@ -254,6 +267,47 @@ try {
   assert.ok(Number(blockedReply.headers['retry-after']) > 0, 'retry-after puuttuu lukitustilan vastauksesta');
   assert.ok(blockedReply.json().retryAfterSeconds > 0, 'selain ei saa jäljellä olevaa aikaa');
   await app.close();
+
+  // ── 8. Sama suoja Vingo 2.0 -sovittimella (Sammakkokangas) ──
+  // Suojat ovat palvelukerroksessa, mutta sovitin päättää mikä on tunnusvirhe:
+  // kirjautumisen 401 pysäyttää, huolto/403/HTML ei. Luvut ovat samat kuin kohdissa 1, 3 ja 4.
+  await reconnect(COMPANY_V2);
+  saveWasteConfig({ ...COMPANY_V2, username: 'fixture-user', password: 'wrong-secret' });
+  mode = 'wrong-credentials'; minute();
+  logins = 0;
+  for (let i = 0; i < HOUR_MINUTES; i++) {
+    await wasteProperties().then(() => assert.fail('väärillä tunnuksilla ei saa onnistua'), () => {});
+    minute();
+  }
+  assert.equal(logins, 2, 'Vingo 2.0: väärillä tunnuksilla 60 napinpainallusta saa tuottaa täsmälleen 2 kirjautumista');
+  assert.equal(wasteConfig().blocked, true);
+  measured.push('Vingo 2.0, väärät tunnukset, 60 x "Hae kiinteistöt": ' + logins + ' kirjautumista/h');
+  for (const failing of ['maintenance', 'forbidden', 'server-error', 'offline'] as const) {
+    await reconnect(COMPANY_V2);
+    const v2provider = createWasteProvider();
+    registry.register(v2provider);
+    mode = failing; logins = 0;
+    for (let i = 0; i < HOUR_MINUTES; i++) { minute(); await v2provider.runOnce(); }
+    assert.ok(v2provider.snapshot().error, 'Vingo 2.0 ' + failing + ': haun pitäisi epäonnistua');
+    assertNoCredentialAdvice(new Error(v2provider.snapshot().error!.message), 'Vingo 2.0 ' + failing);
+    assert.equal(wasteConfig().blocked, false, 'Vingo 2.0 ' + failing + ' ei saa merkitä tunnuksia hylätyiksi');
+    assert.notEqual(v2provider.snapshot().error?.type, 'waste_auth');
+    assert.ok(logins <= 2, 'Vingo 2.0 ' + failing + ': ' + logins + ' kirjautumista tunnissa');
+    v2provider.stop();
+  }
+  await reconnect(COMPANY_V2);
+  const v2auto = createWasteProvider();
+  registry.register(v2auto);
+  // Kuten kohdassa 4: tunnukset ovat muuttuneet yhtiön päässä, kiinteistö annetaan suoraan.
+  saveWasteConfig({ ...COMPANY_V2, username: 'fixture-user', password: 'wrong-secret' });
+  saveWasteConfig({ propertyId: 'vingo2:06-0001234-00', enabled: true });
+  mode = 'wrong-credentials'; logins = 0; minute();
+  await v2auto.runOnce();
+  assert.equal(v2auto.snapshot().error?.type, 'waste_auth');
+  for (let i = 1; i < HOUR_MINUTES; i++) { minute(); await v2auto.runOnce(); }
+  assert.equal(logins, 1, 'Vingo 2.0: hylätyt tunnukset, tunnin automaattihaku saa tuottaa täsmälleen 1 kirjautumisen');
+  v2auto.stop();
+  measured.push('Vingo 2.0, hylätyt tunnukset, 60 hakukierrosta: ' + logins + ' kirjautumista/h');
 } finally {
   globalThis.fetch = realFetch;
   Date.now = realNow;

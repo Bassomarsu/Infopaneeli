@@ -11,6 +11,8 @@ const username = ref(''), password = ref(''), propertyId = ref('');
 const properties = ref<WasteProperty[]>([]);
 const busy = ref(false), loaded = ref(false), error = ref(''), notice = ref('');
 const company = computed(() => companies.value.find(item => item.id === companyId.value));
+// Kaikki muut adapterit kuin `manual` (vingo, vingo2) kirjautuvat yhtiön palveluun.
+const automatic = computed(() => !!company.value && company.value.adapter !== 'manual');
 const suggestions = computed(() => {
   const query = municipality.value.trim().toLocaleLowerCase('fi');
   return query.length < 2 ? [] : companies.value.filter(item => item.municipalities.some(name => name.toLocaleLowerCase('fi').includes(query)));
@@ -61,7 +63,7 @@ async function saveConnection() {
     await request('config', 'PUT', { companyId: companyId.value, municipality: municipality.value.trim(), address: address.value.trim(), enabled: false, ...(username.value ? { username: username.value } : {}), ...(password.value ? { password: password.value } : {}) });
     username.value = ''; password.value = ''; properties.value = [];
     apply(await request<WasteConfig>('config'));
-    notice.value = company.value?.adapter === 'vingo' ? 'Yhteys tallennettu. Hae seuraavaksi kiinteistöt ja valitse oma kiinteistösi.' : 'Valinta tallennettu. Käytä käsin asetettua aikataulua.';
+    notice.value = automatic.value ? 'Yhteys tallennettu. Hae seuraavaksi kiinteistöt ja valitse oma kiinteistösi.' : 'Valinta tallennettu. Käytä käsin asetettua aikataulua.';
   });
 }
 async function loadProperties() {
@@ -111,7 +113,7 @@ watch(() => props.allowed, allowed => {
         <label>Jätehuoltoyhtiö<select aria-label="Jätehuoltoyhtiö" v-model="companyId" :disabled="busy"><option value="">Valitse yhtiö</option><option v-for="item in companies" :key="item.id" :value="item.id">{{ item.name }}{{ item.adapter === 'manual' ? ' — käsin asetettava aikataulu' : '' }}</option></select></label>
         <p>Voit valita minkä tahansa luettelon yhtiön. Jos yhtiötä ei löydy tai automaattista yhteyttä ei ole, määritä noudot käsin Roskien nouto -kortissa.</p>
         <label>Kiinteistön osoite<input v-model="address" autocomplete="street-address" :disabled="busy" /></label>
-        <template v-if="company?.adapter === 'vingo'">
+        <template v-if="automatic">
           <p v-if="config?.configured && companyId === config.companyId">Tunnukset on tallennettu. Jätä kentät tyhjiksi säilyttääksesi ne.</p>
           <p v-else-if="config?.keyMissing && companyId === config.companyId" role="alert">Tallennettuja tunnuksia ei voi enää purkaa: salausavain (data/infonaytto.db.waste-key) on kadonnut tai vaihtunut. Syötä käyttäjätunnus ja salasana uudelleen ja tallenna yhteys.</p>
           <label>Jätehuollon käyttäjätunnus<input v-model="username" autocomplete="username" :disabled="busy" /></label>
@@ -120,7 +122,7 @@ watch(() => props.allowed, allowed => {
         <p v-else-if="company">Tälle yhtiölle ei ole vielä automaattista yhteyttä. Käsin asetettu aikataulu toimii kaikkialla Suomessa.</p>
         <a v-if="linkable && serviceUrl" :href="serviceUrl" target="_blank" rel="noopener noreferrer">Avaa yhtiön palvelu</a>
         <button type="button" :disabled="busy || !companyId" @click="saveConnection">Tallenna jätehuollon yhteys</button>
-        <template v-if="company?.adapter === 'vingo'">
+        <template v-if="automatic">
           <p v-if="dirty">Tallenna yhteys ennen kiinteistöjen hakemista. Tallennus pysäyttää automaattisen haun, kunnes valitset kiinteistön uudelleen.</p>
           <p v-if="config?.blocked" role="status">{{ wasteBlockedNotice(blockedFor) }}</p>
           <button type="button" :disabled="busy || dirty || !config?.configured || blockedFor > 0" @click="loadProperties">Hae kiinteistöt</button>

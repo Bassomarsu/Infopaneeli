@@ -476,8 +476,9 @@
         "Äänekoski"
       ],
       "website": "http://www.sammakkokangas.fi",
-      "adapter": "vingo",
-      "baseUrl": "https://asiointi.sammakkokangas.fi/sammakkokangas"
+      "adapter": "vingo2",
+      "apiUrl": "https://asiointi.sammakkokangas.fi/api/customers",
+      "tenantId": "5429b74b-d22b-48b2-8c77-8d10bfd91c94"
     },
     {
       "id": "stormossen-ab-oy",

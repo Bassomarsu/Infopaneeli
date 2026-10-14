@@ -11,12 +11,13 @@ import {saveHousehold,readHousehold} from '../src/core/household.ts';
 import {registry} from '../src/core/provider.ts';
 import {registerApiRoutes} from '../src/routes/api.ts';
 assert.equal(wasteCompaniesForMunicipality('Karstula')[0]?.id,'sammakkokangas');assert.equal(wasteCompaniesForMunicipality('Sastamala').length,2);
-assert.equal(getWasteCompanies().filter(c=>c.adapter==='vingo').length,3);
+assert.equal(getWasteCompanies().filter(c=>c.adapter==='vingo').length,2);
+assert.equal(getWasteCompanies().find(c=>c.adapter==='vingo2')?.id,'sammakkokangas','Sammakkokangas on siirtynyt Vingo 2.0 -portaaliin');
 saveHousehold('waste',{label:'Oma manuaali',date:'2030-01-01',intervalWeeks:2});
 assert.equal((await fetchWaste()).enabled,false);
 assert.throws(()=>saveWasteConfig({companyId:'https://evil'}));
 assert.throws(()=>saveWasteConfig({companyId:'sammakkokangas',username:'u'}));
-saveWasteConfig({companyId:'sammakkokangas',municipality:'Karstula',address:'Testitie 1',username:'fixture-user',password:'fixture-secret'});
+saveWasteConfig({companyId:'puhas',municipality:'Joensuu',address:'Testitie 1',username:'fixture-user',password:'fixture-secret'});
 assert.equal(wasteConfig().configured,true);
 const stored=JSON.stringify(getSetting('waste.connection'));
 assert.ok(!stored.includes('fixture-user')&&!stored.includes('fixture-secret'));
@@ -26,8 +27,20 @@ assert.equal(fs.readFileSync(config.dbPath+'.waste-key').length,32);
 const realNow=Date.now;let offset=0;Date.now=()=>realNow()+offset;const advance=()=>{offset+=61_000;};
 const originalFetch=globalThis.fetch;let logins=0, failLogin=false,failSchedule=false;
 let hold:Promise<void>|null=null, began:(()=>void)|undefined;
+// Vingo 2.0 (Sammakkokangas): päivät lasketaan kellosta, koska testin Date.now siirtyy eteenpäin.
+let v2logins=0,v2deny=false;const v2calls:string[]=[];
+const v2day=(days:number)=>new Date(Date.now()+days*86_400_000).toISOString().slice(0,10);
 globalThis.fetch=(async(url,init)=>{
  const u=new URL(String(url)),endpoint=u.pathname.split('/').at(-1);
+ if(u.origin==='https://asiointi.sammakkokangas.fi'){
+  const path=u.pathname,method=init?.method??'GET';v2calls.push(method+' '+path);
+  if(path==='/api/customers/Users/login'){v2logins++;assert.equal(method,'POST');assert.equal(new Headers(init?.headers).get('tenant-id'),'5429b74b-d22b-48b2-8c77-8d10bfd91c94');return v2deny?Response.json({status:401},{status:401}):Response.json({token:'fixture.token.value-0123456789',expiresAt:new Date(Date.now()+3_600_000).toISOString()});}
+  assert.equal(method,'GET');assert.equal(new Headers(init?.headers).get('authorization'),'Vingo-e-services fixture.token.value-0123456789');
+  if(path==='/api/customers/Customers/emptying-infos')return Response.json([{id:'06-0001234-00',address:{street:'TESTITIE 1',postalCode:'43500',postOffice:'KARSTULA'},contractEndDate:null}]);
+  if(path==='/api/customers/Customers/emptying-infos/06-0001234-00/contracts')return Response.json([{customerId:'06-0001234-00',position:1,name:'PERUSMAKSU / KK',nextEmptying:null,emptyingIntervals:[{startWeek:1,endWeek:53,interval:0}],endDate:null},{customerId:'06-0001234-00',position:2,name:'SEKAJÄTE ENERGIAKSI 240 L',nextEmptying:v2day(7)+'T00:00:00',emptyingIntervals:[{startWeek:1,endWeek:53,interval:4}],endDate:null}]);
+  if(path==='/api/customers/Customers/contracts/06-0001234-00/2')return Response.json({allEmptyings:{Planned:[{emptyingDate:v2day(-60)+'T22:00:00Z'},{emptyingDate:v2day(6)+'T22:00:00Z'},{emptyingDate:v2day(34)+'T22:00:00Z'}]}});
+  throw Error('Unexpected Vingo 2.0 URL '+path);
+ }
  if(endpoint==='j_acegi_security_check'){logins++;return Response.json({response:failLogin?'FAILED':'OK'});}
  if(endpoint==='get_customer_datas.do')return Response.json({a:[{asiakasnro:41,katu:'Testitie 1',posti:'43500 Karstula'}],b:[{asiakasnro:42,katu:'Testitie 2',posti:'43500 Karstula'}]});
  if(endpoint==='get_services_by_customer_numbers.do')return Response.json([{id:{ASTAsnro:u.searchParams.get('customerNumbers[]'),ASTPos:1},tariff:{name:'Sekajäte'}}]);
@@ -54,6 +67,25 @@ try{
  advance();const active=fetchWaste();await started;saveWasteConfig({enabled:false});release();await active;assert.deepEqual(projectWasteData(good).events,[]);hold=null;
  saveWasteConfig({username:'fixture-user',password:'new-fixture-secret'});saveWasteConfig({propertyId:'vingo:41',enabled:true});failLogin=true;advance();
  await assert.rejects(()=>fetchWaste());assert.equal(wasteConfig().blocked,true);const count=logins;await assert.rejects(()=>fetchWaste());assert.equal(logins,count,'blocked account must not retry login');
+ // Vingo 2.0: sama palvelukerros, eri sovitin. Tilan siivous ensin, koska yllä vanha tunnus on lukittu.
+ saveWasteConfig({companyId:'sammakkokangas',municipality:'Karstula',address:'Testitie 1',username:'fixture-user',password:'v2-secret'});
+ assert.equal(wasteConfig().configured,true);assert.equal(wasteConfig().blocked,false);
+ advance();const v2props=await wasteProperties();assert.deepEqual(v2props,[{id:'vingo2:06-0001234-00',address:'TESTITIE 1, 43500 KARSTULA'}]);assert.equal(v2logins,1);
+ // Vanhan sovittimen tallennettu tunniste ei kelpaa uudelle: selkeä virhe, ei tunnusvirhe eikä lukitusta.
+ saveWasteConfig({propertyId:'vingo:41',enabled:true});advance();
+ await assert.rejects(()=>fetchWaste(),/Valitse kohde uudelleen/);assert.equal(wasteConfig().blocked,false);
+ saveWasteConfig({propertyId:v2props[0]!.id,enabled:true});advance();
+ const v2data=await fetchWaste();assert.deepEqual(v2data.events.map(e=>e.date),[v2day(7),v2day(35)],'Planned UTC -> Helsingin päivä, mennyt suodatettu');
+ assert.ok(v2data.events.every(e=>e.label==='SEKAJÄTE ENERGIAKSI 240 L'&&e.intervalText==='4 viikon välein'&&!e.approximate));
+ assert.equal(v2logins,1,'kiinteistöhaku ja aikataulu jakavat saman asiakasolion: yksi kirjautuminen');
+ assert.ok(v2calls.every(call=>call.startsWith('GET ')||call==='POST /api/customers/Users/login'),'vain GET ja kirjautumisen POST');
+ // Asiakas luodaan uudelleen 30 min välein, ja uusi asiakas kirjautuu uudelleen.
+ offset+=31*60_000;const before=v2logins;await fetchWaste();assert.equal(v2logins,before+1,'30 min vanha asiakas korvataan');
+ advance();await fetchWaste();assert.equal(v2logins,before+1,'toinen haku käyttää välimuistissa olevaa asiakasta');
+ // Hylätty kirjautuminen -> WasteAuthError -> blocked, kuten vanhalla sovittimella.
+ offset+=31*60_000;v2deny=true;await assert.rejects(()=>fetchWaste());assert.equal(wasteConfig().blocked,true);
+ const v2count=v2logins;advance();await assert.rejects(()=>fetchWaste());assert.equal(v2logins,v2count,'lukittu tili ei yritä uudelleen');
+ v2deny=false;
  saveWasteConfig({companyId:'other',enabled:false});assert.equal(wasteConfig().configured,false);assert.equal(wasteConfig().propertyId,'');
  assert.equal(readHousehold().waste[0]?.label,'Oma manuaali');
 }finally{globalThis.fetch=originalFetch;Date.now=realNow;registry.stopAll();}

@@ -1,0 +1,107 @@
+[
+ {
+  "customerId": "06-0001234-00",
+  "productCode": 100020,
+  "position": 1,
+  "name": "PERUSMAKSU / KK",
+  "serviceName": "",
+  "productGuid": "6cbbbad7-9bbf-4386-d08c-2888867b7f90",
+  "nextEmptying": null,
+  "emptyingIntervals": [
+   {
+    "startWeek": 1,
+    "endWeek": 53,
+    "interval": 0,
+    "amountPerWeek": 1,
+    "sequence": 1
+   }
+  ],
+  "amount": 1.0,
+  "unit": "Unknown",
+  "size": "",
+  "transportPrice": 0.0,
+  "handlingPrice": 2.757,
+  "startDate": "2019-12-01T00:00:00",
+  "endDate": null,
+  "pausedFrom": null,
+  "pausedTo": null,
+  "comment": "",
+  "sharedContainer": false,
+  "readonlyContract": true,
+  "status": "Unspecified",
+  "gateKeyCode": "",
+  "correspondingPersonId": "",
+  "wellType": false,
+  "attachmentIds": []
+ },
+ {
+  "customerId": "06-0001234-00",
+  "productCode": 100240,
+  "position": 2,
+  "name": "SEKAJÄTE ENERGIAKSI 240 L",
+  "serviceName": "",
+  "productGuid": "837627df-3224-4f42-a699-15a0e906af08",
+  "nextEmptying": "2026-10-27T00:00:00",
+  "emptyingIntervals": [
+   {
+    "startWeek": 1,
+    "endWeek": 53,
+    "interval": 4,
+    "amountPerWeek": 1,
+    "sequence": 1
+   }
+  ],
+  "amount": 1.0,
+  "unit": "Piece",
+  "size": "240 L",
+  "transportPrice": 3.25,
+  "handlingPrice": 3.62,
+  "startDate": "2019-10-25T00:00:00",
+  "endDate": null,
+  "pausedFrom": null,
+  "pausedTo": null,
+  "comment": "",
+  "sharedContainer": false,
+  "readonlyContract": false,
+  "status": "Unspecified",
+  "gateKeyCode": "",
+  "correspondingPersonId": "",
+  "wellType": false,
+  "attachmentIds": []
+ },
+ {
+  "customerId": "06-0001234-00",
+  "productCode": 800000,
+  "position": 3,
+  "name": "VIEMÄRIVERKOSTON ALUEELLA/VIEMÄRISSÄ",
+  "serviceName": "",
+  "productGuid": "5e0d2bf4-df75-41b0-39a2-3eb934263f2f",
+  "nextEmptying": null,
+  "emptyingIntervals": [
+   {
+    "startWeek": 1,
+    "endWeek": 53,
+    "interval": 0,
+    "amountPerWeek": 1,
+    "sequence": 1
+   }
+  ],
+  "amount": 1.0,
+  "unit": "Unknown",
+  "size": "",
+  "transportPrice": 0.0,
+  "handlingPrice": 0.0,
+  "startDate": "2019-12-01T00:00:00",
+  "endDate": null,
+  "pausedFrom": null,
+  "pausedTo": null,
+  "comment": "",
+  "sharedContainer": false,
+  "readonlyContract": true,
+  "status": "Unspecified",
+  "gateKeyCode": "",
+  "correspondingPersonId": "",
+  "wellType": false,
+  "attachmentIds": []
+ }
+]

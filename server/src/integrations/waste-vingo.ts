@@ -54,21 +54,26 @@ export interface WasteCollection {
    */
   intervalText?: string;
 }
+/** Kaikkien jätehuoltosovittimien yhteinen julkinen muoto (vingo, vingo2). */
+export interface WasteClient {
+  listProperties(): Promise<WasteProperty[]>;
+  schedule(propertyId: string): Promise<WasteCollection[]>;
+}
 type Group = WasteProperty & { customers: string[] };
 const LIMIT = 2_000_000;
-function record(value: unknown): Record<string, unknown> {
+export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Jätehuollon vastauksen rakenne ei kelpaa.');
   return value as Record<string, unknown>;
 }
-function identifier(value: unknown): string {
-  if ((typeof value !== 'string' && typeof value !== 'number') || !String(value).trim() || String(value).length > 100) throw new Error('Jätehuollon tunniste puuttuu.');
+export function identifier(value: unknown): string {
+  if ((typeof value !== 'string' && typeof value !== 'number') || !String(value).trim() || String(value).length > 100 || /^\.+$/.test(String(value).trim())) throw new Error('Jätehuollon tunniste puuttuu.');
   return String(value);
 }
-function boundedArray(value: unknown, max = 500): unknown[] {
+export function boundedArray(value: unknown, max = 500): unknown[] {
   if (!Array.isArray(value) || value.length > max) throw new Error('Jätehuollon luettelon rakenne ei kelpaa.');
   return value;
 }
-function calendarDate(value: unknown): string {
+export function calendarDate(value: unknown): string {
   // Unzoned portal date-times are local calendar dates, never host-machine UTC guesses.
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)?$/.test(value)) {
     const day = value.slice(0, 10);
@@ -95,7 +100,7 @@ function calendarDate(value: unknown): string {
  * jos ensimmäinen on "Tilauksesta" mutta toinen ei, portaali näyttää toisen —
  * sama valinta tehdään tässä.
  */
-function intervalText(vali: unknown, vali2: unknown): string | undefined {
+export function intervalText(vali: unknown, vali2: unknown): string | undefined {
   const luku = (value: unknown): number | null => {
     const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d{1,3}$/.test(value.trim()) ? Number(value) : null;
     return n !== null && Number.isInteger(n) && n >= 0 && n <= 520 ? n : null;

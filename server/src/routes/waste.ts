@@ -5,7 +5,7 @@ import { wasteConfig,saveWasteConfig,wasteProperties } from '../core/waste-servi
 import { registry } from '../core/provider.ts';
 function allowed(req:FastifyRequest,reply:FastifyReply){if(isTrustedRequest(req))return true;reply.code(403).send({error:'Jätehuollon tunnusten hallinta vaatii täydet oikeudet (FULL_PIN) tai näyttölaitteen.'});return false;}
 export function registerWasteRoutes(app:FastifyInstance){
- app.get('/api/waste/companies',async()=>({companies:getWasteCompanies().map(({baseUrl,...c})=>c)}));
+ app.get('/api/waste/companies',async()=>({companies:getWasteCompanies().map(({baseUrl,apiUrl,tenantId,...c})=>c)}));
  app.get('/api/waste/config',async(req,reply)=>{if(!allowed(req,reply))return reply;return wasteConfig();});
  app.put('/api/waste/config',async(req,reply)=>{if(!allowed(req,reply))return reply;try{const config=saveWasteConfig(req.body);void registry.get('waste')?.runOnce();return config;}catch(error){return reply.code(400).send({error:error instanceof Error?error.message:'Tallennus epäonnistui.'});}});
  // Palvelimen oma viesti menee sellaisenaan selaimeen. Se on ainoa kerros joka

@@ -1,4 +1,4 @@
-export interface WasteCompany { id: string; name: string; municipalities: string[]; website: string; adapter: 'vingo' | 'manual' }
+export interface WasteCompany { id: string; name: string; municipalities: string[]; website: string; adapter: 'vingo' | 'vingo2' | 'manual' }
 export interface WasteData { companyName: string; events: { id: string; label: string; date: string; approximate?: boolean; intervalText?: string }[]; sourceUrl: string; configured: boolean; enabled: boolean }
 export interface WasteConfig { companyId: string; municipality: string; address: string; propertyId: string; configured: boolean; enabled: boolean; blocked: boolean; blockedForSeconds: number; keyMissing: boolean }
 export interface WasteProperty { id: string; address: string }
