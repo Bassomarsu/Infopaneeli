@@ -95,6 +95,58 @@ function Test-Adminina {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Tilin SID, tai $null jos tiliä ei enää ratkea. Tehtävän ajaja (Principal)
+# tallentuu SID:nä, mutta kirjautumisliipaisimen käyttäjä tekstinä muodossa
+# KONE\käyttäjä — ja vain jälkimmäinen vanhenee kun kone nimetään uudelleen.
+function Get-TiliSid {
+    param([string]$Tili)
+    if ([string]::IsNullOrWhiteSpace($Tili)) { return $null }
+    # Liipaisimen käyttäjä voi olla tallessa myös valmiiksi SID-muodossa.
+    if ($Tili -match '^S-1-\d+(-\d+)+$') {
+        try { [void](New-Object Security.Principal.SecurityIdentifier($Tili)).Translate([Security.Principal.NTAccount]); return $Tili } catch { return $null }
+    }
+    try { return (New-Object Security.Principal.NTAccount($Tili)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { return $null }
+}
+
+function Get-TilinNimi {
+    param([string]$Sid)
+    try { return (New-Object Security.Principal.SecurityIdentifier($Sid)).Translate([Security.Principal.NTAccount]).Value } catch { return $null }
+}
+
+# Kirjautumisliipaisimet jotka osoittavat tiliin jota ei enää ole, korvattuina
+# tehtävän ajajan nykyisellä nimellä. Palauttaa $null kun korjattavaa ei ole.
+#
+# Mitattu 14.10.2026 oikealla laitteella: kone nimettiin TABLET-G57EUL3E ->
+# INFOPANEELI, liipaisin jäi muotoon TABLET-G57EUL3E\Infonäyttö, eikä kioski
+# enää käynnistynyt kirjautuessa — virheettä, koska Task Scheduler ei laukaise
+# liipaisinta tilille jota ei ole. Päivitys säilytti liipaisimen sellaisenaan.
+#
+# Vain RATKEAMATON käyttäjä korjataan. Liipaisin joka osoittaa toiseen
+# olemassa olevaan tiliin on käyttäjän oma valinta, eikä asennin koske siihen.
+#
+# Liipaisin korjataan PAIKALLAAN (UserId vaihdetaan) eikä luoda uutta: näin
+# viive, käytössä-tila ja kaikki käyttäjän mahdollisesti muokkaamat kentät
+# säilyvät. Muutos tehdään vain muistissa olevaan olioon; levylle se menee
+# vasta Invoke-Asennuksen Set-ScheduledTask-kutsussa vahvistuksen jälkeen.
+# Todennettu 15.10.2026 oikealla koneella: Get-ScheduledTaskin palauttaman
+# liipaisimen UserId on kirjoitettavissa ja Delay säilyy.
+function Get-KorjatutLiipaisimet {
+    param($Tehtava)
+    $liipaisimet = @($Tehtava.Triggers | Where-Object { $_ })
+    $rikki = @($liipaisimet | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and -not [string]::IsNullOrWhiteSpace($_.UserId) -and -not (Get-TiliSid $_.UserId) })
+    if (-not $rikki.Count) { return $null }
+    $ajajanSid = Get-TiliSid $Tehtava.Principal.UserId
+    $ajaja = if ($ajajanSid) { Get-TilinNimi $ajajanSid } else { $null }
+    if (-not $ajaja) {
+        Write-Warning ("Tehtävän $($Tehtava.TaskName) kirjautumisliipaisin osoittaa tiliin '$($rikki[0].UserId)', jota ei ole, eikä tehtävän ajajaa '$($Tehtava.Principal.UserId)' löydy. " +
+            'Liipaisinta ei korjata. Poista ajastukset (.\asenna.ps1 -Poista) ja asenna uudelleen.')
+        return $null
+    }
+    $vanha = $rikki[0].UserId
+    foreach ($l in $rikki) { $l.UserId = $ajaja }
+    return [PSCustomObject]@{ Vanha = $vanha; Uusi = $ajaja; Liipaisimet = $liipaisimet }
+}
+
 # Sama etsintälogiikka kuin kaynnista.ps1:n Get-Edgepolku-funktiossa. Kahtena
 # kopiona tarkoituksella — ks. kaynnista.ps1:n kommentti.
 function Get-EdgePolku {
@@ -879,6 +931,11 @@ function Invoke-Asennus {
             $tehtavat[$nimi] = $tehtava
         }
     }
+    $liipaisinKorjaukset = @{}
+    foreach ($nimi in @($tehtavat.Keys)) {
+        $korjaus = Get-KorjatutLiipaisimet $tehtavat[$nimi]
+        if ($korjaus) { $liipaisinKorjaukset[$nimi] = $korjaus }
+    }
     $autostart = $tehtavat.Count -gt 0
     if (-not $autostart) { $autostart = (Read-KysyttyArvo -Kehote 'Otetaanko automaattikäynnistys käyttöön? (K/e)' -Oletus 'K') -match '^[kK]$' }
     $luoAutostart = $autostart -and $tehtavat.Count -eq 0
@@ -888,6 +945,7 @@ function Invoke-Asennus {
     }
     Write-Host "Kohde: $asennusJuuri; portti: $portti. data-kansio säilytetään."
     if ((Get-NormalisoituPolku $PaketinJuuri) -ne (Get-NormalisoituPolku $asennusJuuri)) { Write-Host 'Ohjelmatiedostot peilataan: kohteen ylimääräiset tiedostot poistetaan (.env ja data säilyvät).' }
+    foreach ($nimi in @($liipaisinKorjaukset.Keys)) { Write-Host ("Ajastuksen $nimi kirjautumiskäyttäjä korjataan: $($liipaisinKorjaukset[$nimi].Vanha) -> $($liipaisinKorjaukset[$nimi].Uusi) (tiliä ei enää ole, esim. koneen nimi vaihtunut).") -ForegroundColor Yellow }
     if ($onPaivitys) { Write-Host ('Nykyiset asetukset ja käyttöoikeudet säilyvät. Lisättävät avaimet: ' + ($avaimet -join ', ')) }
     elseif ($oliEnv) { Write-Host 'Nykyinen .env korvataan uudelleen annetuilla asetuksilla.' -ForegroundColor Yellow }
     Write-Host 'Palvelin ja kioskiselain käynnistetään. Virranhallinta estää näytön sammumisen ja lepotilan.'
@@ -917,10 +975,12 @@ function Invoke-Asennus {
         foreach ($nimi in @($palvelinTehtava, $nayttoTehtava)) {
             $toiminto = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argumentit[$nimi]
             if ($tehtavat.ContainsKey($nimi)) {
-                # Set-Action säilyttää käyttäjän, liipaisimet, asetukset ja tilan.
-                if ($tehtavat[$nimi].Actions[0].Arguments -ne $argumentit[$nimi] -or $tehtavat[$nimi].Actions[0].Execute -notmatch '(^|\\)powershell.exe$') {
-                    Set-ScheduledTask -TaskName $nimi -TaskPath $tehtavat[$nimi].TaskPath -Action $toiminto | Out-Null
-                }
+                # Set-ScheduledTask säilyttää käyttäjän, asetukset ja tilan; vain
+                # muuttuneet osat annetaan, ja molemmat yhdellä kutsulla.
+                $muutos = @{}
+                if ($tehtavat[$nimi].Actions[0].Arguments -ne $argumentit[$nimi] -or $tehtavat[$nimi].Actions[0].Execute -notmatch '(^|\\)powershell.exe$') { $muutos.Action = $toiminto }
+                if ($liipaisinKorjaukset.ContainsKey($nimi)) { $muutos.Trigger = $liipaisinKorjaukset[$nimi].Liipaisimet }
+                if ($muutos.Count) { Set-ScheduledTask -TaskName $nimi -TaskPath $tehtavat[$nimi].TaskPath @muutos | Out-Null }
             } elseif ($luoAutostart) {
                 $liipaisin = New-ScheduledTaskTrigger -AtLogOn -User $kayttaja
                 if ($nimi -eq $nayttoTehtava) { $liipaisin.Delay = 'PT5S' }

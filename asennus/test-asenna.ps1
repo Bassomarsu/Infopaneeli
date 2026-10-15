@@ -113,9 +113,32 @@ try {
         Assert-Testi ($script:pysaytetyt.Count -eq 1 -and $script:pysaytetyt[0] -eq 11) 'Kioskiselaimen pysäytys rajautuu tarkkaan porttiin ja kioskitilaan'
     }
 
+    # Kirjautumisliipaisimen tili vanhenee kun kone nimetään uudelleen (mitattu
+    # 14.10.2026: TABLET-G57EUL3E -> INFOPANEELI, kioski ei enää käynnistynyt).
+    & {
+        $script:tilit = @{ 'UUSI\kayttaja' = 'S-1-5-21-1-2-3-1001'; 'kayttaja' = 'S-1-5-21-1-2-3-1001'; 'UUSI\toinen' = 'S-1-5-21-1-2-3-1002' }
+        function Get-TiliSid { param($Tili) return $script:tilit[$Tili] }
+        function Get-TilinNimi { param($Sid) if ($Sid -eq 'S-1-5-21-1-2-3-1001') { return 'UUSI\kayttaja' } return $null }
+        function New-Liipaisin { param($Luokka, $Kayttaja, $Viive = '', $Kaytossa = $true) [PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = $Luokka }; UserId = $Kayttaja; Delay = $Viive; Enabled = $Kaytossa } }
+        function New-Tehtava { param($Ajaja, $Liipaisimet) [PSCustomObject]@{ TaskName = 'Infonaytto-naytto'; Principal = [PSCustomObject]@{ UserId = $Ajaja }; Triggers = $Liipaisimet } }
+
+        $aika = New-Liipaisin 'MSFT_TaskTimeTrigger' 'VANHA\kayttaja'
+        $korjaus = Get-KorjatutLiipaisimet (New-Tehtava 'kayttaja' @((New-Liipaisin 'MSFT_TaskLogonTrigger' 'VANHA\kayttaja' 'PT5S' $false), $aika))
+        Assert-Testi ($null -ne $korjaus -and $korjaus.Vanha -eq 'VANHA\kayttaja' -and $korjaus.Uusi -eq 'UUSI\kayttaja') 'Uudelleennimetyn koneen kirjautumisliipaisin ohjataan tehtävän ajajan nykyiseen nimeen'
+        Assert-Testi ($korjaus.Liipaisimet.Count -eq 2 -and $korjaus.Liipaisimet[0].UserId -eq 'UUSI\kayttaja' -and $korjaus.Liipaisimet[0].Delay -eq 'PT5S' -and -not $korjaus.Liipaisimet[0].Enabled) 'Korjattu liipaisin säilyttää viiveen ja käytössä-tilan'
+        Assert-Testi ([object]::ReferenceEquals($korjaus.Liipaisimet[1], $aika)) 'Muut kuin kirjautumisliipaisimet jäävät koskematta'
+        Assert-Testi ($null -eq (Get-KorjatutLiipaisimet (New-Tehtava 'kayttaja' @(New-Liipaisin 'MSFT_TaskLogonTrigger' 'UUSI\kayttaja' 'PT5S')))) 'Toimivaa liipaisinta ei kirjoiteta uudelleen'
+        Assert-Testi ($null -eq (Get-KorjatutLiipaisimet (New-Tehtava 'kayttaja' @(New-Liipaisin 'MSFT_TaskLogonTrigger' 'UUSI\toinen')))) 'Toiseen olemassa olevaan tiliin osoittava liipaisin on käyttäjän valinta'
+        Assert-Testi ($null -eq (Get-KorjatutLiipaisimet (New-Tehtava 'kayttaja' @(New-Liipaisin 'MSFT_TaskLogonTrigger' '')))) 'Kaikkien käyttäjien kirjautumisliipaisin ei ole rikki'
+        Assert-Testi ($null -eq (Get-KorjatutLiipaisimet (New-Tehtava 'kayttaja' @()))) 'Tehtävä ilman liipaisimia ohitetaan'
+        Assert-Testi ($null -eq (& { $WarningPreference = 'SilentlyContinue'; Get-KorjatutLiipaisimet (New-Tehtava 'POISTETTU\kayttaja' @(New-Liipaisin 'MSFT_TaskLogonTrigger' 'VANHA\kayttaja')) })) 'Ratkeamatonta ajajaa ei arvata, liipaisin jää ennalleen'
+    }
+    Assert-Testi ((Get-TiliSid 'S-1-5-18') -eq 'S-1-5-18' -and (Get-TiliSid 'SYSTEM') -eq 'S-1-5-18') 'Oikea tilinratkaisu: SID- ja nimimuoto'
+    Assert-Testi ($null -eq (Get-TiliSid ('EI-OLE-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '\kayttaja')) -and $null -eq (Get-TiliSid '')) 'Oikea tilinratkaisu: olematon tili ja tyhjä'
+
     # Pääsuorituksen systeemirajapinnat korvataan tässä lohkossa. Tiedostot ja
     # kopiointi ovat silti oikeita; ohjelmia, ajastuksia tai rekisteriä ei muuteta.
-    foreach ($tapaus in @('paivitys', 'peruutus', 'healthvirhe', 'uusi', 'valmiit-asetukset', 'tehtavat', 'disabled', 'osittaiset')) {
+    foreach ($tapaus in @('paivitys', 'peruutus', 'healthvirhe', 'uusi', 'valmiit-asetukset', 'tehtavat', 'disabled', 'osittaiset', 'nimetty')) {
         & {
             param($tapaus)
             $script:tapaus = $tapaus
@@ -133,17 +156,20 @@ try {
                 Write-TestFile (Join-Path $script:kohde 'data\arvokas.txt') 'säilyy'
                 $script:ennen = [IO.File]::ReadAllBytes((Join-Path $script:kohde '.env'))
             }
-            if ($tapaus -in @('tehtavat', 'disabled', 'osittaiset')) {
+            if ($tapaus -in @('tehtavat', 'disabled', 'osittaiset', 'nimetty', 'peruutus')) {
                 foreach ($nimi in @('Infonaytto-palvelin', 'Infonaytto-naytto')) {
                     if ($tapaus -eq 'osittaiset' -and $nimi -eq 'Infonaytto-naytto') { continue }
                     $script:testitehtavat[$nimi] = [PSCustomObject]@{
                         TaskName = $nimi; TaskPath = '\'; Principal = [PSCustomObject]@{ UserId = 'ALKUPERAINEN\kayttaja' }
                         Settings = [PSCustomObject]@{ Enabled = $tapaus -ne 'disabled' }
                         Actions = @([PSCustomObject]@{ Execute = 'powershell.exe'; Arguments = '-File "' + (Join-Path $script:kohde 'asennus\kaynnista.ps1') + '" -Portti 4173' })
+                        Triggers = @([PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = 'MSFT_TaskLogonTrigger' }; UserId = $(if ($tapaus -in @('nimetty', 'peruutus')) { 'VANHA\kayttaja' } else { 'ALKUPERAINEN\kayttaja' }); Delay = 'PT5S'; Enabled = $true })
                     }
                 }
             }
             function Get-EdgePolku { 'C:\test-edge\msedge.exe' }
+            function Get-TiliSid { param($Tili) if ($Tili -eq 'ALKUPERAINEN\kayttaja') { return 'S-1-5-21-1-2-3-1001' } return $null }
+            function Get-TilinNimi { param($Sid) if ($Sid -eq 'S-1-5-21-1-2-3-1001') { return 'ALKUPERAINEN\kayttaja' } return $null }
             function Read-KysyttyArvo {
                 param($Kehote, $Oletus)
                 if ($script:vahvistettu) { throw 'Kysymys vasta mutaatioiden jälkeen' }
@@ -162,11 +188,16 @@ try {
             function Stop-VanhaPalvelin { param($ServerHakemisto) if (-not $script:vahvistettu) { throw 'Ennenaikainen pysäytys' }; $script:tapahtumat.Add('stop-server'); return 0 }
             function Test-PorttiVapaa { return $true }
             function New-ScheduledTaskAction { param($Execute, $Argument) return @{ Execute = $Execute; Arguments = $Argument } }
-            function New-ScheduledTaskTrigger { return @{ Delay = '' } }
+            function New-ScheduledTaskTrigger { param([switch]$AtLogOn, $User) return [PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = 'MSFT_TaskLogonTrigger' }; UserId = $User; Delay = ''; Enabled = $true } }
             function New-ScheduledTaskSettingsSet { return @{} }
             function New-ScheduledTaskPrincipal { return @{} }
             function Register-ScheduledTask { $script:tapahtumat.Add('register') }
-            function Set-ScheduledTask { param($TaskName, $TaskPath, $Action) $script:tapahtumat.Add('set-' + $TaskName); $script:testitehtavat[$TaskName].Actions = @($Action) }
+            function Set-ScheduledTask {
+                param($TaskName, $TaskPath, $Action, $Trigger)
+                if (-not $script:vahvistettu) { throw 'Ennenaikainen ajastuksen muutos' }
+                if ($Action) { $script:tapahtumat.Add('set-' + $TaskName); $script:testitehtavat[$TaskName].Actions = @($Action) }
+                if ($Trigger) { $script:tapahtumat.Add('trigger-' + $TaskName); $script:testitehtavat[$TaskName].Triggers = @($Trigger) }
+            }
             function New-KioskiPikakuvake { $script:tapahtumat.Add('shortcut') }
             function powercfg { $global:LASTEXITCODE = 0 }
             function Set-ItemProperty { $script:tapahtumat.Add('power') }
@@ -181,7 +212,7 @@ try {
             else { Invoke-Asennus -PaketinJuuri $lahde }
             if ($tapaus -eq 'healthvirhe') { Assert-Testi ($script:tapahtumat.Contains('health')) 'Virheellinen asennus ehti terveystarkistukseen asti' }
             if ($tapaus -eq 'peruutus') {
-                Assert-Testi ($script:tapahtumat.Count -eq 0 -and [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $script:kohde '.env'))) -eq [Convert]::ToBase64String($script:ennen)) 'Peruutus ei pysäytä eikä kirjoita mitään'
+                Assert-Testi ($script:tapahtumat.Count -eq 0 -and [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $script:kohde '.env'))) -eq [Convert]::ToBase64String($script:ennen)) 'Peruutus ei pysäytä eikä kirjoita mitään, ei myöskään laskettua liipaisinkorjausta'
             } else {
                 $jalki = (Read-EnvTiedosto -Polku (Join-Path $script:kohde '.env') -NodeExe $node).Arvot
                 Assert-Testi (@(Get-PuuttuvatAvaimet -Olemassa $jalki).Count -eq 0) "$tapaus`: pääsuoritus kirjoittaa kaikki mallin avaimet"
@@ -195,6 +226,10 @@ try {
                 } else { Assert-Testi (-not $script:tapahtumat.Contains('stop-browser') -and -not $script:tapahtumat.Contains('stop-server')) 'Uusi asennus ei pysäytä toisen asennuksen prosesseja' }
                 if ($script:testitehtavat.Count) {
                     Assert-Testi (-not $script:tapahtumat.Contains('register') -and @($script:testitehtavat.Values | Where-Object { $_.Principal.UserId -ne 'ALKUPERAINEN\kayttaja' }).Count -eq 0) "$tapaus`: ajastusten käyttäjä ja olemassa oleva tehtäväjoukko säilyvät"
+                    $liipaisinMuuttui = @($script:tapahtumat | Where-Object { $_ -like 'trigger-*' }).Count -gt 0
+                    if ($tapaus -eq 'nimetty') {
+                        Assert-Testi (@($script:testitehtavat.Values | Where-Object { $_.Triggers.Count -ne 1 -or $_.Triggers[0].UserId -ne 'ALKUPERAINEN\kayttaja' -or $_.Triggers[0].Delay -ne 'PT5S' }).Count -eq 0 -and $script:tapahtumat.Contains('trigger-Infonaytto-naytto')) 'nimetty: vanhentunut kirjautumisliipaisin korjataan päivityksessä viiveineen'
+                    } else { Assert-Testi (-not $liipaisinMuuttui) "$tapaus`: toimivaan kirjautumisliipaisimeen ei kosketa" }
                     if ($tapaus -eq 'disabled') { Assert-Testi (@($script:testitehtavat.Values | Where-Object { $_.Settings.Enabled }).Count -eq 0) 'Käytöstä poistetut ajastukset jäävät pois käytöstä' }
                 }
                 $selainAlkoi = $script:tapahtumat.Contains('start-Infonaytto-naytto')
